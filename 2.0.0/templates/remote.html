@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>远程控制</title>
+<link rel="stylesheet" href="/static/style.css?v=20261113d">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🖥 远程控制</div>
+  <div class="topbar-right">
+    <button id="btn-fullscreen" class="btn ghost">⛶ 全屏</button>
+    <button id="btn-mode" class="btn ghost">📱 手机模式</button>
+    <span id="remote-state" class="muted">连接中…</span>
+    <a href="/" id="btn-back" class="btn ghost">← 返回主页</a>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <section class="panel">
+    <p class="hint" id="mode-hint">手机模式：手指直接触控，等同在被控电脑上触摸；可点右上角切换为电脑模式。</p>
+    <div id="screen-box" class="screen-box">
+      <canvas id="screen"></canvas>
+      <div id="screen-hint" class="empty">正在连接…</div>
+    </div>
+    <p class="hint" id="screen-status"></p>
+  </section>
+
+  <section class="panel">
+    <button id="btn-osk" class="btn big">⌨ 打开/关闭电脑屏幕键盘(OSK)</button>
+    <p class="hint">点一次打开电脑屏幕键盘，再点一次关闭；远程控制结束后会自动关闭。若键盘按键在画面里点不动，请尝试切换右上角“手机模式”触控。</p>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/auth.js?v=20261113d"></script>
+<script src="/static/remote.js?v=20261113d"></script>
+</body>
+</html>

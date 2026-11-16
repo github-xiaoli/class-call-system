@@ -1,0 +1,254 @@
+/* 远程监控 + 对讲（WebSocket 低延迟） */
+"use strict";
+const $ = (id) => document.getElementById(id);
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.add("hidden"), 2600);
+}
+
+let audioCtx = null;
+let nextTime = 0;
+let camWs = null;
+let micWs = null;
+let monitoring = false;
+let lastCamUrl = null;
+
+let talkCtx = null;
+let talkStream = null;
+let talkProc = null;
+let talkWs = null;
+let talkChunks = [];
+let talking = false;
+
+function handleAuthError(e) {
+  if (e && (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活|请先激活/.test(e.message || ""))) {
+    toast("请先激活：" + e.message);
+    if (confirm("当前设备未激活。是否返回主页完成激活？")) location.href = "/";
+    return false;
+  }
+  return true;
+}
+
+function openWs(path) {
+  const url = new URL(path, location.href);
+  url.protocol = (url.protocol === "https:" || url.protocol === "wss:") ? "wss:" : "ws:";
+  return new WebSocket(url.href);
+}
+
+function saveDeviceChoice(key, sel) {
+  try {
+    if (!sel || sel.selectedIndex < 0) return;
+    const opt = sel.options[sel.selectedIndex];
+    localStorage.setItem(key, JSON.stringify({ name: opt.text, value: opt.value }));
+  } catch (e) { /* 忽略 */ }
+}
+
+function restoreDeviceChoice(key, sel) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw || !sel) return;
+    const d = JSON.parse(raw);
+    // 优先按名称匹配（设备重插后索引可能变化）
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].text === d.name) { sel.value = sel.options[i].value; return; }
+    }
+    for (let i = 0; i < sel.options.length; i++) {
+      if (String(sel.options[i].value) === String(d.value)) { sel.value = sel.options[i].value; return; }
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+async function loadDevices() {
+  try {
+    const res = await Auth.fetchAuthed("/api/monitor/cameras");
+    const cd = await res.json();
+    const sel = $("cam-select");
+    sel.innerHTML = "";
+    for (const c of cd.cameras || []) sel.add(new Option(c.name, c.index));
+    if (!sel.options.length) sel.add(new Option("未检测到摄像头", ""));
+    restoreDeviceChoice("cqt_monitor_cam", sel);
+  } catch (e) { toast("加载摄像头失败：" + e.message); }
+  try {
+    const res = await Auth.fetchAuthed("/api/monitor/mics");
+    const md = await res.json();
+    const sel = $("mic-select");
+    sel.innerHTML = "";
+    for (const m of md.mics || []) sel.add(new Option(m.name, m.index));
+    restoreDeviceChoice("cqt_monitor_mic", sel);
+  } catch (e) { toast("加载麦克风失败：" + e.message); }
+}
+
+function playPcm16(bytes) {
+  if (!bytes || !bytes.length) return;
+  const int16 = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  if (!int16.length) return;
+  // 积压超过 0.5 秒就丢弃旧音频，保持低延迟
+  if (audioCtx && nextTime < audioCtx.currentTime - 0.5) {
+    nextTime = audioCtx.currentTime + 0.03;
+  }
+  const f32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768;
+  const buf = audioCtx.createBuffer(1, f32.length, 48000);
+  buf.copyToChannel(f32, 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const t = Math.max(nextTime, audioCtx.currentTime + 0.03);
+  src.start(t);
+  nextTime = t + buf.duration;
+}
+
+async function startMonitor() {
+  const cam = $("cam-select").value;
+  const mic = $("mic-select").value;
+  if (cam === "") { toast("请先选择摄像头"); return; }
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    nextTime = audioCtx.currentTime + 0.08;
+
+    // 摄像头 WebSocket
+    const cUrl = await Auth.urlWithToken("/ws/monitor/camera?cam=" + encodeURIComponent(cam));
+    camWs = openWs(cUrl);
+    camWs.binaryType = "arraybuffer";
+    camWs.onmessage = (e) => {
+      const blob = new Blob([e.data], { type: "image/jpeg" });
+      const canvas = $("video");
+      const cctx = canvas.getContext("2d");
+      if (window.createImageBitmap) {
+        createImageBitmap(blob).then((bmp) => {
+          canvas.width = bmp.width;
+          canvas.height = bmp.height;
+          cctx.drawImage(bmp, 0, 0);
+          bmp.close();
+          canvas.classList.remove("hidden");
+          $("video-hint").classList.add("hidden");
+        }).catch(() => {});
+      } else {
+        const u = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          cctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(u);
+          canvas.classList.remove("hidden");
+          $("video-hint").classList.add("hidden");
+        };
+        img.src = u;
+      }
+    };
+    camWs.onerror = () => { toast("摄像头连接失败"); };
+    camWs.onclose = () => {};
+
+    // 麦克风 WebSocket
+    const mUrl = await Auth.urlWithToken("/ws/monitor/audio?mic=" + encodeURIComponent(mic));
+    micWs = openWs(mUrl);
+    micWs.binaryType = "arraybuffer";
+    micWs.onmessage = (e) => playPcm16(new Uint8Array(e.data));
+    micWs.onerror = () => { toast("麦克风连接失败"); };
+
+    monitoring = true;
+    $("btn-start").classList.add("hidden");
+    $("btn-stop").classList.remove("hidden");
+  } catch (e) {
+    stopMonitor();
+    if (handleAuthError(e)) toast("启动失败：" + e.message);
+  }
+}
+
+function stopMonitor() {
+  monitoring = false;
+  if (camWs) { try { camWs.close(); } catch (e) {} camWs = null; }
+  if (micWs) { try { micWs.close(); } catch (e) {} micWs = null; }
+  if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+  const canvas = $("video");
+  if (canvas) {
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.classList.add("hidden");
+  }
+  $("video-hint").textContent = "监控已停止";
+  $("video-hint").classList.remove("hidden");
+  $("btn-start").classList.remove("hidden");
+  $("btn-stop").classList.add("hidden");
+}
+
+/* ---------- 对讲 ---------- */
+async function startTalk() {
+  try {
+    talkStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, sampleRate: 48000, echoCancellation: false, noiseSuppression: false },
+    });
+  } catch (e) {
+    toast("无法打开浏览器麦克风，请检查权限");
+    return;
+  }
+  const url = await Auth.urlWithToken("/ws/monitor/intercom").catch((e) => {
+    if (handleAuthError(e)) throw e;
+    throw e;
+  });
+  talkWs = openWs(url);
+  talkWs.binaryType = "arraybuffer";
+  talkWs.onopen = () => {
+    talkCtx = new (window.AudioContext || window.webkitAudioContext)();
+    talkCtx.resume().catch(() => {});
+    const srcNode = talkCtx.createMediaStreamSource(talkStream);
+    talkProc = talkCtx.createScriptProcessor(4096, 1, 1);
+    talkChunks = [];
+    talkProc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      const i16 = new Int16Array(d.length);
+      for (let i = 0; i < d.length; i++) {
+        let s = Math.max(-1, Math.min(1, d[i]));
+        i16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      talkChunks.push(i16);
+      let total = 0;
+      for (const c of talkChunks) total += c.length;
+      if (total >= 4800) flushTalk();
+    };
+    srcNode.connect(talkProc);
+    const gain = talkCtx.createGain();
+    gain.gain.value = 0; // 本地静音，避免啸叫
+    talkProc.connect(gain);
+    gain.connect(talkCtx.destination);
+    talking = true;
+    $("btn-talk").textContent = "🔴 停止对讲";
+    $("talk-status").textContent = "对讲中…";
+  };
+  talkWs.onerror = () => { toast("对讲连接失败"); stopTalk(); };
+  talkWs.onclose = () => { if (talking) stopTalk(); };
+}
+
+function flushTalk() {
+  if (!talkWs || talkWs.readyState !== 1) { talkChunks = []; return; }
+  const all = new Int16Array(talkChunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of talkChunks) { all.set(c, off); off += c.length; }
+  talkChunks = [];
+  try { talkWs.send(all.buffer); } catch (e) { /* 忽略 */ }
+}
+
+function stopTalk() {
+  talking = false;
+  if (talkProc) { try { talkProc.disconnect(); } catch (e) {} talkProc = null; }
+  if (talkStream) { try { talkStream.getTracks().forEach((t) => t.stop()); } catch (e) {} talkStream = null; }
+  if (talkCtx) { try { talkCtx.close(); } catch (e) {} talkCtx = null; }
+  if (talkWs) { try { talkWs.close(); } catch (e) {} talkWs = null; }
+  $("btn-talk").textContent = "🎤 开始对讲";
+  $("talk-status").textContent = "";
+}
+
+/* ---------- 事件 ---------- */
+$("cam-select").addEventListener("change", () => saveDeviceChoice("cqt_monitor_cam", $("cam-select")));
+$("mic-select").addEventListener("change", () => saveDeviceChoice("cqt_monitor_mic", $("mic-select")));
+$("btn-start").addEventListener("click", startMonitor);
+$("btn-stop").addEventListener("click", stopMonitor);
+$("btn-talk").addEventListener("click", () => { talking ? stopTalk() : startTalk(); });
+
+window.addEventListener("beforeunload", () => { stopMonitor(); stopTalk(); });
+
+loadDevices();

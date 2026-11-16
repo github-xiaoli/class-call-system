@@ -1,0 +1,13 @@
+# 程序数据（含配置/名条/密码/证书/日志，绝不提交）
+data/
+sounds/
+
+# 构建产物与缓存
+build/
+__pycache__/
+*.pyc
+*.zip
+
+# 本地杂项
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>远程监控 · 对讲</title>
+<link rel="stylesheet" href="/static/style.css?v=20261113d">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">📷 远程监控 · 对讲</div>
+  <div class="topbar-right">
+    <a href="/" class="btn ghost">← 返回主页</a>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <section class="panel">
+    <div class="form-grid">
+      <label>摄像头
+        <select id="cam-select"><option value="">加载中…</option></select>
+      </label>
+      <label>麦克风
+        <select id="mic-select"><option value="">加载中…</option></select>
+      </label>
+      <button id="btn-start" class="btn primary">▶ 开始监控</button>
+      <button id="btn-stop" class="btn danger hidden">■ 停止监控</button>
+    </div>
+    <p class="hint">仅在查看监控时才占用摄像头/麦克风；停止或离开页面立即释放。电脑端不会出现任何提示。</p>
+  </section>
+
+  <section class="panel">
+    <div class="video-box">
+      <canvas id="video" class="monitor-video hidden"></canvas>
+      <div id="video-hint" class="empty">尚未开始监控</div>
+    </div>
+    <p class="hint" id="video-status"></p>
+  </section>
+
+  <section class="panel">
+    <h2>远程对讲</h2>
+    <p class="hint">点击按钮打开手机麦克风开始对讲，电脑端实时播放；对讲音量使用叫号时的音量设置。</p>
+    <button id="btn-talk" class="btn primary big">🎤 开始对讲</button>
+    <p class="hint" id="talk-status"></p>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/auth.js?v=20261113d"></script>
+<script src="/static/monitor.js?v=20261113d"></script>
+</body>
+</html>
