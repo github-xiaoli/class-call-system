@@ -93,6 +93,27 @@ _state = {
 _prep_lock = threading.Lock()
 _prepared = {"version": "", "path": "", "python_delta": ""}
 
+# 更新动作串行锁：避免网页连续点击导致多次下载/多次安装
+_action_lock = threading.Lock()
+
+
+def _start_worker(name, fn, *args, **kwargs):
+    """同一时间只允许一个更新动作在跑；已被占用返回 False。"""
+    if not _action_lock.acquire(blocking=False):
+        return False
+
+    def run():
+        try:
+            fn(*args, **kwargs)
+        finally:
+            try:
+                _action_lock.release()
+            except Exception:
+                pass
+
+    threading.Thread(target=run, daemon=True, name=name).start()
+    return True
+
 _config_getter = None
 _restart_callback = None
 _desktop = None
@@ -767,10 +788,14 @@ def api_update_start():
     channel = data.get("channel") or _cfg().get("update_channel", "stable")
     if _get_state().get("running"):
         return jsonify({"ok": True, "message": "更新已在进行中"})
+    # 已经下载解压好了就直接复用，避免重复下载
+    prep = _get_prepared()
+    if prep.get("version") and os.path.isdir(prep.get("path", "")):
+        return jsonify({"ok": True, "message": "更新包已就绪，请点击「安装并重启」",
+                        "version": prep.get("version")})
     _set(stage="check", percent=0, detail="正在检查更新…", running=True)
-    threading.Thread(target=_do_prepare,
-                     args=(None, None, channel),
-                     daemon=True, name="ota-prepare").start()
+    if not _start_worker("ota-prepare", _do_prepare, None, None, channel):
+        return jsonify({"ok": True, "message": "更新已在进行中"}), 202
     return jsonify({"ok": True, "message": "开始下载更新包", "channel": channel})
 
 
@@ -795,7 +820,8 @@ def api_update_upload():
     except Exception:
         ver = ""
     info = {"version": ver or "", "notes": "手动上传", "channel": "manual"}
-    threading.Thread(target=_do_update, args=(info, path), daemon=True, name="ota-upload").start()
+    if not _start_worker("ota-upload", _do_update, info, path):
+        return jsonify({"ok": True, "message": "正在处理中"}), 202
     return jsonify({"ok": True, "message": "开始下载并安装手动更新包"})
 
 
@@ -813,7 +839,8 @@ def api_update_install():
         return jsonify({"ok": False, "error": "更新包目录不完整，请重新下载"}), 400
     if _get_state().get("running"):
         return jsonify({"ok": True, "message": "正在处理中"})
-    threading.Thread(target=_do_install, daemon=True, name="ota-install").start()
+    if not _start_worker("ota-install", _do_install):
+        return jsonify({"ok": True, "message": "正在处理中"}), 202
     return jsonify({"ok": True, "message": "开始安装并重启", "version": prep.get("version")})
 
 
@@ -847,12 +874,9 @@ def maybe_auto_update():
                 print("[OTA] 发现新版本", info.get("version"))
                 return
             if policy == "download":
-                threading.Thread(target=_do_update,
-                                 args=(info,), kwargs={"install": False},
-                                 daemon=True, name="ota-download").start()
+                _start_worker("ota-download", _do_update, info, None, False)
             elif policy == "install":
-                threading.Thread(target=_do_update, args=(info,),
-                                 daemon=True, name="ota-install").start()
+                _start_worker("ota-auto-install", _do_update, info)
         except Exception as exc:
             print("[OTA] 自动检查失败:", exc)
 

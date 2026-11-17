@@ -311,3 +311,6 @@ button.mini:active { transform: scale(.96); }
 .up-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #475569; margin-bottom: 4px; }
 .up-bar { height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .up-bar > div { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg,#2563eb,#38bdf8); transition: width .2s ease; }
+
+/* 处理中禁用按钮 */
+.btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; }

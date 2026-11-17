@@ -85,21 +85,36 @@ function renderNotes(notes) {
   }
 }
 
+let uiBusy = false;
+
+function setBusy(b) {
+  uiBusy = b;
+  ["btn-update", "btn-install", "btn-check", "btn-upload"].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = b;
+  });
+}
+
 async function startUpdate() {
+  if (uiBusy) { toast("正在处理中，请稍候…"); return; }
   const v = latestInfo ? latestInfo.version : "最新版本";
   if (!confirm("确定下载 " + v + " 的更新包吗？下载解压完成后需要你再点一次「安装并重启」。")) return;
+  setBusy(true);
   showProgress();
   $("progress-stage").textContent = "正在检查更新";
   try {
     await api("/api/update/start", { method: "POST", body: JSON.stringify({}) });
     startPolling();
   } catch (e) {
+    setBusy(false);
     toast("开始下载失败：" + e.message);
   }
 }
 
 async function installUpdate() {
+  if (uiBusy) { toast("正在处理中，请稍候…"); return; }
   if (!confirm("立即安装并重启吗？重启期间网页会短暂断开。")) return;
+  setBusy(true);
   showProgress();
   $("progress-stage").textContent = "正在安装";
   try {
@@ -107,6 +122,7 @@ async function installUpdate() {
     $("btn-install").classList.add("hidden");
     startPolling();
   } catch (e) {
+    setBusy(false);
     toast("安装失败：" + e.message);
   }
 }
@@ -126,6 +142,8 @@ function renderProgress(p) {
   $("progress-pct").textContent = (p.percent || 0) + "%";
   $("progress-stage").textContent = stageText(p.stage);
   $("progress-detail").textContent = p.detail || "";
+  // 服务端不再"运行中"时解除按钮禁用，避免连续点击产生多次任务
+  if (!p.running) setBusy(false);
   // 下载解压完成 -> 显示「安装并重启」按钮
   if (p.ready || p.stage === "ready") {
     const v = p.ready_version || p.version || "";
@@ -193,7 +211,9 @@ function stageText(stage) {
 
 async function uploadZip(file) {
   if (!file) return;
+  if (uiBusy) { toast("正在处理中，请稍候…"); return; }
   if (!confirm("确定用本地 zip 覆盖更新吗？更新完成后会自动重启。")) return;
+  setBusy(true);
   const fd = new FormData();
   fd.append("file", file);
   try {
