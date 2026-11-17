@@ -577,6 +577,21 @@ def _need_auth():
     return check_access()
 
 
+def _json_body():
+    """容错取 JSON 请求体：即使前端没带 Content-Type 也能解析。"""
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        return data
+    try:
+        raw = request.get_data(cache=True) or b""
+        if not raw:
+            return {}
+        obj = json.loads(raw.decode("utf-8", "replace"))
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
 @update_bp.route("/api/update/config", methods=["GET", "POST"])
 def api_update_config():
     err = _need_auth()
@@ -590,21 +605,29 @@ def api_update_config():
             "update_policy": cfg.get("update_policy", "none"),
             "current_version": _current_version(),
         })
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     new_cfg = {}
     if "update_channel" in data and data["update_channel"] in CHANNELS:
         new_cfg["update_channel"] = data["update_channel"]
     if "update_policy" in data and data["update_policy"] in ("none", "check", "download", "install"):
         new_cfg["update_policy"] = data["update_policy"]
-    if new_cfg:
-        try:
-            from app import get_config, save_config
-            c = get_config()
-            c.update(new_cfg)
-            save_config(c)
-        except Exception:
-            pass
-    return jsonify({"ok": True})
+    if not new_cfg:
+        return jsonify({"ok": False,
+                        "error": "没有可保存的设置（请求体未收到）"}), 400
+    try:
+        from app import get_config, save_config
+        c = get_config()
+        c.update(new_cfg)
+        save_config(c)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "保存失败：%s" % exc}), 500
+    cfg2 = _cfg()
+    return jsonify({
+        "ok": True,
+        "update_channel": cfg2.get("update_channel", "stable"),
+        "update_policy": cfg2.get("update_policy", "none"),
+        "saved": list(new_cfg.keys()),
+    })
 
 
 def _current_version():
@@ -668,7 +691,7 @@ def api_update_start():
     err = _need_auth()
     if err:
         return err
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     channel = data.get("channel") or _cfg().get("update_channel", "stable")
     if _get_state().get("running"):
         return jsonify({"ok": True, "message": "更新已在进行中"})

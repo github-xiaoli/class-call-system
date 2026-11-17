@@ -13,7 +13,12 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
 }[c]));
 
 async function api(url, options = {}) {
-  const res = await Auth.fetchAuthed(url, options);
+  const opts = Object.assign({}, options);
+  // 字符串 body 必须是 JSON，否则后端 get_json 取不到数据（会导致保存无效）
+  if (typeof opts.body === "string" && !(opts.headers && opts.headers["Content-Type"])) {
+    opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  }
+  const res = await Auth.fetchAuthed(url, opts);
   const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
   if (!res.ok || data.ok === false) {
     const e = new Error(data.error || ("请求失败 " + res.status));
@@ -28,6 +33,11 @@ let pollTimer = null;
 
 const CHANNEL_NAMES = { stable: "稳定", beta: "内测", dev: "开发" };
 const channelName = (c) => CHANNEL_NAMES[c] || c || "稳定";
+const POLICY_NAMES = {
+  none: "不检查更新", check: "启动时检查更新",
+  download: "自动下载不安装", install: "自动安装",
+};
+const policyName = (p) => POLICY_NAMES[p] || p || "不检查更新";
 
 async function loadConfig() {
   try {
@@ -194,17 +204,17 @@ async function uploadZip(file) {
 }
 
 async function savePolicy() {
+  const ch = $("set-channel").value;
+  const pol = $("set-policy").value;
   try {
-    await api("/api/update/config", {
+    const d = await api("/api/update/config", {
       method: "POST",
-      body: JSON.stringify({
-        update_channel: $("set-channel").value,
-        update_policy: $("set-policy").value,
-      }),
+      body: JSON.stringify({ update_channel: ch, update_policy: pol }),
     });
-    toast("更新设置已保存");
+    toast("已保存：" + channelName(d.update_channel || ch) + " / " + policyName(d.update_policy || pol));
     $("menu-pop").classList.add("hidden");
-    loadConfig();
+    await loadConfig();
+    checkUpdate();
   } catch (e) { toast("保存失败：" + e.message); }
 }
 
