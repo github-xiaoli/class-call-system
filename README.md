@@ -14,3 +14,11 @@
 ## 运行
 
 双击 `start.bat`（或 `启动-隐藏窗口.vbs`）。本机访问 `http://127.0.0.1:8000`。
+
+## 许可证
+
+本项目以 **GNU 通用公共许可证第 3 版（GPL-3.0-or-later）** 发布。
+
+- 你可以自由使用、修改、再分发，但分发时需保留同样的许可并提供源代码。
+- 完整许可证正文见仓库根目录 LICENSE，或 <https://www.gnu.org/licenses/gpl-3.0.html>。
+- Copyright (C) 2026 xiaoli
