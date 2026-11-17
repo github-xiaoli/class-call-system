@@ -1,17 +1,26 @@
 班级叫号器 软件许可（有限许可 · 非开源许可证）
+Class Caller Software License (Limited License · Not an Open-Source License)
 
-版权所有 (c) 2026 班级叫号器作者
+版权所有 (c) 2026 xiaoli
+Copyright (c) 2026 xiaoli
 
-本仓库公开的唯一目的，是支持本软件（班级叫号器）自身的 OTA（空中升级）功能：
+本仓库公开的唯一目的，是支持本软件（班级叫号器）自身的 OTA（空中升级）功能。
+This repository is made public solely to support the software's own OTA (over-the-air update) function.
 
-允许：
+允许 / Permitted:
 1. 本软件的官方程序实例通过 OTA 机制，从本仓库的 GitHub Release 下载并安装更新包。
+   Official instances of this software may download and install update packages from this repository's GitHub Releases via the OTA mechanism.
 
-禁止（除上述允许用途外）：
-1. 任何人不得下载、复制、修改、分发、再许可、出售、出租、反编译、反向工程或以其他方式使用本仓库中的源代码、二进制文件或文档；
-2. 不得将本软件或其任何部分用于商业目的或集成到其他产品中；
+禁止（除上述允许用途外）/ Prohibited (except as permitted above):
+1. 任何人不得下载、复制、修改、分发、再许可、出售、出租、反编译、反向工程或以其他方式使用本仓库中的源代码、二进制文件或文档。
+   No one may download, copy, modify, distribute, sublicense, sell, rent, decompile, reverse engineer, or otherwise use the source code, binaries, or documentation in this repository.
+2. 不得将本软件或其任何部分用于商业目的或集成到其他产品中。
+   This software or any part of it may not be used for commercial purposes or integrated into other products.
 3. 未授予任何商标、专利或名称使用权。
+   No trademark, patent, or name rights are granted.
 
-其他条款：
+其他条款 / Other terms:
 - 本软件按“现状”提供，不附带任何明示或默示的保证，包括但不限于适销性、特定用途适用性和非侵权保证。
+  This software is provided "as is" without warranty of any kind, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement.
 - 本许可证不是开源许可证（非 OSI 认证），不授予除上述明确允许之外的任何权利。
+  This license is not an open-source license (not OSI-approved) and grants no rights beyond those expressly stated above.
