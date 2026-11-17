@@ -156,6 +156,7 @@
       <div class="form-grid">
         <label class="checkbox"><input id="set-secure-enabled" type="checkbox" /> 启用 HTTPS 安全端口</label>
         <label>安全端口 <input id="set-secure-port" type="number" min="1" max="65535" /></label>
+      <label class="checkbox"><input id="set-secure-force" type="checkbox" /> 占用系统保留端口时自动抢占（管理员权限，会短暂停止 WinNAT/Hyper-V 网络）</label>
       </div>
       <p class="hint">手机端“激活 / 监控 / 远程控制 / 文件传输”等敏感功能需通过 https://主机名.local:安全端口 访问（自签名证书，首次需点“继续访问”）。</p>
     </div>

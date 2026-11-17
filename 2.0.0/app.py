@@ -71,6 +71,7 @@ DEFAULT_CONFIG = {
     "require_admin": True,          # 启动时自动申请管理员（自启用计划任务，登录不再弹 UAC）
     "secure_enabled": True,         # 是否启用 HTTPS 安全端口（手机端激活/敏感功能用）
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
+    "secure_port_force": False,     # 目标端口被系统保留时，是否临时停止 WinNAT 抢占该端口（需管理员）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
     "update_policy": "none",        # OTA 更新策略：none | check | download | install
 }
@@ -735,6 +736,44 @@ def _port_excluded(port, ranges):
     return False
 
 
+def _net_service(action, name):
+    """停止/启动一个 Windows 服务（需要管理员）。"""
+    try:
+        r = subprocess.run(["net", action, name], capture_output=True, text=True, timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
+                           check=False)
+        return r.returncode == 0
+    except Exception as exc:
+        print("[HTTPS] %s %s 失败: %s" % (action, name, exc))
+        return False
+
+
+def _release_reserved_port(port):
+    """临时释放被 WinNAT 动态保留的端口（停 winnat -> 端口可用 -> 绑完再启动）。
+
+    返回 (是否已释放, 需要恢复的服务名或 None)。
+    注意：Hyper-V/WSL2 的 NAT 网络会短暂中断几秒。
+    """
+    if not _is_admin():
+        return False, None
+    if not _port_excluded(port, _excluded_tcp_ranges()):
+        return True, None
+    for svc in ("winnat", "hns"):
+        if not _net_service("stop", svc):
+            continue
+        time.sleep(1.0)
+        if not _port_excluded(port, _excluded_tcp_ranges()):
+            print("[HTTPS] 已临时释放端口 %s（暂时停止 %s）" % (port, svc))
+            return True, svc
+        _net_service("start", svc)  # 没释放成功，立刻恢复
+    return False, None
+
+
+def _restore_net_service(name):
+    if name:
+        _net_service("start", name)
+
+
 def ensure_ssl_context():
     """生成/加载自签名证书，供 HTTPS 安全端口使用（开源库 cryptography）。"""
     import datetime as _dt
@@ -912,6 +951,8 @@ def api_settings():
             cfg["secure_port"] = max(1, min(65535, int(data["secure_port"])))
         except Exception:
             pass
+    if "secure_port_force" in data:
+        cfg["secure_port_force"] = bool(data["secure_port_force"])
     save_config(cfg)
     if changed:
         register_mdns(cfg)  # 主机名 / 开关变化立即重新注册
@@ -1643,18 +1684,29 @@ def _main():
                 if p not in candidates:
                     candidates.append(p)
             for sp in candidates:
-                if sp and _port_excluded(sp, excluded):
-                    print("[HTTPS] 端口 %s 被系统保留，跳过" % sp)
-                    continue
+                relief = None
+                if sp and _port_excluded(sp, _excluded_tcp_ranges()):
+                    # 端口被系统保留：只有开启“抢占保留端口”且是管理员时才尝试
+                    if not (cfg.get("secure_port_force", False) and _is_admin()):
+                        print("[HTTPS] 端口 %s 被系统保留，跳过（可在设置里开启抢占）" % sp)
+                        continue
+                    ok, relief = _release_reserved_port(sp)
+                    if not ok:
+                        print("[HTTPS] 端口 %s 无法释放，跳过" % sp)
+                        continue
                 try:
                     https_server = make_server("0.0.0.0", sp, app,
                                                threaded=True, ssl_context=ssl_ctx)
                     _running_secure_port = https_server.server_port
                     threading.Thread(target=https_server.serve_forever,
                                      daemon=True, name="web-https").start()
+                    _restore_net_service(relief)
+                    relief = None
                     break
                 except BaseException as exc:
                     print("[HTTPS] 端口 %s 启动失败，尝试下一个: %s" % (sp, exc))
+                finally:
+                    _restore_net_service(relief)
             if https_server is not None:
                 print("手机安全访问: https://%s:%d" % (hostname, _running_secure_port))
                 # 把实际用上的端口写回配置，下次启动直接命中，地址也稳定

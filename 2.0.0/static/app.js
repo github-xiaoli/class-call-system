@@ -350,9 +350,9 @@ function fillSettingsForm() {
     ifSel.add(new Option(it.name + "（" + (it.ips || []).join(", ") + "）", it.id));
   }
   ifSel.value = c.mdns_interface || "auto";
-  $("set-port").value = c.port || 8000;
+  $("set-secure-port").value = c.secure_port || 9443;
+  if ($("set-secure-force")) $("set-secure-force").checked = !!c.secure_port_force;
   $("set-secure-enabled").checked = c.secure_enabled !== false;
-  $("set-secure-port").value = c.secure_port || 8443;
   updatePhrasePreview();
 }
 
@@ -378,9 +378,9 @@ async function saveSettings() {
     mdns_enabled: $("set-mdns-enabled").checked,
     mdns_hostname: $("set-mdns-hostname").value.trim(),
     mdns_interface: $("set-mdns-interface").value || "auto",
-    port: parseInt($("set-port").value, 10) || 8000,
+    secure_port: parseInt($("set-secure-port").value, 10) || 9443,
+    secure_port_force: !!($("set-secure-force") && $("set-secure-force").checked),
     secure_enabled: $("set-secure-enabled").checked,
-    secure_port: parseInt($("set-secure-port").value, 10) || 8443,
   };
   try {
     await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
