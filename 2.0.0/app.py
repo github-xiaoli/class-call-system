@@ -617,6 +617,34 @@ def register_mdns(cfg):
             return False
 
 
+def _excluded_tcp_ranges():
+    """Windows 保留/排除的 TCP 端口段（Hyper-V、WSL、WinNAT 等会占用）。
+
+    落在这些段里的端口绑定会报 WinError 10013，直接跳过可少走弯路。
+    """
+    ranges = []
+    try:
+        proc = subprocess.run(
+            ["netsh", "int", "ipv4", "show", "excludedportrange", "protocol=tcp"],
+            capture_output=True, text=True, timeout=6,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
+            check=False)
+        for line in (proc.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                ranges.append((int(parts[0]), int(parts[1])))
+    except Exception:
+        pass
+    return ranges
+
+
+def _port_excluded(port, ranges):
+    for lo, hi in ranges:
+        if lo <= port <= hi:
+            return True
+    return False
+
+
 def ensure_ssl_context():
     """生成/加载自签名证书，供 HTTPS 安全端口使用（开源库 cryptography）。"""
     import datetime as _dt
@@ -1506,15 +1534,19 @@ def _main():
         status("正在准备安全服务…")
         try:
             ssl_ctx = ensure_ssl_context()
+            excluded = _excluded_tcp_ranges()
             candidates = []
             try:
                 candidates.append(int(cfg.get("secure_port", 9443)))
             except Exception:
                 candidates.append(9443)
-            for p in (9443, 10443, 12443, 14443, 15443, 0):
+            for p in (9443, 10443, 12443, 14443, 15443, 16443, 17443, 18443, 0):
                 if p not in candidates:
                     candidates.append(p)
             for sp in candidates:
+                if sp and _port_excluded(sp, excluded):
+                    print("[HTTPS] 端口 %s 被系统保留，跳过" % sp)
+                    continue
                 try:
                     https_server = make_server("0.0.0.0", sp, app,
                                                threaded=True, ssl_context=ssl_ctx)
@@ -1526,6 +1558,14 @@ def _main():
                     print("[HTTPS] 端口 %s 启动失败，尝试下一个: %s" % (sp, exc))
             if https_server is not None:
                 print("手机安全访问: https://%s:%d" % (hostname, _running_secure_port))
+                # 把实际用上的端口写回配置，下次启动直接命中，地址也稳定
+                try:
+                    if int(cfg.get("secure_port", 0) or 0) != int(_running_secure_port):
+                        cfg["secure_port"] = int(_running_secure_port)
+                        save_config(cfg)
+                        print("[HTTPS] 已把安全端口记录为 %s" % _running_secure_port)
+                except Exception:
+                    pass
             else:
                 print("[HTTPS] 所有安全端口均启动失败")
         except BaseException as exc:
