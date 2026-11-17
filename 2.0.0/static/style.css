@@ -221,7 +221,7 @@ hr { border: none; border-top: 1px solid var(--border); }
 }
 .screen-box img { width: 100%; display: block; pointer-events: none; }
 .screen-box canvas { width: 100%; display: block; background: #000; }
-.screen-box.pc-mode { cursor: none; }
+.screen-box { cursor: none; }   /* 主控端隐藏鼠标；被控端不隐藏 */
 .screen-box .empty { color: #94a3b8; position: absolute; }
 
 .mouse-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }

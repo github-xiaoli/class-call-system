@@ -141,38 +141,67 @@ function clientToAbs(cx, cy) {
   };
 }
 
-/* ---------- 手机模式：触摸注入 ---------- */
+/* ---------- 手机模式：多指触摸注入 ---------- */
+const pointerIds = new Map();   // touch.identifier -> Windows pointerId(1..10)
+let nextPointerId = 1;
+
+function pointerIdOf(id) {
+  if (!pointerIds.has(id)) {
+    if (nextPointerId > 10) nextPointerId = 1;
+    pointerIds.set(id, nextPointerId++);
+  }
+  return pointerIds.get(id);
+}
+
+const activeTouches = new Map();  // touch.identifier -> { x, y, sent }
+
+function touchToAbs(t) {
+  return clientToAbs(t.clientX, t.clientY);
+}
+
 screenBox.addEventListener("touchstart", (e) => {
   if (mode !== "mobile") return;
   e.preventDefault();
-  const t = e.touches[0];
-  const p = clientToAbs(t.clientX, t.clientY);
-  if (!p) return;
-  lastTouchX = p.x; lastTouchY = p.y;
-  lastTouchSent = Date.now();
-  sendInput({ action: "touch", type: "down", x: p.x, y: p.y });
+  for (const t of e.changedTouches) {
+    const p = touchToAbs(t);
+    if (!p) continue;
+    activeTouches.set(t.identifier, { x: p.x, y: p.y, sent: Date.now() });
+    sendInput({ action: "touch", type: "down", x: p.x, y: p.y,
+                pointer_id: pointerIdOf(t.identifier) });
+  }
 }, { passive: false });
+
 screenBox.addEventListener("touchmove", (e) => {
   if (mode !== "mobile") return;
   e.preventDefault();
-  const t = e.touches[0];
-  const p = clientToAbs(t.clientX, t.clientY);
-  if (!p) return;
-  lastTouchX = p.x; lastTouchY = p.y;
   const now = Date.now();
-  if (now - lastTouchSent < 25) return;
-  lastTouchSent = now;
-  sendInput({ action: "touch", type: "move", x: p.x, y: p.y });
+  for (const t of e.changedTouches) {
+    const st = activeTouches.get(t.identifier);
+    if (!st) continue;
+    if (now - st.sent < 22) continue;   // 每根手指独立节流
+    st.sent = now;
+    const p = touchToAbs(t);
+    if (!p) continue;
+    st.x = p.x; st.y = p.y;
+    sendInput({ action: "touch", type: "move", x: p.x, y: p.y,
+                pointer_id: pointerIdOf(t.identifier) });
+  }
 }, { passive: false });
-screenBox.addEventListener("touchend", (e) => {
+
+function endTouches(e) {
   if (mode !== "mobile") return;
   e.preventDefault();
-  sendInput({ action: "touch", type: "up", x: lastTouchX, y: lastTouchY });
-}, { passive: false });
-screenBox.addEventListener("touchcancel", (e) => {
-  if (mode !== "mobile") return;
-  sendInput({ action: "touch", type: "up", x: lastTouchX, y: lastTouchY });
-}, { passive: false });
+  for (const t of e.changedTouches) {
+    const st = activeTouches.get(t.identifier);
+    if (!st) continue;
+    sendInput({ action: "touch", type: "up", x: st.x, y: st.y,
+                pointer_id: pointerIdOf(t.identifier) });
+    activeTouches.delete(t.identifier);
+    pointerIds.delete(t.identifier);
+  }
+}
+screenBox.addEventListener("touchend", endTouches, { passive: false });
+screenBox.addEventListener("touchcancel", endTouches, { passive: false });
 
 /* ---------- 电脑模式：鼠标 + 键盘直接发送 ---------- */
 screenBox.addEventListener("mousemove", (e) => {

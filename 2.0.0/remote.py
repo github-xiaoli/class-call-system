@@ -465,7 +465,12 @@ def handle_input(data):
         ttype = str(data.get("type", "move"))
         x = int(round(float(data.get("x", 0))))
         y = int(round(float(data.get("y", 0))))
-        if not inject_touch(x, y, ttype):
+        try:
+            pid = int(data.get("pointer_id", 1) or 1)
+        except Exception:
+            pid = 1
+        pid = max(1, min(10, pid))
+        if not inject_touch(x, y, ttype, pid):
             if ttype == "down":
                 move_absolute(x, y)
                 mouse_button("left", True)

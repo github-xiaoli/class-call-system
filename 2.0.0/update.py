@@ -91,7 +91,7 @@ _state = {
 
 # 已下载待安装的版本（两段式更新：先下载解压，再手动安装重启）
 _prep_lock = threading.Lock()
-_prepared = {"version": "", "path": "", "python_delta": ""}
+_prepared = {"version": "", "path": "", "python_delta": "", "deps_missing": []}
 
 # 更新动作串行锁：避免网页连续点击导致多次下载/多次安装
 _action_lock = threading.Lock()
@@ -264,7 +264,7 @@ def _find_latest_api(channel):
                     info = json.loads(_http_get(info_url, timeout=15))
                 except Exception:
                     info = None
-            elif name.lower().endswith(".zip"):
+            elif name.lower().endswith(".zip") and not name.lower().startswith("env-"):
                 zip_asset = asset
         if not info or not zip_asset:
             continue
@@ -526,13 +526,15 @@ def _close_desktop_window():
 def _clear_prepared():
     with _prep_lock:
         _prepared.clear()
-        _prepared.update({"version": "", "path": "", "python_delta": ""})
+        _prepared.update({"version": "", "path": "", "python_delta": "",
+                          "deps_missing": []})
 
 
-def _set_prepared(version, path, python_delta=""):
+def _set_prepared(version, path, python_delta="", deps_missing=None):
     with _prep_lock:
         _prepared.update({"version": version, "path": path,
-                          "python_delta": python_delta or ""})
+                          "python_delta": python_delta or "",
+                          "deps_missing": list(deps_missing or [])})
 
 
 def _get_prepared():
@@ -602,11 +604,29 @@ def _do_prepare(info=None, zip_path=None, channel=None):
 
         ready_version, py_delta = _install_zip(local_zip, new_version)
         dest = os.path.join(ROOT_DIR, ready_version)
-        _set_prepared(ready_version, dest, py_delta)
 
+        # 智能更新：校验新版本依赖，缺了才下载完整运行环境
+        requires = _read_requires(dest)
+        missing = _check_deps(requires) if requires else []
+        env_dir = py_delta or ""
+        if missing and info.get("env_asset"):
+            _set(stage="download", percent=56, version=ready_version,
+                 detail="检测到 %d 项依赖不符（%s），正在下载运行环境…"
+                        % (len(missing), "、".join(missing[:3])))
+            env_dir = _download_env(info, ready_version) or env_dir
+        elif missing:
+            _set(stage="download", percent=56, version=ready_version,
+                 detail="依赖不符（%s），但该版本未提供环境包" % "、".join(missing[:3]))
+
+        _set_prepared(ready_version, dest, env_dir, missing)
+        if env_dir:
+            detail = "已下载并解压完成（含运行环境），请点击「安装并重启」"
+        elif missing:
+            detail = "已解压完成（依赖可能不符），请点击「安装并重启」"
+        else:
+            detail = "已下载并解压完成（运行环境已是最新），请点击「安装并重启」"
         _set(stage="ready", percent=100, running=False, version=ready_version,
-             detail=("已下载并解压完成（含运行环境更新），请点击「安装并重启」" if py_delta
-                     else "已下载并解压完成，请点击「安装并重启」"))
+             detail=detail)
         _close_desktop_window()
         return True
     except Exception as exc:
@@ -614,6 +634,93 @@ def _do_prepare(info=None, zip_path=None, channel=None):
              error=str(exc), detail="下载失败：" + str(exc))
         _close_desktop_window()
         return False
+
+
+def _read_requires(code_dir):
+    """读取新版本 requirements.txt 里的 name==version 列表。"""
+    path = os.path.join(code_dir, "requirements.txt")
+    items = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "==" not in line:
+                    continue
+                name, ver = line.split("==", 1)
+                items.append([name.strip(), ver.split("#")[0].strip()])
+    except Exception:
+        pass
+    return items
+
+
+def _check_deps(requires):
+    """检查依赖是否齐全（在当前内置 python 里查版本）。返回缺失/不匹配列表。"""
+    import importlib.metadata as _md
+    missing = []
+    for name, want in requires:
+        try:
+            have = _md.version(name)
+        except Exception:
+            missing.append("%s(未安装)" % name)
+            continue
+        if want and have != want:
+            missing.append("%s(需 %s，实际 %s)" % (name, want, have))
+    return missing
+
+
+def _download_env(info, new_version):
+    """下载完整运行环境包并解压到临时目录，返回 python/ 子目录路径。"""
+    asset = str(info.get("env_asset", "") or "")
+    if not asset:
+        return ""
+    env_url = str(info.get("env_url", "") or "")
+    if not env_url:
+        tag = str(info.get("env_tag", "") or info.get("tag", "") or "")
+        if tag:
+            env_url = "%s/releases/download/%s/%s" % (GITHUB_WEB, tag, asset)
+    if not env_url:
+        return ""
+    bases = _cdn_speedtest(info.get("info_url", "") or info.get("zip_url", ""))
+    cache = os.path.join(DATA_DIR, "update_cache")
+    os.makedirs(cache, exist_ok=True)
+    env_zip = os.path.join(cache, "env_" + (new_version or "tmp") + ".zip")
+    last_exc = None
+    for i, base in enumerate(bases[:6]):
+        try:
+            _set(stage="download", percent=60,
+                 detail="正在下载运行环境（线路 %d/6，约 %d MB）…"
+                        % (i + 1, int(int(info.get("env_bytes") or 0) / 1048576)))
+            _download(base + env_url, env_zip, 60, 85)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            print("[更新] 环境包线路 %s 失败: %s" % (base, exc))
+            try:
+                if os.path.isfile(env_zip):
+                    os.remove(env_zip)
+            except Exception:
+                pass
+    if last_exc is not None:
+        raise last_exc
+    tmp = os.path.join(ROOT_DIR, "_update_env_tmp")
+    if os.path.isdir(tmp):
+        shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp, exist_ok=True)
+    with zipfile.ZipFile(env_zip) as zf:
+        names = zf.namelist()
+        total = len(names) or 1
+        tmp_abs = os.path.abspath(tmp)
+        for i, n in enumerate(names):
+            target = os.path.abspath(os.path.join(tmp, n))
+            if not target.startswith(tmp_abs + os.sep) and target != tmp_abs:
+                raise RuntimeError("环境包包含非法路径")
+            zf.extract(n, tmp)
+            if i % 400 == 0 or i == total - 1:
+                _set(stage="extract", percent=85 + int((i + 1) / total * 10),
+                     detail="正在解压运行环境 %d/%d" % (i + 1, total))
+    py_dir = os.path.join(tmp, "python")
+    return py_dir if os.path.isdir(py_dir) else tmp
 
 
 REQUIRED_MODULES = ("flask", "zeroconf", "win32api", "win32gui", "PIL")
@@ -917,6 +1024,7 @@ def api_update_progress():
     snap["ready"] = bool(prep.get("version")) and os.path.isdir(prep.get("path", ""))
     snap["ready_version"] = prep.get("version", "")
     snap["python_delta"] = bool(prep.get("python_delta"))
+    snap["deps_missing"] = list(prep.get("deps_missing") or [])
     return jsonify({"ok": True, "progress": snap})
 
 

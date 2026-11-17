@@ -1,6 +1,12 @@
 {
   "stable": {
     "version": "2.0.1",
+    "env_asset": "",
+    "env_tag": "",
+    "env_files": 0,
+    "env_bytes": 0,
+    "env_sha256": "",
+    "requires": [],
     "channel": "stable",
     "notes": "- 新增 OTA 软件更新功能\n- 两段式更新：先下载解压，再手动点「安装并重启」\n- 更新进度：测速 3-15% / 下载 15-55% / 解压 55-92% / 安装 96-100%\n- CDN 并发测速（12 路），自动选择最快线路\n- 更新包可附带 python/ 目录，增量更新运行环境（依赖固定版本）\n- 安装前自动检查依赖，缺库则不切换，避免更新后起不来\n- 已是最新版本时不再提示「发现新版本」\n- 进度窗口：标题与状态大字体居中、转圈动画居中、可最小化\n- 刷新更新页面仍可继续显示进度",
     "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.1/classcaller-2.0.1.zip",
@@ -10,6 +16,12 @@
   },
   "beta": {
     "version": "2.0.2",
+    "env_asset": "",
+    "env_tag": "",
+    "env_files": 0,
+    "env_bytes": 0,
+    "env_sha256": "",
+    "requires": [],
     "channel": "beta",
     "notes": "- 【内测通道】2.0.2 测试版\n- 更新包内含完整 python 运行环境（python/ 目录，增量覆盖安装）\n- 更新流程：下载解压（不改版本）→ 点「安装并重启」\n- 进度分布：测速 3-15% / 下载 15-55% / 解压 55-92% / 安装 96-100%\n- 安装前依赖自检，缺库不切换版本\n- 已是最新版本时不再提示发现新版本\n- 注意：内测包较大（含运行环境），下载耗时较长",
     "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.2/classcaller-2.0.2.zip",
@@ -18,12 +30,171 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.2/release-info.json"
   },
   "dev": {
-    "version": "2.0.9",
+    "version": "2.0.11",
+    "env_asset": "env-2.0.11.zip",
+    "env_tag": "v2.0.11",
+    "env_files": 3366,
+    "env_bytes": 243073830,
+    "env_sha256": "7ecd85b861870cd577e58436e61334539e568a52005ad4357cf57cdae10bcdaf",
+    "requires": [
+      [
+        "Flask",
+        "3.1.3"
+      ],
+      [
+        "Werkzeug",
+        "3.1.9"
+      ],
+      [
+        "Jinja2",
+        "3.1.6"
+      ],
+      [
+        "MarkupSafe",
+        "3.0.4"
+      ],
+      [
+        "itsdangerous",
+        "2.2.0"
+      ],
+      [
+        "click",
+        "8.5.1"
+      ],
+      [
+        "blinker",
+        "1.9.0"
+      ],
+      [
+        "flask-sock",
+        "0.7.0"
+      ],
+      [
+        "simple-websocket",
+        "1.1.0"
+      ],
+      [
+        "wsproto",
+        "1.3.2"
+      ],
+      [
+        "h11",
+        "0.16.0"
+      ],
+      [
+        "zeroconf",
+        "0.154.0"
+      ],
+      [
+        "ifaddr",
+        "0.2.0"
+      ],
+      [
+        "pywin32",
+        "312"
+      ],
+      [
+        "pypiwin32",
+        "223"
+      ],
+      [
+        "pillow",
+        "13.0.0"
+      ],
+      [
+        "cryptography",
+        "50.0.2"
+      ],
+      [
+        "cffi",
+        "2.1.1"
+      ],
+      [
+        "pycparser",
+        "3.12"
+      ],
+      [
+        "numpy",
+        "2.5.4"
+      ],
+      [
+        "opencv-python-headless",
+        "5.0.0.93"
+      ],
+      [
+        "sounddevice",
+        "0.5.6"
+      ],
+      [
+        "comtypes",
+        "1.5.0"
+      ],
+      [
+        "pycaw",
+        "20260927"
+      ],
+      [
+        "psutil",
+        "7.2.2"
+      ],
+      [
+        "edge-tts",
+        "7.3.1"
+      ],
+      [
+        "aiohttp",
+        "3.14.5"
+      ],
+      [
+        "aiohappyeyeballs",
+        "2.7.1"
+      ],
+      [
+        "aiosignal",
+        "1.4.0"
+      ],
+      [
+        "attrs",
+        "26.1.0"
+      ],
+      [
+        "frozenlist",
+        "1.8.0"
+      ],
+      [
+        "multidict",
+        "7.2.1"
+      ],
+      [
+        "propcache",
+        "0.5.4"
+      ],
+      [
+        "yarl",
+        "1.25.1"
+      ],
+      [
+        "idna",
+        "3.20"
+      ],
+      [
+        "certifi",
+        "2026.10.23"
+      ],
+      [
+        "typing_extensions",
+        "4.16.0"
+      ],
+      [
+        "tabulate",
+        "0.10.0"
+      ]
+    ],
     "channel": "dev",
-    "notes": "- 【开发版】2.0.9\n- 监控：摄像头名称改为 DirectShow 真实顺序，下拉选择与实际设备对应\n- 监控：摄像头/麦克风列表改为本地枚举+启动预热，打开页面立刻有列表\n- 监控：视频改为“回执驱动”推流，长时间观看不再越看越卡\n- 监控：麦克风列表只保留真实设备（去重同一设备的多接口映射）\n- 文件：下载改为表单提交，兼容更多浏览器（含手机浏览器）\n- 文件：上传增加进度条显示\n- 图标：统一为新的叫号器图标（白色背景），含网页图标\n- 更新包内含完整 python 运行环境（python/ 目录增量覆盖）",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.9/classcaller-2.0.9.zip",
-    "zip_asset": "classcaller-2.0.9.zip",
-    "tag": "v2.0.9",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.9/release-info.json"
+    "notes": "- 【开发版】2.0.11\n- 监控：摄像头名称改为 DirectShow 真实顺序，下拉选择与实际设备对应\n- 监控：摄像头/麦克风列表改为本地枚举+启动预热，打开页面立刻有列表\n- 监控：视频改为“回执驱动”推流，长时间观看不再越看越卡\n- 监控：麦克风列表只保留真实设备（去重同一设备的多接口映射）\n- 文件：下载改为表单提交，兼容更多浏览器（含手机浏览器）\n- 文件：上传增加进度条显示\n- 图标：统一为新的叫号器图标（白色背景），含网页图标\n- 更新：代码包只发增量（秒下），运行环境单独校验、需要时自动下载并更新\n- 更新：下载支持断点续传；连续点击不会重复下载",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.11/classcaller-2.0.11.zip",
+    "zip_asset": "classcaller-2.0.11.zip",
+    "tag": "v2.0.11",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.11/release-info.json"
   }
 }
