@@ -295,12 +295,12 @@ def _find_latest_api(channel):
 
 
 def _cdn_speedtest(info_url):
-    """并发探测各 CDN（下载 release-info.json），返回最快的 CDN 前缀。
+    """并发探测各 CDN，返回按耗时排序的线路列表（第一个最快）。
 
-    并发 12 路 + 单个 4s 超时，整体约 5~10 秒完成，避免串行等待。
+    并发 12 路 + 单个 4s 超时；下载大文件时按这个顺序逐个回退重试。
     """
     if not info_url:
-        return CDN_BASES[0]
+        return list(CDN_BASES)
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     total = len(CDN_BASES)
@@ -316,9 +316,9 @@ def _cdn_speedtest(info_url):
             pass
         return base, None
 
-    best = None
-    best_ms = None
+    ok = []
     done = 0
+    best_ms = None
     with ThreadPoolExecutor(max_workers=12) as ex:
         futures = [ex.submit(probe, b) for b in CDN_BASES]
         for fut in as_completed(futures):
@@ -327,13 +327,19 @@ def _cdn_speedtest(info_url):
             except Exception:
                 continue
             done += 1
-            if ms is not None and (best_ms is None or ms < best_ms):
-                best_ms = ms
-                best = base
+            if ms is not None:
+                ok.append((ms, base))
+                if best_ms is None or ms < best_ms:
+                    best_ms = ms
             _set(percent=3 + int(done / total * 12),
                  detail="正在测速选择最快线路（%d/%d，最快 %s）…"
                         % (done, total, ("%.0fms" % best_ms) if best_ms else "—"))
-    return best or CDN_BASES[0]
+    ok.sort(key=lambda x: x[0])
+    ordered = [b for _ms, b in ok]
+    for b in CDN_BASES:            # 测速失败的也排在后面兜底
+        if b not in ordered:
+            ordered.append(b)
+    return ordered
 
 
 def _download(url, dest, p0, p1):
@@ -344,12 +350,12 @@ def _download(url, dest, p0, p1):
     ctx.check_hostname = False
     ctx.verify_mode = _ssl.CERT_NONE
     req = urllib.request.Request(url, headers={"User-Agent": "ClassCaller-OTA/2.0"})
-    with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+    with urllib.request.urlopen(req, timeout=180, context=ctx) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         with open(dest, "wb") as f:
             while True:
-                chunk = resp.read(256 * 1024)
+                chunk = resp.read(512 * 1024)
                 if not chunk:
                     break
                 f.write(chunk)
@@ -530,13 +536,31 @@ def _do_prepare(info=None, zip_path=None, channel=None):
              detail="准备下载更新包…", version=new_version)
 
         if zip_path is None:
-            base = _cdn_speedtest(info.get("info_url", "") or info.get("zip_url", ""))
-            url = base + info.get("zip_url", "")
-            _set(stage="download", percent=15, detail="开始下载…")
+            bases = _cdn_speedtest(info.get("info_url", "") or info.get("zip_url", ""))
+            tail = info.get("zip_url", "")
             cache = os.path.join(DATA_DIR, "update_cache")
             os.makedirs(cache, exist_ok=True)
             local_zip = os.path.join(cache, "update_" + (new_version or "tmp") + ".zip")
-            _download(url, local_zip, 15, 55)
+            last_exc = None
+            for i, base in enumerate(bases):
+                try:
+                    _set(stage="download", percent=15,
+                         detail="正在下载（线路 %d/%d）…" % (i + 1, min(len(bases), 6)))
+                    _download(base + tail, local_zip, 15, 55)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    print("[更新] 线路 %s 下载失败: %s" % (base, exc))
+                    try:
+                        if os.path.isfile(local_zip):
+                            os.remove(local_zip)
+                    except Exception:
+                        pass
+                    if i >= 5:      # 最多试 6 条线路
+                        break
+            if last_exc is not None:
+                raise last_exc
         else:
             local_zip = zip_path
 
@@ -786,14 +810,12 @@ def api_update_start():
         return err
     data = _json_body()
     channel = data.get("channel") or _cfg().get("update_channel", "stable")
-    if _get_state().get("running"):
-        return jsonify({"ok": True, "message": "更新已在进行中"})
     # 已经下载解压好了就直接复用，避免重复下载
     prep = _get_prepared()
     if prep.get("version") and os.path.isdir(prep.get("path", "")):
         return jsonify({"ok": True, "message": "更新包已就绪，请点击「安装并重启」",
                         "version": prep.get("version")})
-    _set(stage="check", percent=0, detail="正在检查更新…", running=True)
+    # 先拿锁再改状态：拿不到锁说明已有任务在跑，绝不能覆盖它的进度
     if not _start_worker("ota-prepare", _do_prepare, None, None, channel):
         return jsonify({"ok": True, "message": "更新已在进行中"}), 202
     return jsonify({"ok": True, "message": "开始下载更新包", "channel": channel})
@@ -850,6 +872,10 @@ def api_update_progress():
     if err:
         return err
     snap = _get_state()
+    # 自愈：没有更新任务在跑（锁空闲）时不要显示“运行中”
+    if snap.get("running") and not _action_lock.locked():
+        _set(running=False)
+        snap = _get_state()
     snap["current_version"] = _current_version()
     prep = _get_prepared()
     snap["ready"] = bool(prep.get("version")) and os.path.isdir(prep.get("path", ""))

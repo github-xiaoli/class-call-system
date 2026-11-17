@@ -1549,7 +1549,9 @@ def run_startup_checks(cfg, hostname, port, secure_port, progress=None):
 
 
 _SINGLE_INSTANCE_MUTEX = None
-_SINGLE_INSTANCE_NAME = "Local\\CQT_ClassCaller_SingleInstance_9F2A"
+# 互斥体名带上安装路径指纹：不同安装目录（如测试版/正式版）互不影响
+_SINGLE_INSTANCE_NAME = "Local\\CQT_ClassCaller_" + \
+    __import__("hashlib").md5(ROOT_DIR.encode("utf-8")).hexdigest()[:12]
 
 
 def acquire_single_instance():
