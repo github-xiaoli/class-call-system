@@ -59,32 +59,170 @@ BLOCK_SIZE = 2400  # 50ms @48k，块大一点更稳，仍保持低延迟
 _CAM_LOCK = threading.Lock()
 _CAMS_IN_USE = set()
 _CAM_NAMES_CACHE = {"names": [], "time": 0.0}
+_MIC_CACHE = {"list": [], "time": 0.0}
+
+
+def _dshow_camera_names():
+    """用 DirectShow 设备枚举器取摄像头名称。
+
+    关键：返回顺序与 OpenCV CAP_DSHOW 的 index 完全一致，
+    这样下拉框里的名字和实际打开的设备才对应得上。
+    """
+    import ctypes
+    from ctypes import POINTER, byref, c_ulong, c_wchar_p
+
+    import comtypes
+    from comtypes import (CLSCTX_INPROC_SERVER, COMMETHOD, GUID, HRESULT,
+                          IUnknown, CoCreateInstance)
+    from comtypes.automation import VARIANT
+
+    clsid_sys_dev_enum = GUID("{62BE5D10-60EB-11D0-BD3B-00A0C911CE86}")
+    clsid_video_input = GUID("{860BB310-5D01-11D0-BD3B-00A0C911CE86}")
+    iid_property_bag = GUID("{55272A00-42CB-11CE-8135-00AA004BB851}")
+
+    class IPropertyBag(IUnknown):
+        _iid_ = iid_property_bag
+        _methods_ = [
+            COMMETHOD([], HRESULT, "Read",
+                      (["in"], c_wchar_p, "pszPropName"),
+                      (["in"], POINTER(VARIANT), "pVar"),
+                      (["in"], POINTER(IUnknown), "pErrorLog")),
+            COMMETHOD([], HRESULT, "Write",
+                      (["in"], c_wchar_p, "pszPropName"),
+                      (["in"], POINTER(VARIANT), "pVar")),
+        ]
+
+    class IMoniker(IUnknown):
+        _iid_ = GUID("{0000000F-0000-0000-C000-000000000046}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "GetClassID"),
+            COMMETHOD([], HRESULT, "IsDirty"),
+            COMMETHOD([], HRESULT, "Load"),
+            COMMETHOD([], HRESULT, "Save"),
+            COMMETHOD([], HRESULT, "GetSizeMax"),
+            COMMETHOD([], HRESULT, "BindToObject"),
+            COMMETHOD([], HRESULT, "BindToStorage",
+                      (["in"], ctypes.c_void_p, "pbc"),
+                      (["in"], ctypes.c_void_p, "pmkToLeft"),
+                      (["in"], POINTER(GUID), "riid"),
+                      (["in"], POINTER(ctypes.c_void_p), "ppvObj")),
+            COMMETHOD([], HRESULT, "Reduce"),
+            COMMETHOD([], HRESULT, "ComposeWith"),
+            COMMETHOD([], HRESULT, "Enum"),
+            COMMETHOD([], HRESULT, "IsEqual"),
+            COMMETHOD([], HRESULT, "Hash"),
+            COMMETHOD([], HRESULT, "IsRunning"),
+            COMMETHOD([], HRESULT, "GetTimeOfLastChange"),
+            COMMETHOD([], HRESULT, "Inverse"),
+            COMMETHOD([], HRESULT, "RelativePathTo"),
+            COMMETHOD([], HRESULT, "GetDisplayName"),
+        ]
+
+    class IEnumMoniker(IUnknown):
+        _iid_ = GUID("{00000102-0000-0000-C000-000000000046}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "Next",
+                      (["in"], c_ulong, "celt"),
+                      (["in"], POINTER(POINTER(IMoniker)), "rgelt"),
+                      (["in"], POINTER(c_ulong), "pceltFetched")),
+            COMMETHOD([], HRESULT, "Skip", (["in"], c_ulong, "celt")),
+            COMMETHOD([], HRESULT, "Reset"),
+            COMMETHOD([], HRESULT, "Clone"),
+        ]
+
+    class ICreateDevEnum(IUnknown):
+        _iid_ = GUID("{29840822-5B84-11D0-BD3B-00A0C911CE86}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "CreateClassEnumerator",
+                      (["in"], POINTER(GUID), "pType"),
+                      (["in"], POINTER(POINTER(IEnumMoniker)), "ppEnumMoniker"),
+                      (["in"], c_ulong, "dwFlags")),
+        ]
+
+    def friendly_name(moniker):
+        raw = ctypes.c_void_p()
+        moniker.BindToStorage(None, None, byref(iid_property_bag), byref(raw))
+        if not raw.value:
+            return ""
+        bag = ctypes.cast(raw, POINTER(IPropertyBag))
+        for key in ("FriendlyName", "Description"):
+            var = VARIANT()
+            try:
+                bag.Read(key, byref(var), None)
+                if var.value:
+                    return str(var.value)
+            except Exception:
+                continue
+        return ""
+
+    comtypes.CoInitialize()
+    dev_enum = CoCreateInstance(clsid_sys_dev_enum, interface=ICreateDevEnum,
+                                clsctx=CLSCTX_INPROC_SERVER)
+    enum_moniker = POINTER(IEnumMoniker)()
+    dev_enum.CreateClassEnumerator(byref(clsid_video_input), byref(enum_moniker), 0)
+    names = []
+    if not enum_moniker:
+        return names
+    while True:
+        try:
+            moniker = POINTER(IMoniker)()
+            fetched = c_ulong(0)
+            enum_moniker.Next(1, byref(moniker), byref(fetched))
+        except Exception:
+            break
+        if not moniker or not fetched.value:
+            break
+        try:
+            names.append(friendly_name(moniker) or ("摄像头 %d" % (len(names) + 1)))
+        except Exception:
+            names.append("摄像头 %d" % (len(names) + 1))
+    return names
 
 
 def _pnp_camera_names():
-    """获取系统摄像头真实名称（如 Smart Camera），按 PnP 顺序返回，缓存 30 秒。"""
+    """摄像头名称（DirectShow 顺序，缓存 60 秒；失败时退回 PnP 名称）。"""
     now = time.time()
-    if _CAM_NAMES_CACHE["names"] and now - _CAM_NAMES_CACHE["time"] < 30:
+    if _CAM_NAMES_CACHE["names"] and now - _CAM_NAMES_CACHE["time"] < 60:
         return list(_CAM_NAMES_CACHE["names"])
     names = []
     try:
-        ps = ("Get-PnpDevice -Class Camera -Status OK -ErrorAction SilentlyContinue | "
-              "Select-Object -ExpandProperty FriendlyName")
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-Command", ps],
-            capture_output=True, text=True, timeout=20,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
-            check=False)
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if line:
-                names.append(line)
+        names = _dshow_camera_names()
     except Exception as exc:
-        print("[监控] 获取摄像头名称失败:", exc)
-    _CAM_NAMES_CACHE["names"] = names
-    _CAM_NAMES_CACHE["time"] = now
+        print("[监控] DirectShow 枚举失败:", exc)
+    if not names:
+        try:
+            ps = ("Get-PnpDevice -Class Camera -Status OK -ErrorAction SilentlyContinue | "
+                  "Select-Object -ExpandProperty FriendlyName")
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                 "-Command", ps],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
+                check=False)
+            for line in (proc.stdout or "").splitlines():
+                line = line.strip()
+                if line:
+                    names.append(line)
+        except Exception as exc:
+            print("[监控] 获取摄像头名称失败:", exc)
+    if names:
+        _CAM_NAMES_CACHE["names"] = names
+        _CAM_NAMES_CACHE["time"] = now
     return list(names)
+
+
+def warm_devices():
+    """启动后在后台预热设备列表，避免第一次打开监控页等很久。"""
+    def work():
+        try:
+            _pnp_camera_names()
+        except Exception:
+            pass
+        try:
+            _list_mics()
+        except Exception:
+            pass
+    threading.Thread(target=work, daemon=True, name="monitor-warmup").start()
 
 
 @monitor_bp.route("/api/monitor/cameras")
@@ -93,15 +231,15 @@ def api_monitor_cameras():
     if err:
         return err
     names = _pnp_camera_names()
-    cams = []
-    if HAS_CV2:
-        for i in range(8):
+    cams = [{"index": i, "name": n} for i, n in enumerate(names)]
+    if not cams and HAS_CV2:
+        # 枚举失败时的兜底：探测前 4 个索引
+        for i in range(4):
             cap = None
             try:
                 cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
                 if cap.isOpened():
-                    name = names[i] if i < len(names) else "摄像头 %d" % (i + 1)
-                    cams.append({"index": i, "name": name})
+                    cams.append({"index": i, "name": "摄像头 %d" % (i + 1)})
             except Exception:
                 pass
             finally:
@@ -227,23 +365,91 @@ def _ensure_mic_stream(device):
             return False
 
 
+def _list_mics():
+    """麦克风列表（缓存 30 秒）。
+
+    PortAudio 会把同一支麦克风按不同主机接口（WASAPI / DirectSound / MME / WDM-KS）
+    重复列出来，还有“主声音捕获驱动程序”“Microsoft Sound Mapper”等虚拟设备。
+    这里只保留真实设备（优先 WASAPI），并按名称去重，与系统显示保持一致。
+    """
+    now = time.time()
+    if _MIC_CACHE["list"] and now - _MIC_CACHE["time"] < 30:
+        return list(_MIC_CACHE["list"])
+    mics = []
+    if HAS_SD:
+        try:
+            devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+
+            def api_name(dev):
+                try:
+                    return str(hostapis[int(dev.get("hostapi", 0))].get("name", ""))
+                except Exception:
+                    return ""
+
+            # 优先 WASAPI（与系统“声音设置”一致的那一套）
+            preferred = None
+            for i, ha in enumerate(hostapis):
+                if "wasapi" in str(ha.get("name", "")).lower():
+                    preferred = i
+                    break
+
+            pseudo = ("sound mapper", "主声音", "primary sound",
+                      "声音映射器", "microsoft sound mapper")
+
+            def usable(dev):
+                if int(dev.get("max_input_channels", 0)) <= 0:
+                    return False
+                name = str(dev.get("name", "")).strip()
+                if not name:
+                    return False
+                low = name.lower()
+                return not any(p in low for p in pseudo)
+
+            pool = []
+            if preferred is not None:
+                pool = [(i, d) for i, d in enumerate(devices)
+                        if d.get("hostapi") == preferred and usable(d)]
+            if not pool:  # 没有 WASAPI 时退回全部接口，再去重
+                pool = [(i, d) for i, d in enumerate(devices) if usable(d)]
+
+            default_in = None
+            try:
+                default_in = sd.default.device[0]
+            except Exception:
+                pass
+
+            seen = set()
+            for i, d in pool:
+                name = str(d.get("name", "")).strip()
+                if name in seen:
+                    continue
+                seen.add(name)
+                mics.append({"index": i, "name": name})
+
+            marked = False
+            for m in mics:
+                if default_in is not None and m["index"] == default_in:
+                    m["name"] = m["name"] + "（默认）"
+                    marked = True
+                    break
+            if not marked and mics:
+                mics[0]["name"] = mics[0]["name"] + "（默认）"
+        except Exception as exc:
+            print("[监控] 枚举麦克风失败:", exc)
+    if not mics:
+        mics.append({"index": -1, "name": "系统默认麦克风"})
+    _MIC_CACHE["list"] = mics
+    _MIC_CACHE["time"] = now
+    return list(mics)
+
+
 @monitor_bp.route("/api/monitor/mics")
 def api_monitor_mics():
     err = check_access()
     if err:
         return err
-    mics = []
-    if HAS_SD:
-        try:
-            for i, d in enumerate(sd.query_devices()):
-                if int(d.get("max_input_channels", 0)) > 0:
-                    mics.append({"index": i,
-                                 "name": str(d.get("name", "麦克风 %d" % (i + 1)))})
-        except Exception:
-            pass
-    if not mics:
-        mics.append({"index": -1, "name": "系统默认麦克风"})
-    return jsonify({"ok": True, "mics": mics})
+    return jsonify({"ok": True, "mics": _list_mics()})
 
 
 @monitor_bp.route("/api/monitor/audio")
@@ -437,27 +643,71 @@ def ws_monitor_camera(ws):
             _ws_fail(ws, "该摄像头正在被占用")
             return
         _CAMS_IN_USE.add(index)
-    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-    if not cap.isOpened():
+
+    def open_cam():
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            return None
+        try:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 20)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 只保留最新一帧，避免越读越旧
+        except Exception:
+            pass
+        return cap
+
+    cap = open_cam()
+    if cap is None:
         with _CAM_LOCK:
             _CAMS_IN_USE.discard(index)
         _ws_fail(ws, "无法打开摄像头 %d" % (index + 1))
         return
+
+    quality = 55
+    slow = 0
+    fails = 0
     try:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 15)
         while True:
+            t0 = time.time()
             ok, frame = cap.read()
             if not ok:
-                break
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+                fails += 1
+                if fails == 20:
+                    # 长时间读不到画面：重开一次（USB 相机偶发掉帧）
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+                    cap = open_cam()
+                    if cap is None:
+                        break
+                time.sleep(0.05)
+                continue
+            fails = 0
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ok:
                 try:
                     ws.send(buf.tobytes())
                 except Exception:
                     break
-            time.sleep(0.02)
+            # 等客户端“已渲染”回执：客户端慢就自然降帧，防止积压导致越来越卡
+            try:
+                ws.receive(timeout=0.4)
+            except Exception:
+                pass
+            cost = (time.time() - t0) * 1000
+            if cost > 180:
+                slow += 1
+                if slow >= 12 and quality > 35:
+                    quality -= 10
+                    slow = 0
+            elif cost < 80:
+                slow = 0
+                if quality < 55:
+                    quality += 5
+            time.sleep(0.01)
     finally:
         try:
             cap.release()

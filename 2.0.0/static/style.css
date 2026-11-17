@@ -301,3 +301,13 @@ button.mini:active { transform: scale(.96); }
 .badge.ok { background: #16a34a; }
 .badge.warn { background: #d97706; }
 .badge.gray { background: #94a3b8; }
+
+/* 统一图标（白色背景） */
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-icon { width: 26px; height: 26px; border-radius: 6px; display: block; background: #fff; }
+
+/* 上传进度 */
+.upload-progress { margin: 10px 0 4px; }
+.up-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #475569; margin-bottom: 4px; }
+.up-bar { height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.up-bar > div { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg,#2563eb,#38bdf8); transition: width .2s ease; }

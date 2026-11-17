@@ -113,6 +113,12 @@ function playPcm16(bytes) {
   nextTime = t + buf.duration;
 }
 
+function camAck() {
+  if (camWs && camWs.readyState === 1) {
+    try { camWs.send("1"); } catch (e) { /* 忽略 */ }
+  }
+}
+
 async function startMonitor() {
   const cam = $("cam-select").value;
   const mic = $("mic-select").value;
@@ -126,8 +132,8 @@ async function startMonitor() {
     camWs = openWs(cUrl);
     camWs.binaryType = "arraybuffer";
     camWs.onmessage = (e) => {
-      // 只渲染最新一帧：解码忙时丢弃中间帧，避免画面拖尾卡顿
-      if (videoBusy) return;
+      // 服务端按“回执”节流：解码忙时立刻回执并丢弃这一帧，避免画面越拖越卡
+      if (videoBusy) { camAck(); return; }
       videoBusy = true;
       const blob = new Blob([e.data], { type: "image/jpeg" });
       const canvas = $("video");
@@ -141,7 +147,8 @@ async function startMonitor() {
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
           videoBusy = false;
-        }).catch(() => { videoBusy = false; });
+          camAck();
+        }).catch(() => { videoBusy = false; camAck(); });
       } else {
         const u = URL.createObjectURL(blob);
         const img = new Image();
@@ -153,8 +160,9 @@ async function startMonitor() {
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
           videoBusy = false;
+          camAck();
         };
-        img.onerror = () => { videoBusy = false; };
+        img.onerror = () => { URL.revokeObjectURL(u); videoBusy = false; camAck(); };
         img.src = u;
       }
     };

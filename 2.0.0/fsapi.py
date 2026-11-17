@@ -221,12 +221,19 @@ def api_fs_delete():
     return jsonify({"ok": True, "deleted": deleted, "skipped": len(skipped)})
 
 
-@fs_bp.route("/api/fs/download")
+@fs_bp.route("/api/fs/download", methods=["GET", "POST"])
 def api_fs_download():
-    err = check_access()
-    if err:
-        return err
-    path = _norm(request.args.get("path", ""))
+    # 允许 POST 表单携带 token：部分浏览器对脚本点击的 <a download> 不放行，
+    # 用真实表单提交能稳定触发下载（且是流式，不吃内存）。
+    from auth import is_local, verify_token
+
+    if not is_local():
+        token = (request.args.get("token") or request.form.get("token")
+                 or request.headers.get("X-Auth-Token") or "")
+        if not (token and verify_token(token)):
+            return jsonify({"ok": False, "error": "需要密码激活后才能使用该功能"}), 401
+    raw_path = request.form.get("path") or request.args.get("path", "")
+    path = _norm(raw_path)
     if not path or not os.path.isfile(path):
         return jsonify({"ok": False, "error": "文件不存在"}), 400
     try:

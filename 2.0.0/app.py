@@ -1492,6 +1492,13 @@ def _main():
 
     threading.Thread(target=_serve, daemon=True, name="web-server").start()
 
+    # 后台预热摄像头/麦克风列表，避免第一次打开监控页要等很久
+    try:
+        import monitor as _mon
+        _mon.warm_devices()
+    except Exception:
+        pass
+
     # HTTPS 安全端口（手机端 WebCrypto 需要安全上下文；端口被占用/保留时自动回退）
     https_server = None
     _running_secure_port = None

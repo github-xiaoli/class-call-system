@@ -66,8 +66,31 @@ def _center_pos(w, h):
             rect[1] + (rect[3] - rect[1] - h) // 2)
 
 
+def _icon_from_static(data_dir):
+    """优先用版本目录里的 static/icon.png（随更新一起下发）生成 data/icon.ico。"""
+    try:
+        png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "icon.png")
+        if not os.path.isfile(png):
+            return None
+        from PIL import Image
+        img = Image.open(png).convert("RGBA")
+        if img.getextrema()[3][0] < 255:
+            # 透明像素统一铺白底
+            bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            bg.alpha_composite(img)
+            img = bg
+        os.makedirs(data_dir, exist_ok=True)
+        out = os.path.join(data_dir, "icon.ico")
+        img.save(out, format="ICO",
+                 sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+                        (128, 128), (256, 256)])
+        return out
+    except Exception:
+        return None
+
+
 def _make_tray_icon(data_dir):
-    """生成/加载托盘图标：优先 data/icon.ico，否则用 Pillow 画一个蓝色圆角“叫”字图标。"""
+    """生成/加载托盘图标：优先 data/icon.ico，缺失时从 static/icon.png 生成。"""
     icon_path = os.path.join(data_dir, "icon.ico")
     try:
         if os.path.isfile(icon_path):
@@ -77,6 +100,15 @@ def _make_tray_icon(data_dir):
                 return hicon
     except Exception:
         pass
+    gen = _icon_from_static(data_dir)
+    if gen:
+        try:
+            hicon = win32gui.LoadImage(0, gen, win32con.IMAGE_ICON, 0, 0,
+                                       win32con.LR_LOADFROMFILE)
+            if hicon:
+                return hicon
+        except Exception:
+            pass
     try:
         from PIL import Image, ImageDraw, ImageFont
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))

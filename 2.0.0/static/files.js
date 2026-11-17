@@ -125,13 +125,7 @@ async function onOp(op, path) {
   const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
   try {
     if (op === "download") {
-      const url = await Auth.urlWithToken("/api/fs/download?path=" + encodeURIComponent(path));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      await downloadFile(path, name);
       return;
     }
     if (op === "rename") {
@@ -197,7 +191,7 @@ $("btn-mkdir").addEventListener("click", async () => {
 });
 $("btn-paste").addEventListener("click", pasteHere);
 $("btn-cancel-op").addEventListener("click", () => { pending = null; renderPending(); });
-$("file-upload").addEventListener("change", (e) => { uploadFiles(e.target.files); e.target.value = ""; });
+$("file-upload").addEventListener("change", (e) => { uploadFilesWithProgress(e.target.files); e.target.value = ""; });
 
 const dropZone = $("drop-zone");
 dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag"); });
@@ -205,7 +199,107 @@ dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("drag");
-  uploadFiles(e.dataTransfer.files);
+  uploadFilesWithProgress(e.dataTransfer.files);
 });
 
 loadDrives();
+
+
+/* ---------- 下载：用隐藏表单提交，兼容所有浏览器（流式，不占内存） ---------- */
+async function downloadFile(path, name) {
+  let token = "";
+  try {
+    const u = await Auth.urlWithToken("/api/fs/download");
+    const m = /[?&]token=([^&]+)/.exec(u);
+    if (m) token = decodeURIComponent(m[1]);
+  } catch (e) {
+    if (handleAuthError(e)) toast("下载失败：" + e.message);
+    return;
+  }
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = "/api/fs/download";
+  form.style.display = "none";
+  const add = (k, v) => {
+    const i = document.createElement("input");
+    i.type = "hidden";
+    i.name = k;
+    i.value = v;
+    form.appendChild(i);
+  };
+  add("path", path);
+  if (token) add("token", token);
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(() => form.remove(), 3000);
+  toast("开始下载：" + name);
+}
+
+/* ---------- 上传：XHR 带进度 ---------- */
+function showUploadProgress(name, pct) {
+  $("upload-progress").classList.remove("hidden");
+  $("up-name").textContent = name;
+  $("up-pct").textContent = pct + "%";
+  $("up-fill").style.width = pct + "%";
+}
+
+function hideUploadProgressSoon() {
+  setTimeout(() => {
+    $("upload-progress").classList.add("hidden");
+    $("up-fill").style.width = "0%";
+  }, 1500);
+}
+
+async function uploadFilesWithProgress(files) {
+  if (!files || !files.length) return;
+  const list = Array.from(files);
+  let url;
+  try {
+    url = await Auth.urlWithToken("/api/fs/upload");
+  } catch (e) {
+    if (handleAuthError(e)) toast("上传失败：" + e.message);
+    return;
+  }
+  const total = list.length;
+  for (let idx = 0; idx < total; idx++) {
+    const f = list[idx];
+    const label = (total > 1 ? "(" + (idx + 1) + "/" + total + ") " : "") + f.name;
+    const ok = await uploadOne(url, f, label);
+    if (!ok) { hideUploadProgressSoon(); return; }
+  }
+  hideUploadProgressSoon();
+  toast("上传完成：" + total + " 个");
+  await refresh();
+}
+
+function uploadOne(url, file, label) {
+  return new Promise((resolve) => {
+    const fd = new FormData();
+    fd.append("path", currentPath);
+    fd.append("files", file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        showUploadProgress(label, Math.round((e.loaded / e.total) * 100));
+      } else {
+        showUploadProgress(label, 0);
+      }
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch (e) { data = {}; }
+      if (xhr.status === 401) { toast("需要密码激活后才能使用该功能"); resolve(false); return; }
+      if (xhr.status >= 200 && xhr.status < 300 && data.ok !== false) {
+        showUploadProgress(label, 100);
+        resolve(true);
+      } else {
+        toast("上传失败：" + (data.error || ("请求失败 " + xhr.status)));
+        resolve(false);
+      }
+    };
+    xhr.onerror = () => { toast("上传失败：网络错误"); resolve(false); };
+    xhr.ontimeout = () => { toast("上传超时"); resolve(false); };
+    xhr.send(fd);
+  });
+}

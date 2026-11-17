@@ -2,13 +2,16 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文件传输</title>
-<link rel="stylesheet" href="/static/style.css?v=20261113d">
+<link rel="stylesheet" href="/static/style.css?v=20261117c">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">📁 文件传输</div>
+  <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">文件传输</div>
   <div class="topbar-right">
     <a href="/" class="btn ghost">← 返回主页</a>
   </div>
@@ -29,6 +32,10 @@
     </div>
     <p class="hint">当前路径：<span id="cur-path"></span>
       <span id="pending-hint" class="hint"></span></p>
+    <div id="upload-progress" class="upload-progress hidden">
+      <div class="up-row"><span id="up-name">准备上传…</span><span id="up-pct">0%</span></div>
+      <div class="up-bar"><div id="up-fill"></div></div>
+    </div>
     <p class="hint">可直接拖拽文件/文件夹到下方列表区域上传到当前目录。</p>
   </section>
 
@@ -45,6 +52,6 @@
 
 <div id="toast" class="toast hidden"></div>
 <script src="/static/auth.js?v=20261113d"></script>
-<script src="/static/files.js?v=20261113d"></script>
+<script src="/static/files.js?v=20261117c"></script>
 </body>
 </html>
