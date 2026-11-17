@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "volume": 100,                  # 叫号时系统音量 0-100
     "volume_enabled": True,         # 叫号时是否切换系统音量
     "autostart": False,             # 开机自启
+    "require_admin": True,          # 启动时自动申请管理员（自启用计划任务，登录不再弹 UAC）
     "secure_enabled": True,         # 是否启用 HTTPS 安全端口（手机端激活/敏感功能用）
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
@@ -371,24 +372,98 @@ def restore_volume(prev):
 # ---------------------------------------------------------------------------
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_RUN_NAME = "班级叫号器"
+TASK_NAME = "班级叫号器"
 
 
-def apply_autostart(enabled):
+def _is_admin():
+    """当前进程是否拥有管理员权限。"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return True
+
+
+def _relaunch_as_admin():
+    """以管理员身份重新拉起自己（弹一次 UAC）；成功返回 True。"""
+    import ctypes
+    try:
+        exe = sys.executable
+        args = subprocess.list2cmdline([os.path.abspath(sys.argv[0])] + list(sys.argv[1:]))
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, os.getcwd(), 1)
+        return int(rc) > 32
+    except Exception as exc:
+        print("[提权] 申请管理员失败:", exc)
+        return False
+
+
+def ensure_admin():
+    """启动时自动申请管理员权限；已提权或用户拒绝时直接继续。"""
+    try:
+        if not get_config().get("require_admin", True):
+            return
+    except Exception:
+        pass
+    if _is_admin():
+        return
+    print("[提权] 当前不是管理员，正在申请…")
+    if _relaunch_as_admin():
+        os._exit(0)  # 已拉起提权实例，本进程退出
+    print("[提权] 未获得管理员权限，继续以普通权限运行")
+
+
+def _task_target():
+    """自启命令：优先用隐藏启动器（它每次读 version.json，OTA 后仍正确）。"""
+    vbs = os.path.join(ROOT_DIR, "启动-隐藏窗口.vbs")
+    if os.path.isfile(vbs):
+        return "wscript.exe", vbs
+    exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.isfile(exe):
+        exe = sys.executable
+    return exe, os.path.abspath(__file__)
+
+
+def _schtasks(*args):
+    try:
+        return subprocess.run(
+            ["schtasks"] + list(args), capture_output=True, text=True, timeout=25,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
+            check=False)
+    except Exception as exc:
+        print("[自启] schtasks 调用失败:", exc)
+        return None
+
+
+def install_autostart_task():
+    """用计划任务做“开机自启 + 最高权限”，登录时不再弹 UAC。需要管理员。"""
+    if not _is_admin():
+        return False
+    prog, arg = _task_target()
+    tr = '"%s" "%s"' % (prog, arg)
+    r = _schtasks("/Create", "/TN", TASK_NAME, "/TR", tr,
+                  "/SC", "ONLOGON", "/RL", "HIGHEST", "/F")
+    if r is not None and r.returncode == 0:
+        print("[自启] 已创建管理员计划任务：%s" % TASK_NAME)
+        return True
+    if r is not None:
+        print("[自启] 计划任务创建失败:", (r.stderr or r.stdout or "").strip()[:200])
+    return False
+
+
+def remove_autostart_task():
+    _schtasks("/Delete", "/TN", TASK_NAME, "/F")
+
+
+def _registry_autostart(enabled):
+    """旧方式（注册表 Run）：没有管理员权限时的退路。"""
     import winreg
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE)
         try:
             if enabled:
-                # OTA 友好：自启指向根目录的隐藏启动器（启动器每次读取 version.json 选择版本）
-                vbs = os.path.join(ROOT_DIR, "启动-隐藏窗口.vbs")
-                if os.path.isfile(vbs):
-                    cmd = 'wscript.exe "%s"' % vbs
-                else:
-                    exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-                    if not os.path.isfile(exe):
-                        exe = sys.executable
-                    cmd = '"%s" "%s"' % (exe, os.path.abspath(__file__))
-                winreg.SetValueEx(key, APP_RUN_NAME, 0, winreg.REG_SZ, cmd)
+                prog, arg = _task_target()
+                winreg.SetValueEx(key, APP_RUN_NAME, 0, winreg.REG_SZ,
+                                  '"%s" "%s"' % (prog, arg))
             else:
                 try:
                     winreg.DeleteValue(key, APP_RUN_NAME)
@@ -397,6 +472,21 @@ def apply_autostart(enabled):
         finally:
             winreg.CloseKey(key)
         return True
+    except Exception as exc:
+        print("[自启] 注册表设置失败:", exc)
+        return False
+
+
+def apply_autostart(enabled):
+    """开机自启：有管理员权限时用计划任务（最高权限、无 UAC 弹窗），否则退回注册表。"""
+    try:
+        if enabled:
+            if install_autostart_task():
+                _registry_autostart(False)   # 避免注册表和任务同时拉起
+                return True
+            return _registry_autostart(True)
+        remove_autostart_task()
+        return _registry_autostart(False)
     except Exception as exc:
         print("[自启] 设置失败:", exc)
         return False
@@ -1442,6 +1532,10 @@ def acquire_single_instance():
 
 def _main():
     global _running_port, _running_secure_port, _desktop
+
+    # 启动即申请管理员权限（用户拒绝则继续以普通权限运行）
+    ensure_admin()
+
     set_config_getter(get_config)
     update_mod.set_config_getter(get_config)
     update_mod.set_restart_callback(_restart_app)
@@ -1482,6 +1576,11 @@ def _main():
     port = int(cfg.get("port", 8000))
     _running_port = port
     hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
+
+    # 自启：启动后确保“最高权限计划任务”存在（已是管理员才建得成）
+    if cfg.get("autostart"):
+        threading.Thread(target=lambda: apply_autostart(True), daemon=True,
+                         name="autostart-sync").start()
 
     status("正在启动网页服务…")
     from werkzeug.serving import make_server
