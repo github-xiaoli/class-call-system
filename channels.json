@@ -18,12 +18,12 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.2/release-info.json"
   },
   "dev": {
-    "version": "2.0.4",
+    "version": "2.0.5",
     "channel": "dev",
-    "notes": "- 【开发版】2.0.4\n- 监控：摄像头名称改为 DirectShow 真实顺序，下拉选择与实际设备对应\n- 监控：摄像头/麦克风列表改为本地枚举+启动预热，打开页面立刻有列表\n- 监控：视频改为“回执驱动”推流，长时间观看不再越看越卡\n- 监控：麦克风列表只保留真实设备（去重同一设备的多接口映射）\n- 文件：下载改为表单提交，兼容更多浏览器（含手机浏览器）\n- 文件：上传增加进度条显示\n- 图标：统一为新的叫号器图标（白色背景），含网页图标\n- 更新包内含完整 python 运行环境（python/ 目录增量覆盖）",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.4/classcaller-2.0.4.zip",
-    "zip_asset": "classcaller-2.0.4.zip",
-    "tag": "v2.0.4",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.4/release-info.json"
+    "notes": "- 【开发版】2.0.5\n- 监控：摄像头名称改为 DirectShow 真实顺序，下拉选择与实际设备对应\n- 监控：摄像头/麦克风列表改为本地枚举+启动预热，打开页面立刻有列表\n- 监控：视频改为“回执驱动”推流，长时间观看不再越看越卡\n- 监控：麦克风列表只保留真实设备（去重同一设备的多接口映射）\n- 文件：下载改为表单提交，兼容更多浏览器（含手机浏览器）\n- 文件：上传增加进度条显示\n- 图标：统一为新的叫号器图标（白色背景），含网页图标\n- 更新包内含完整 python 运行环境（python/ 目录增量覆盖）",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.5/classcaller-2.0.5.zip",
+    "zip_asset": "classcaller-2.0.5.zip",
+    "tag": "v2.0.5",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.5/release-info.json"
   }
 }
