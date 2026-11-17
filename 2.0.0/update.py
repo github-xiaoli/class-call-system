@@ -172,7 +172,7 @@ def _http_get(url, timeout=20, binary=False, headers=None):
 
 
 def _github_api(path):
-    """GitHub API：直连失败时走第一个 CDN 代理。"""
+    """GitHub API（仅在 channels.json 不可用时作为兜底；不携带任何令牌）。"""
     try:
         return json.loads(_http_get(GITHUB_API + path, timeout=15))
     except Exception:
