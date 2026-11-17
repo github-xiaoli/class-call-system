@@ -23,6 +23,7 @@ async function api(url, options = {}) {
   if (!res.ok || data.ok === false) {
     const e = new Error(data.error || ("请求失败 " + res.status));
     e.status = res.status;
+    if (res.status === 401) showAuthNotice();
     throw e;
   }
   return data;
@@ -46,7 +47,9 @@ async function loadConfig() {
     $("cur-channel").textContent = channelName(d.update_channel);
     $("set-channel").value = d.update_channel || "stable";
     $("set-policy").value = d.update_policy || "none";
-  } catch (e) { toast("加载配置失败：" + e.message); }
+  } catch (e) {
+    if (e.status !== 401) toast("加载配置失败：" + e.message);
+  }
 }
 
 async function checkUpdate() {
@@ -236,5 +239,25 @@ document.addEventListener("click", (e) => {
   }
 });
 
+/* 授权检查：仅本机或已激活设备可用 */
+async function ensureAuthorized() {
+  try {
+    const me = await Auth.me();
+    if (me && (me.local || me.activated)) return true;
+  } catch (e) { /* 继续按未授权处理 */ }
+  showAuthNotice();
+  return false;
+}
+
+function showAuthNotice() {
+  $("auth-notice").classList.remove("hidden");
+  const panels = document.querySelectorAll("main.page-wrap > section.panel");
+  panels.forEach((p) => { if (p.id !== "auth-notice") p.classList.add("hidden"); });
+  $("btn-menu").classList.add("hidden");
+}
+
 loadConfig();
-resumeProgress().then(() => { if (!pollTimer) checkUpdate(); });
+ensureAuthorized().then((ok) => {
+  if (!ok) return;
+  resumeProgress().then(() => { if (!pollTimer) checkUpdate(); });
+});

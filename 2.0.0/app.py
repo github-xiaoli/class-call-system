@@ -873,6 +873,9 @@ def api_calls_clear():
 def api_roster():
     if request.method == "GET":
         return jsonify({"ok": True, "roster": get_roster()})
+    err = check_access()
+    if err:
+        return err
     data = request.get_json(silent=True) or {}
     number = str(data.get("number", "")).strip()
     name = str(data.get("name", "")).strip()
