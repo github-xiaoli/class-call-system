@@ -28,6 +28,15 @@ GITHUB_REPO = "github-xiaoli/class-call-system"
 GITHUB_API = "https://api.github.com/repos/" + GITHUB_REPO
 GITHUB_WEB = "https://github.com/" + GITHUB_REPO
 
+# 通道清单（放在仓库里的静态文件，避免 GitHub API 限流：未认证只有 60 次/小时）
+CHANNELS_JSON_URLS = [
+    "https://raw.githubusercontent.com/github-xiaoli/class-call-system/main/channels.json",
+    "https://cdn.jsdelivr.net/gh/github-xiaoli/class-call-system@main/channels.json",
+    "https://gh-proxy.com/https://raw.githubusercontent.com/github-xiaoli/class-call-system/main/channels.json",
+    "https://ghfast.top/https://raw.githubusercontent.com/github-xiaoli/class-call-system/main/channels.json",
+]
+_CH_CACHE = {"data": None, "time": 0.0}
+
 # 更新通道（数字越大越"激进"）：高通道能收到低通道的版本
 # dev 能收 dev/beta/stable，beta 能收 beta/stable，stable 只收 stable
 CHANNELS = ("stable", "beta", "dev")
@@ -148,10 +157,18 @@ def _http_get(url, timeout=20, binary=False, headers=None):
     hdrs = {"User-Agent": "ClassCaller-OTA/2.0"}
     if headers:
         hdrs.update(headers)
-    req = urllib.request.Request(url, headers=hdrs)
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        data = resp.read()
-    return data if binary else data.decode("utf-8-sig", errors="replace")
+    last = None
+    for attempt in range(3):  # 网络抖动时重试，避免“检查不到更新”
+        try:
+            req = urllib.request.Request(url, headers=hdrs)
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                data = resp.read()
+            return data if binary else data.decode("utf-8-sig", errors="replace")
+        except Exception as exc:
+            last = exc
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+    raise last
 
 
 def _github_api(path):
@@ -165,12 +182,47 @@ def _github_api(path):
             return None
 
 
+def _load_channels():
+    """读取仓库里的 channels.json（不走 API，不会限流）。"""
+    now = time.time()
+    if _CH_CACHE["data"] and now - _CH_CACHE["time"] < 60:
+        return _CH_CACHE["data"]
+    for url in CHANNELS_JSON_URLS:
+        try:
+            data = json.loads(_http_get(url, timeout=12))
+            if isinstance(data, dict) and data:
+                _CH_CACHE["data"] = data
+                _CH_CACHE["time"] = now
+                return data
+        except Exception:
+            continue
+    return None
+
+
 def _find_latest(channel):
     """返回该通道可见的最新 release。
 
+    优先读 channels.json（无 API 限流）；失败时退回 GitHub API。
     通道向下兼容：dev 收 dev/beta/stable，beta 收 beta/stable，stable 只收 stable。
-    在可见范围内取版本号最高的一个（同版本优先更稳定的通道）。
     """
+    chans = _load_channels()
+    if chans is not None:
+        entry = chans.get(channel)
+        if not isinstance(entry, dict) or not entry.get("version"):
+            return None
+        return {
+            "version": str(entry.get("version", "")),
+            "channel": str(entry.get("channel", channel)),
+            "notes": str(entry.get("notes", "")),
+            "zip_url": str(entry.get("zip_url", "")),
+            "zip_asset": str(entry.get("zip_asset", "")),
+            "tag": str(entry.get("tag", "")),
+            "info_url": str(entry.get("info_url", "")),
+        }
+    return _find_latest_api(channel)
+
+
+def _find_latest_api(channel):
     releases = _github_api("/releases?per_page=50")
     if not isinstance(releases, list):
         return None
