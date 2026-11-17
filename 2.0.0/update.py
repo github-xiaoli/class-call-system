@@ -342,31 +342,67 @@ def _cdn_speedtest(info_url):
     return ordered
 
 
-def _download(url, dest, p0, p1):
-    """带进度下载，p0..p1 百分比区间。"""
+def _download(url, dest, p0, p1, retries=3):
+    """带进度下载，p0..p1 百分比区间。
+
+    支持断点续传（Range）+ 断线自动重试：网络不稳时不至于每次都从 0 重来。
+    """
     import urllib.request
     import ssl as _ssl
     ctx = _ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = _ssl.CERT_NONE
-    req = urllib.request.Request(url, headers={"User-Agent": "ClassCaller-OTA/2.0"})
-    with urllib.request.urlopen(req, timeout=180, context=ctx) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        done = 0
-        with open(dest, "wb") as f:
-            while True:
-                chunk = resp.read(512 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if total > 0:
-                    pct = p0 + int((done / total) * (p1 - p0))
+    hdrs = {"User-Agent": "ClassCaller-OTA/2.0"}
+
+    total = 0
+    last_err = None
+    for attempt in range(retries):
+        have = os.path.getsize(dest) if os.path.isfile(dest) else 0
+        headers = dict(hdrs)
+        if have > 0:
+            headers["Range"] = "bytes=%d-" % have
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=180, context=ctx) as resp:
+                code = getattr(resp, "status", 200)
+                if have > 0 and code != 206:
+                    # 服务端不支持续传：只能从头来
+                    have = 0
+                    mode = "wb"
+                elif have > 0:
+                    mode = "ab"
                 else:
-                    pct = p0
-                _set(percent=pct, stage="download",
-                     detail="正在下载 %d / %d KB" % (done // 1024, total // 1024))
-        return total or done
+                    mode = "wb"
+                clen = int(resp.headers.get("Content-Length") or 0)
+                total = (have + clen) if code == 206 else (clen or total)
+                done = have
+                with open(dest, mode) as f:
+                    while True:
+                        chunk = resp.read(512 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        done += len(chunk)
+                        if total > 0:
+                            pct = p0 + int((done / total) * (p1 - p0))
+                            detail = "正在下载 %d / %d KB%s" % (
+                                done // 1024, total // 1024,
+                                "" if attempt == 0 else "（第 %d 次重试）" % (attempt + 1))
+                        else:
+                            pct = p0
+                            detail = "正在下载 %d KB" % (done // 1024)
+                        _set(percent=pct, stage="download", detail=detail)
+            if total and os.path.getsize(dest) < total:
+                raise IOError("下载不完整：%d/%d" % (os.path.getsize(dest), total))
+            return total or os.path.getsize(dest)
+        except Exception as exc:
+            last_err = exc
+            print("[更新] 下载中断（第 %d 次）：%s" % (attempt + 1, exc))
+            if attempt < retries - 1:
+                _set(stage="download", percent=p0,
+                     detail="网络中断，正在续传（%d/%d）…" % (attempt + 1, retries))
+                time.sleep(1.0)
+    raise last_err if last_err else IOError("下载失败")
 
 
 def _install_zip(zip_path, new_version):
