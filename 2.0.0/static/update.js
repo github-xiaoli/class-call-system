@@ -65,13 +65,29 @@ function renderNotes(notes) {
 }
 
 async function startUpdate() {
-  if (!latestInfo) { toast("请先检查更新"); return; }
-  if (!confirm("确定更新到 " + latestInfo.version + " 吗？更新完成后软件会自动重启。")) return;
+  const v = latestInfo ? latestInfo.version : "最新版本";
+  if (!confirm("确定下载 " + v + " 的更新包吗？下载解压完成后需要你再点一次「安装并重启」。")) return;
+  showProgress();
+  $("progress-stage").textContent = "正在检查更新";
   try {
     await api("/api/update/start", { method: "POST", body: JSON.stringify({}) });
-    showProgress();
     startPolling();
-  } catch (e) { toast("开始更新失败：" + e.message); }
+  } catch (e) {
+    toast("开始下载失败：" + e.message);
+  }
+}
+
+async function installUpdate() {
+  if (!confirm("立即安装并重启吗？重启期间网页会短暂断开。")) return;
+  showProgress();
+  $("progress-stage").textContent = "正在安装";
+  try {
+    await api("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+    $("btn-install").classList.add("hidden");
+    startPolling();
+  } catch (e) {
+    toast("安装失败：" + e.message);
+  }
 }
 
 function showProgress() {
@@ -81,35 +97,75 @@ function showProgress() {
   $("progress-pct").textContent = "0%";
 }
 
+const ACTIVE_STAGES = ["start", "check", "speedtest", "download", "extract", "final"];
+
+function renderProgress(p) {
+  p = p || {};
+  $("progress-fill").style.width = (p.percent || 0) + "%";
+  $("progress-pct").textContent = (p.percent || 0) + "%";
+  $("progress-stage").textContent = stageText(p.stage);
+  $("progress-detail").textContent = p.detail || "";
+  // 下载解压完成 -> 显示「安装并重启」按钮
+  if (p.ready || p.stage === "ready") {
+    const v = p.ready_version || p.version || "";
+    $("btn-install").textContent = v ? ("✅ 安装并重启（" + v + "）") : "✅ 安装并重启";
+    $("btn-install").classList.remove("hidden");
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
 function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
+  stopPolling();
+  const tick = async () => {
     try {
       const d = await api("/api/update/progress");
       const p = d.progress || {};
-      $("progress-fill").style.width = (p.percent || 0) + "%";
-      $("progress-pct").textContent = (p.percent || 0) + "%";
-      $("progress-stage").textContent = stageText(p.stage);
-      $("progress-detail").textContent = p.detail || "";
-      if (p.stage === "done") {
-        clearInterval(pollTimer);
-        pollTimer = null;
-        toast("更新完成，正在重启…");
-        setTimeout(() => location.reload(), 8000);
-      } else if (p.stage === "error") {
-        clearInterval(pollTimer);
-        pollTimer = null;
-        toast("更新失败：" + (p.error || p.detail));
+      renderProgress(p);
+      const active = !!p.running || ACTIVE_STAGES.indexOf(p.stage) >= 0;
+      if (!active) {
+        stopPolling();
+        if (p.stage === "error") {
+          toast("更新失败：" + (p.error || p.detail || "未知错误"));
+        } else if (p.stage === "done" && (p.percent || 0) >= 100) {
+          toast("更新完成，正在重启…");
+          setTimeout(() => location.reload(), 8000);
+        } else if (p.detail) {
+          toast(p.detail);
+        }
       }
-    } catch (e) { /* 忽略轮询瞬时错误 */ }
-  }, 1000);
+    } catch (e) { /* 忽略轮询瞬时错误（重启期间会短暂失败） */ }
+  };
+  tick();
+  pollTimer = setInterval(tick, 1000);
+}
+
+/* 进入页面时如果更新正在进行/已下载待安装，直接恢复显示（刷新也不丢） */
+async function resumeProgress() {
+  try {
+    const d = await api("/api/update/progress");
+    const p = d.progress || {};
+    const active = !!p.running || ACTIVE_STAGES.indexOf(p.stage) >= 0;
+    if (p.ready) {
+      showProgress();
+      renderProgress(p);
+      if (active) startPolling();
+      return;
+    }
+    if (!active) return;
+    showProgress();
+    renderProgress(p);
+    startPolling();
+  } catch (e) { /* 忽略 */ }
 }
 
 function stageText(stage) {
   const m = {
     idle: "空闲", check: "检查更新", speedtest: "测速选择线路",
-    download: "下载更新包", extract: "解压安装", final: "收尾工作",
-    done: "完成", error: "失败", start: "准备中",
+    download: "下载更新包", extract: "解压安装", ready: "已下载，待安装",
+    final: "正在安装", done: "完成", error: "失败", start: "准备中",
   };
   return m[stage] || stage || "…";
 }
@@ -125,7 +181,7 @@ async function uploadZip(file) {
     if (!res.ok || d.ok === false) throw new Error(d.error || "上传失败");
     toast("已开始安装手动更新包");
     showProgress();
-    startPolling();
+    setTimeout(startPolling, 400);
   } catch (e) { toast("上传失败：" + e.message); }
 }
 
@@ -147,6 +203,7 @@ async function savePolicy() {
 /* 事件 */
 $("btn-check").addEventListener("click", checkUpdate);
 $("btn-update").addEventListener("click", startUpdate);
+$("btn-install").addEventListener("click", installUpdate);
 $("btn-upload").addEventListener("click", () => {
   const f = $("zip-file").files[0];
   if (f) uploadZip(f); else toast("请先选择 zip 文件");
@@ -162,4 +219,4 @@ document.addEventListener("click", (e) => {
 });
 
 loadConfig();
-checkUpdate();
+resumeProgress().then(() => { if (!pollTimer) checkUpdate(); });

@@ -69,13 +69,17 @@ CDN_BASES = [
 _lock = threading.Lock()
 _state = {
     "running": False,
-    "stage": "idle",      # idle | check | speedtest | download | extract | final | done | error
+    "stage": "idle",      # idle | check | speedtest | download | extract | ready | final | done | error
     "percent": 0,
     "detail": "",
     "error": "",
     "version": "",
     "current_version": "",
 }
+
+# 已下载待安装的版本（两段式更新：先下载解压，再手动安装重启）
+_prep_lock = threading.Lock()
+_prepared = {"version": "", "path": ""}
 
 _config_getter = None
 _restart_callback = None
@@ -197,25 +201,44 @@ def _find_latest(channel):
 
 
 def _cdn_speedtest(info_url):
-    """逐个 CDN 下载 release-info.json 测速，返回最快的 CDN 前缀。"""
+    """并发探测各 CDN（下载 release-info.json），返回最快的 CDN 前缀。
+
+    并发 12 路 + 单个 4s 超时，整体约 5~10 秒完成，避免串行等待。
+    """
     if not info_url:
         return CDN_BASES[0]
-    _set(stage="speedtest", percent=1, detail="正在测速选择最快线路…")
-    best = None
-    best_ms = None
-    for base in CDN_BASES:
-        url = base + info_url
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    total = len(CDN_BASES)
+    _set(stage="speedtest", percent=1, detail="正在测速选择最快线路（0/%d）…" % total)
+
+    def probe(base):
         t0 = time.time()
         try:
-            data = _http_get(url, timeout=8, binary=True)
-            if not data:
+            data = _http_get(base + info_url, timeout=4, binary=True)
+            if data:
+                return base, (time.time() - t0) * 1000.0
+        except Exception:
+            pass
+        return base, None
+
+    best = None
+    best_ms = None
+    done = 0
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futures = [ex.submit(probe, b) for b in CDN_BASES]
+        for fut in as_completed(futures):
+            try:
+                base, ms = fut.result()
+            except Exception:
                 continue
-            ms = (time.time() - t0) * 1000
-            if best_ms is None or ms < best_ms:
+            done += 1
+            if ms is not None and (best_ms is None or ms < best_ms):
                 best_ms = ms
                 best = base
-        except Exception:
-            continue
+            _set(percent=1,
+                 detail="正在测速选择最快线路（%d/%d，最快 %s）…"
+                        % (done, total, ("%.0fms" % best_ms) if best_ms else "—"))
     return best or CDN_BASES[0]
 
 
@@ -310,15 +333,60 @@ def _update_version_file(new_version):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def _do_update(info, zip_path=None, install=True):
-    """后台执行更新。install=False 时只下载不安装（自动静默下载策略）。"""
+def _close_desktop_window():
+    if _desktop is not None:
+        try:
+            _desktop.close_update_window()
+        except Exception:
+            pass
+
+
+def _clear_prepared():
+    with _prep_lock:
+        _prepared.clear()
+        _prepared.update({"version": "", "path": ""})
+
+
+def _set_prepared(version, path):
+    with _prep_lock:
+        _prepared.update({"version": version, "path": path})
+
+
+def _get_prepared():
+    with _prep_lock:
+        return dict(_prepared)
+
+
+def _do_prepare(info=None, zip_path=None, channel=None):
+    """下载 + 解压到新版本目录，但不安装（不改 version.json、不重启）。
+
+    完成后状态为 stage="ready"，等待用户点「安装并重启」。
+    """
     try:
-        if _desktop is not None and install:
+        if _desktop is not None:
             try:
                 _desktop.show_update_window()
             except Exception:
                 pass
-        _set(running=True, stage="start", percent=0, detail="准备更新…", version=info.get("version", ""))
+
+        _set(running=True, stage="check", percent=0, detail="正在检查更新…")
+
+        if info is None:
+            info = _find_latest(channel or _cfg().get("update_channel", "stable"))
+            if not info:
+                _set(stage="idle", percent=0, running=False,
+                     detail="检查失败或暂无可用更新")
+                _close_desktop_window()
+                return False
+        new_version = str(info.get("version", "") or "")
+        if zip_path is None and new_version and new_version == _current_version():
+            _set(stage="idle", percent=0, running=False, detail="已是最新版本",
+                 version=new_version)
+            _close_desktop_window()
+            return False
+
+        _set(running=True, stage="start", percent=0,
+             detail="准备下载更新包…", version=new_version)
 
         if zip_path is None:
             base = _cdn_speedtest(info.get("info_url", "") or info.get("zip_url", ""))
@@ -326,41 +394,73 @@ def _do_update(info, zip_path=None, install=True):
             _set(stage="download", percent=2, detail="开始下载…")
             cache = os.path.join(DATA_DIR, "update_cache")
             os.makedirs(cache, exist_ok=True)
-            local_zip = os.path.join(cache, "update_" + info.get("version", "tmp") + ".zip")
+            local_zip = os.path.join(cache, "update_" + (new_version or "tmp") + ".zip")
             _download(url, local_zip, 2, 50)
         else:
             local_zip = zip_path
 
-        if not install:
-            _set(stage="done", percent=50, detail="已下载，等待手动安装",
-                 version=info.get("version", ""))
-            return
+        ready_version = _install_zip(local_zip, new_version)
+        dest = os.path.join(ROOT_DIR, ready_version)
+        _set_prepared(ready_version, dest)
 
-        new_version = _install_zip(local_zip, info.get("version", ""))
-        _update_version_file(new_version)
+        _set(stage="ready", percent=100, running=False, version=ready_version,
+             detail="已下载并解压完成，请点击「安装并重启」")
+        _close_desktop_window()
+        return True
+    except Exception as exc:
+        _set(stage="error", percent=_get_state().get("percent", 0), running=False,
+             error=str(exc), detail="下载失败：" + str(exc))
+        _close_desktop_window()
+        return False
 
-        _set(stage="done", percent=100, detail="更新完成，正在重启…", version=new_version)
-        time.sleep(1.2)
+
+def _do_install():
+    """把已解压的版本装上：更新 version.json 并重启切换到新版本。"""
+    try:
+        prep = _get_prepared()
+        version = prep.get("version", "")
+        path = prep.get("path", "")
+        if not version or not os.path.isdir(path):
+            _set(stage="error", percent=0, running=False,
+                 error="没有已下载的更新包", detail="请先点击「开始更新」下载")
+            return False
+
         if _desktop is not None:
             try:
-                _desktop.close_update_window()
+                _desktop.show_update_window()
             except Exception:
                 pass
+
+        _set(running=True, stage="final", percent=99, version=version,
+             detail="正在安装 %s…" % version)
+        _update_version_file(version)
+        _clear_prepared()
+
+        _set(stage="done", percent=100, running=False,
+             detail="安装完成，正在重启…", version=version)
+        time.sleep(1.2)
+        _close_desktop_window()
         if _restart_callback is not None:
             try:
-                _restart_callback(new_version)
+                _restart_callback(version)
             except Exception:
                 pass
         else:
             os._exit(0)
+        return True
     except Exception as exc:
-        _set(stage="error", percent=_get_state().get("percent", 0),
-             error=str(exc), detail="更新失败：" + str(exc))
-        if _desktop is not None:
-            try:
-                _desktop.close_update_window()
-            except Exception:
-                pass
+        _set(stage="error", percent=_get_state().get("percent", 0), running=False,
+             error=str(exc), detail="安装失败：" + str(exc))
+        _close_desktop_window()
+        return False
+
+
+def _do_update(info=None, zip_path=None, install=True, channel=None):
+    """兼容入口：prepare（+ 可选立即安装）。install=False 时只下载解压不安装。"""
+    ok = _do_prepare(info, zip_path, channel)
+    if not ok or not install:
+        return ok
+    return _do_install()
 
 
 # ---------------------------------------------------------------------------
@@ -431,25 +531,19 @@ def api_update_check():
 
 @update_bp.route("/api/update/start", methods=["POST"])
 def api_update_start():
+    """第一段：下载 + 解压（不安装、不改 version.json、不重启）。"""
     err = _need_auth()
     if err:
         return err
     data = request.get_json(silent=True) or {}
     channel = data.get("channel") or _cfg().get("update_channel", "stable")
-    _set(stage="check", percent=0, detail="正在获取更新信息…", running=True)
-    try:
-        info = _find_latest(channel)
-        if not info:
-            _set(stage="idle", running=False, detail="已是最新版本")
-            return jsonify({"ok": False, "error": "已是最新版本，无需更新"}), 400
-        if info.get("version") == _current_version():
-            _set(stage="idle", running=False, detail="已是最新版本")
-            return jsonify({"ok": False, "error": "已是最新版本"}), 400
-        threading.Thread(target=_do_update, args=(info,), daemon=True, name="ota-update").start()
-        return jsonify({"ok": True, "message": "开始更新", "version": info.get("version")})
-    except Exception as exc:
-        _set(stage="error", running=False, error=str(exc))
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    if _get_state().get("running"):
+        return jsonify({"ok": True, "message": "更新已在进行中"})
+    _set(stage="check", percent=0, detail="正在检查更新…", running=True)
+    threading.Thread(target=_do_prepare,
+                     args=(None, None, channel),
+                     daemon=True, name="ota-prepare").start()
+    return jsonify({"ok": True, "message": "开始下载更新包", "channel": channel})
 
 
 @update_bp.route("/api/update/upload", methods=["POST"])
@@ -474,7 +568,25 @@ def api_update_upload():
         ver = ""
     info = {"version": ver or "", "notes": "手动上传", "channel": "manual"}
     threading.Thread(target=_do_update, args=(info, path), daemon=True, name="ota-upload").start()
-    return jsonify({"ok": True, "message": "开始安装手动更新包"})
+    return jsonify({"ok": True, "message": "开始下载并安装手动更新包"})
+
+
+@update_bp.route("/api/update/install", methods=["POST"])
+def api_update_install():
+    """第二段：把已下载解压的版本安装上并重启。"""
+    err = _need_auth()
+    if err:
+        return err
+    prep = _get_prepared()
+    if not prep.get("version"):
+        return jsonify({"ok": False, "error": "还没有下载好的更新包，请先点击「开始更新」"}), 400
+    if not os.path.isdir(prep.get("path", "")):
+        _clear_prepared()
+        return jsonify({"ok": False, "error": "更新包目录不完整，请重新下载"}), 400
+    if _get_state().get("running"):
+        return jsonify({"ok": True, "message": "正在处理中"})
+    threading.Thread(target=_do_install, daemon=True, name="ota-install").start()
+    return jsonify({"ok": True, "message": "开始安装并重启", "version": prep.get("version")})
 
 
 @update_bp.route("/api/update/progress", methods=["GET"])
@@ -484,6 +596,9 @@ def api_update_progress():
         return err
     snap = _get_state()
     snap["current_version"] = _current_version()
+    prep = _get_prepared()
+    snap["ready"] = bool(prep.get("version")) and os.path.isdir(prep.get("path", ""))
+    snap["ready_version"] = prep.get("version", "")
     return jsonify({"ok": True, "progress": snap})
 
 

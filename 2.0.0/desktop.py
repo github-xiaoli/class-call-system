@@ -295,6 +295,7 @@ class UpdateWindow:
         self._proc = None
         self._font_title = None
         self._font_detail = None
+        self._font_pct = None
         self._pen_track = None
         self._pen_arc = None
         self._angle = 0.0
@@ -313,12 +314,13 @@ class UpdateWindow:
 
     def show(self):
         self._register()
-        self._font_title = _make_font(16, 700)
-        self._font_detail = _make_font(13)
+        self._font_title = _make_font(24, 700)
+        self._font_detail = _make_font(18)
+        self._font_pct = _make_font(22, 700)
         self._pen_track = win32gui.CreatePen(win32con.PS_SOLID, 5, LIGHT)
         self._pen_arc = win32gui.CreatePen(win32con.PS_SOLID, 5, BLUE)
         hinst = win32api.GetModuleHandle(None)
-        w, h = 500, 190
+        w, h = 520, 330
         x, y = _center_pos(w, h)
         self._hwnd = win32gui.CreateWindowEx(
             win32con.WS_EX_TOPMOST,
@@ -335,27 +337,38 @@ class UpdateWindow:
         except Exception:
             pass
 
+        # 按实际客户区宽度计算居中位置（避免边框/DPI 造成偏移）
+        cw = win32gui.GetClientRect(self._hwnd)[2]
+        side = 24
+        ctrl_w = cw - side * 2
+        bar_w = 400
+        self._spin_cx = cw // 2
+        self._spin_cy = 72
+        self._spin_r = 28
+
+        # 标题：大字体、水平居中
         win32gui.CreateWindowEx(
             0, "STATIC", "班级叫号器 · 软件更新",
-            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            104, 16, 380, 26, self._hwnd, 501, hinst, None)
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_CENTER,
+            side, 104, ctrl_w, 40, self._hwnd, 501, hinst, None)
+        # 更新状态：大字体、水平居中
+        self._detail = win32gui.CreateWindowEx(
+            0, "STATIC", "准备更新…",
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_CENTER,
+            side, 148, ctrl_w, 32, self._hwnd, 503, hinst, None)
         self._bar = win32gui.CreateWindowEx(
             0, "msctls_progress32", None,
             win32con.WS_CHILD | win32con.WS_VISIBLE,
-            104, 56, 376, 22, self._hwnd, 502, hinst, None)
-        self._detail = win32gui.CreateWindowEx(
-            0, "STATIC", "准备更新…",
-            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            104, 94, 376, 22, self._hwnd, 503, hinst, None)
+            (cw - bar_w) // 2, 192, bar_w, 22, self._hwnd, 502, hinst, None)
         self._pct = win32gui.CreateWindowEx(
             0, "STATIC", "0%",
-            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_RIGHT,
-            370, 124, 110, 28, self._hwnd, 504, hinst, None)
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_CENTER,
+            side, 220, ctrl_w, 36, self._hwnd, 504, hinst, None)
 
         win32gui.SendMessage(win32gui.GetDlgItem(self._hwnd, 501),
                              win32con.WM_SETFONT, self._font_title, True)
         win32gui.SendMessage(self._detail, win32con.WM_SETFONT, self._font_detail, True)
-        win32gui.SendMessage(self._pct, win32con.WM_SETFONT, self._font_title, True)
+        win32gui.SendMessage(self._pct, win32con.WM_SETFONT, self._font_pct, True)
 
         # 进度条范围 0-100
         win32gui.SendMessage(self._bar, 0x0406, 0, 100)   # PBM_SETRANGE32
@@ -380,10 +393,10 @@ class UpdateWindow:
             win32gui.SetWindowText(self._detail, str(detail))
 
     def tick(self):
-        """加载动画：旋转左侧小圈。"""
+        """加载动画：旋转居中的小圈。"""
         self._angle = (self._angle + 12) % 360
         if self._hwnd and win32gui.IsWindow(self._hwnd):
-            win32gui.InvalidateRect(self._hwnd, (22, 70, 86, 134), True)
+            win32gui.InvalidateRect(self._hwnd, (226, 38, 294, 106), True)
 
     def close(self):
         try:
@@ -392,13 +405,14 @@ class UpdateWindow:
         except Exception:
             pass
         self._hwnd = None
-        for obj in (self._font_title, self._font_detail, self._pen_track, self._pen_arc):
+        for obj in (self._font_title, self._font_detail, self._font_pct,
+                    self._pen_track, self._pen_arc):
             try:
                 if obj:
                     win32gui.DeleteObject(obj)
             except Exception:
                 pass
-        self._font_title = self._font_detail = None
+        self._font_title = self._font_detail = self._font_pct = None
         self._pen_track = self._pen_arc = None
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
@@ -417,7 +431,7 @@ class UpdateWindow:
     def _paint(self, hwnd):
         hdc, ps = win32gui.BeginPaint(hwnd)
         try:
-            cx, cy, r = 54, 102, 26
+            cx, cy, r = 260, 72, 28
             old_pen = win32gui.SelectObject(hdc, self._pen_track)
             old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
             win32gui.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
