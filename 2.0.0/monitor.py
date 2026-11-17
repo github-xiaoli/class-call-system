@@ -8,6 +8,7 @@
 """
 import json
 import queue
+import subprocess
 import threading
 import time
 import uuid
@@ -50,13 +51,40 @@ def _cfg():
 
 SAMPLE_RATE = 48000
 CHANNELS = 1
-BLOCK_SIZE = 1200  # 25ms @48k，降低声音延迟
+BLOCK_SIZE = 2400  # 50ms @48k，块大一点更稳，仍保持低延迟
 
 # ---------------------------------------------------------------------------
 # 摄像头
 # ---------------------------------------------------------------------------
 _CAM_LOCK = threading.Lock()
 _CAMS_IN_USE = set()
+_CAM_NAMES_CACHE = {"names": [], "time": 0.0}
+
+
+def _pnp_camera_names():
+    """获取系统摄像头真实名称（如 Smart Camera），按 PnP 顺序返回，缓存 30 秒。"""
+    now = time.time()
+    if _CAM_NAMES_CACHE["names"] and now - _CAM_NAMES_CACHE["time"] < 30:
+        return list(_CAM_NAMES_CACHE["names"])
+    names = []
+    try:
+        ps = ("Get-PnpDevice -Class Camera -Status OK -ErrorAction SilentlyContinue | "
+              "Select-Object -ExpandProperty FriendlyName")
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-Command", ps],
+            capture_output=True, text=True, timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000,
+            check=False)
+        for line in (proc.stdout or "").splitlines():
+            line = line.strip()
+            if line:
+                names.append(line)
+    except Exception as exc:
+        print("[监控] 获取摄像头名称失败:", exc)
+    _CAM_NAMES_CACHE["names"] = names
+    _CAM_NAMES_CACHE["time"] = now
+    return list(names)
 
 
 @monitor_bp.route("/api/monitor/cameras")
@@ -64,6 +92,7 @@ def api_monitor_cameras():
     err = check_access()
     if err:
         return err
+    names = _pnp_camera_names()
     cams = []
     if HAS_CV2:
         for i in range(8):
@@ -71,7 +100,8 @@ def api_monitor_cameras():
             try:
                 cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
                 if cap.isOpened():
-                    cams.append({"index": i, "name": "摄像头 %d" % (i + 1)})
+                    name = names[i] if i < len(names) else "摄像头 %d" % (i + 1)
+                    cams.append({"index": i, "name": name})
             except Exception:
                 pass
             finally:
@@ -228,7 +258,7 @@ def api_monitor_audio():
     except Exception:
         device = -1
     cid = uuid.uuid4().hex
-    q = queue.Queue(maxsize=8)  # 8 x 25ms ≈ 200ms，保持低延迟
+    q = queue.Queue(maxsize=6)  # 6 x 50ms ≈ 300ms，平滑抖动
     with _AUDIO_LOCK:
         _AUDIO_CLIENTS[cid] = q
     if not _ensure_mic_stream(device):
@@ -261,6 +291,7 @@ def api_monitor_audio():
 _OUT_LOCK = threading.Lock()
 _OUT_STREAM = None
 _OUT_LAST = 0.0
+_OUT_QUEUE = queue.Queue(maxsize=12)  # 抖动缓冲：约 12 x 100ms，满了丢最旧
 
 
 def _close_out_stream():
@@ -274,9 +305,75 @@ def _close_out_stream():
     _OUT_STREAM = None
 
 
+def _ensure_out_stream():
+    """打开/复用播放流（空闲 20 秒自动关闭）。"""
+    global _OUT_STREAM, _OUT_LAST
+    with _OUT_LOCK:
+        if _OUT_STREAM is not None and time.time() - _OUT_LAST > 20:
+            _close_out_stream()
+        if _OUT_STREAM is None:
+            _OUT_STREAM = sd.OutputStream(samplerate=SAMPLE_RATE,
+                                          channels=CHANNELS, dtype="int16",
+                                          latency="low")
+            _OUT_STREAM.start()
+        _OUT_LAST = time.time()
+        return _OUT_STREAM
+
+
+def _enqueue_out(samples):
+    """把音频块交给播放线程；缓冲满时丢最旧，保证低延迟。"""
+    try:
+        _OUT_QUEUE.put_nowait(samples)
+    except queue.Full:
+        try:
+            _OUT_QUEUE.get_nowait()
+            _OUT_QUEUE.put_nowait(samples)
+        except Exception:
+            pass
+
+
+def _playout_worker():
+    """对讲播放线程：串行写入，网络抖动时输出短静音填充，避免断续。"""
+    global _OUT_STREAM
+    silence = np.zeros(BLOCK_SIZE, dtype=np.int16)
+    idle_since = None
+    while True:
+        try:
+            samples = _OUT_QUEUE.get(timeout=0.05)
+            idle_since = None
+        except queue.Empty:
+            samples = None
+        if samples is None:
+            with _OUT_LOCK:
+                if _OUT_STREAM is None:
+                    continue
+                if idle_since is None:
+                    idle_since = time.time()
+                if time.time() - idle_since > 20:
+                    _close_out_stream()
+                    idle_since = None
+                    continue
+                stream = _OUT_STREAM
+            try:
+                stream.write(silence)
+            except Exception:
+                with _OUT_LOCK:
+                    _close_out_stream()
+            continue
+        try:
+            stream = _ensure_out_stream()
+            stream.write(samples)
+        except Exception:
+            with _OUT_LOCK:
+                _close_out_stream()
+
+
+if HAS_SD:
+    threading.Thread(target=_playout_worker, daemon=True, name="intercom-playout").start()
+
+
 @monitor_bp.route("/api/monitor/intercom", methods=["POST"])
 def api_monitor_intercom():
-    global _OUT_STREAM, _OUT_LAST
     err = check_access()
     if err:
         return err
@@ -293,26 +390,13 @@ def api_monitor_intercom():
         except Exception:
             factor = 1.0
     try:
-        with _OUT_LOCK:
-            # 空闲超时关闭
-            if _OUT_STREAM is not None and time.time() - _OUT_LAST > 20:
-                _close_out_stream()
-            if _OUT_STREAM is None:
-                _OUT_STREAM = sd.OutputStream(samplerate=SAMPLE_RATE,
-                                              channels=CHANNELS, dtype="int16",
-                                              latency="low")
-                _OUT_STREAM.start()
-            _OUT_LAST = time.time()
-            stream = _OUT_STREAM
         samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
         if factor != 1.0:
             samples = samples * factor
             np.clip(samples, -32768, 32767, out=samples)
-        stream.write(samples.astype(np.int16))  # sounddevice 需要 numpy 数组
+        _enqueue_out(samples.astype(np.int16))  # sounddevice 需要 numpy 数组
         return jsonify({"ok": True})
-    except Exception as exc:
-        with _OUT_LOCK:
-            _close_out_stream()
+    except Exception:
         return jsonify({"ok": False, "error": "播放失败"}), 500
 
 
@@ -362,18 +446,18 @@ def ws_monitor_camera(ws):
     try:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 20)
+        cap.set(cv2.CAP_PROP_FPS, 15)
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             if ok:
                 try:
                     ws.send(buf.tobytes())
                 except Exception:
                     break
-            time.sleep(0.04)
+            time.sleep(0.02)
     finally:
         try:
             cap.release()
@@ -396,7 +480,7 @@ def ws_monitor_audio(ws):
     except Exception:
         device = -1
     cid = uuid.uuid4().hex
-    q = queue.Queue(maxsize=8)  # 8 x 25ms ≈ 200ms，保持低延迟
+    q = queue.Queue(maxsize=6)  # 6 x 50ms ≈ 300ms，平滑抖动
     with _AUDIO_LOCK:
         _AUDIO_CLIENTS[cid] = q
     if not _ensure_mic_stream(device):
@@ -448,21 +532,11 @@ def ws_monitor_intercom(ws):
                 except Exception:
                     factor = 1.0
             try:
-                with _OUT_LOCK:
-                    if _OUT_STREAM is not None and time.time() - _OUT_LAST > 20:
-                        _close_out_stream()
-                    if _OUT_STREAM is None:
-                        _OUT_STREAM = sd.OutputStream(samplerate=SAMPLE_RATE,
-                                                      channels=CHANNELS, dtype="int16",
-                                                      latency="low")
-                        _OUT_STREAM.start()
-                    _OUT_LAST = time.time()
-                    stream = _OUT_STREAM
                 samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
                 if factor != 1.0:
                     samples = samples * factor
                     np.clip(samples, -32768, 32767, out=samples)
-                stream.write(samples.astype(np.int16))
+                _enqueue_out(samples.astype(np.int16))
             except Exception:
                 with _OUT_LOCK:
                     _close_out_stream()

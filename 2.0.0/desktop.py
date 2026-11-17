@@ -19,6 +19,9 @@ import win32gui
 
 APP_TITLE = "班级叫号器"
 
+# 应用数据目录（用于统一图标等资源）
+APP_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
 # 控件 ID
 ID_LIST = 101
 ID_BTN_HIDE = 102
@@ -63,8 +66,54 @@ def _center_pos(w, h):
             rect[1] + (rect[3] - rect[1] - h) // 2)
 
 
+def _make_tray_icon(data_dir):
+    """生成/加载托盘图标：优先 data/icon.ico，否则用 Pillow 画一个蓝色圆角“叫”字图标。"""
+    icon_path = os.path.join(data_dir, "icon.ico")
+    try:
+        if os.path.isfile(icon_path):
+            hicon = win32gui.LoadImage(0, icon_path, win32con.IMAGE_ICON, 0, 0,
+                                       win32con.LR_LOADFROMFILE)
+            if hicon:
+                return hicon
+    except Exception:
+        pass
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((1, 1, 62, 62), radius=14, fill=(37, 99, 235, 255))
+        d.rounded_rectangle((1, 1, 62, 62), radius=14, outline=(255, 255, 255, 70), width=2)
+        font = None
+        for fp in (r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\msyh.ttc",
+                   r"C:\Windows\Fonts\simhei.ttf"):
+            if os.path.isfile(fp):
+                try:
+                    font = ImageFont.truetype(fp, 40)
+                    break
+                except Exception:
+                    continue
+        if font is None:
+            font = ImageFont.load_default()
+        bbox = d.textbbox((0, 0), "叫", font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        d.text(((64 - tw) / 2 - bbox[0], (64 - th) / 2 - bbox[1] - 2), "叫",
+               font=font, fill=(255, 255, 255, 255))
+        try:
+            img.save(icon_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48)])
+        except Exception:
+            pass
+        hicon = win32gui.LoadImage(0, icon_path, win32con.IMAGE_ICON, 0, 0,
+                                   win32con.LR_LOADFROMFILE)
+        if hicon:
+            return hicon
+    except Exception:
+        pass
+    return win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+
+
 class SplashWindow:
-    """启动动画：居中置顶不可关闭，左侧转圈，右侧三行（大标题 / 斜体“启动中” / 状态）。"""
+    """启动动画：居中置顶不可关闭，左侧转圈，右侧三行（大标题 / 斜体“启动中” / 状态）。
+    窗口在自己的线程中运行消息循环，主线程做启动检查时动画与状态文字持续刷新。"""
 
     ID_STATUS = 301
 
@@ -78,6 +127,66 @@ class SplashWindow:
         self._font_status = None
         self._pen_track = None
         self._pen_arc = None
+        self._queue = queue.Queue()
+        self._thread = None
+        self._shown = threading.Event()
+
+    # ------------------------------------------------------------------
+    # 主线程调用
+    # ------------------------------------------------------------------
+    def show(self):
+        self._thread = threading.Thread(target=self._run, daemon=True, name="splash")
+        self._thread.start()
+        self._shown.wait(5)
+
+    def set_status(self, text):
+        self._queue.put(("status", str(text)))
+
+    def close(self):
+        self._queue.put(("close", None))
+        if self._thread is not None:
+            self._thread.join(3)
+
+    # ------------------------------------------------------------------
+    # 动画线程
+    # ------------------------------------------------------------------
+    def _run(self):
+        try:
+            self._register()
+            self._create_window()
+            win32gui.ShowWindow(self._hwnd, win32con.SW_SHOW)
+            win32gui.UpdateWindow(self._hwnd)
+            self._shown.set()
+            last = 0.0
+            while self._drain():
+                try:
+                    win32gui.PumpWaitingMessages()
+                except Exception:
+                    pass
+                now = time.time()
+                if now - last >= 0.06:  # 不用 WM_TIMER，自己按时间旋转动画
+                    last = now
+                    self._angle = (self._angle + 12) % 360
+                    if self._hwnd and win32gui.IsWindow(self._hwnd):
+                        # bErase=True 先擦背景，避免弧线走过处残留蓝点
+                        win32gui.InvalidateRect(self._hwnd, (30, 48, 122, 142), True)
+                time.sleep(0.005)
+        finally:
+            self._cleanup()
+
+    def _drain(self):
+        """处理主线程发来的消息；收到 close 返回 False。"""
+        try:
+            while True:
+                item = self._queue.get_nowait()
+                if item[0] == "status":
+                    if self._status:
+                        win32gui.SetWindowText(self._status, item[1])
+                elif item[0] == "close":
+                    return False
+        except queue.Empty:
+            pass
+        return True
 
     def _register(self):
         hinst = win32api.GetModuleHandle(None)
@@ -91,15 +200,14 @@ class SplashWindow:
         wc.lpfnWndProc = self._proc
         win32gui.RegisterClass(wc)
 
-    def show(self):
-        self._register()
-        self._font_title = _make_font(30, 700)
-        self._font_sub = _make_font(16, 400, italic=1)
-        self._font_status = _make_font(13)
+    def _create_window(self):
+        self._font_title = _make_font(36, 700)
+        self._font_sub = _make_font(20, 400, italic=1)
+        self._font_status = _make_font(20)
         self._pen_track = win32gui.CreatePen(win32con.PS_SOLID, 7, LIGHT)
         self._pen_arc = win32gui.CreatePen(win32con.PS_SOLID, 7, BLUE)
         hinst = win32api.GetModuleHandle(None)
-        w, h = 540, 170
+        w, h = 580, 190
         x, y = _center_pos(w, h)
         self._hwnd = win32gui.CreateWindowEx(
             win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
@@ -110,15 +218,15 @@ class SplashWindow:
         win32gui.CreateWindowEx(
             0, "STATIC", "班级叫号器",
             win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            150, 22, 366, 44, self._hwnd, 302, hinst, None)
+            158, 26, 404, 46, self._hwnd, 302, hinst, None)
         win32gui.CreateWindowEx(
             0, "STATIC", "启动中…",
             win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            150, 72, 366, 30, self._hwnd, 303, hinst, None)
+            158, 78, 404, 32, self._hwnd, 303, hinst, None)
         self._status = win32gui.CreateWindowEx(
             0, "STATIC", "正在准备…",
             win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            150, 108, 366, 44, self._hwnd, self.ID_STATUS, hinst, None)
+            158, 116, 404, 52, self._hwnd, self.ID_STATUS, hinst, None)
 
         win32gui.SendMessage(win32gui.GetDlgItem(self._hwnd, 302),
                              win32con.WM_SETFONT, self._font_title, True)
@@ -126,24 +234,9 @@ class SplashWindow:
                              win32con.WM_SETFONT, self._font_sub, True)
         win32gui.SendMessage(self._status, win32con.WM_SETFONT, self._font_status, True)
 
-        win32gui.ShowWindow(self._hwnd, win32con.SW_SHOW)
-        win32gui.UpdateWindow(self._hwnd)
-        win32gui.SetTimer(self._hwnd, 1, 60, None)
-
-    def set_status(self, text):
-        if self._status:
-            win32gui.SetWindowText(self._status, str(text))
-
-    def pump(self):
-        try:
-            win32gui.PumpWaitingMessages()
-        except Exception:
-            pass
-
-    def close(self):
+    def _cleanup(self):
         try:
             if self._hwnd and win32gui.IsWindow(self._hwnd):
-                win32gui.KillTimer(self._hwnd, 1)
                 win32gui.DestroyWindow(self._hwnd)
         except Exception:
             pass
@@ -159,13 +252,14 @@ class SplashWindow:
         self._pen_track = self._pen_arc = None
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
-        if msg == win32con.WM_TIMER and wparam == 1:
-            self._angle = (self._angle + 12) % 360
-            win32gui.InvalidateRect(hwnd, (26, 42, 114, 130), False)
-            return 0
-        elif msg == win32con.WM_PAINT:
+        if msg == win32con.WM_PAINT:
             self._paint(hwnd)
             return 0
+        elif msg == win32con.WM_CTLCOLORSTATIC:
+            # 文本框背景与窗口背景一致（白色、透明文字背景）
+            win32gui.SetTextColor(wparam, win32api.RGB(15, 23, 42))
+            win32gui.SetBkMode(wparam, win32con.TRANSPARENT)
+            return win32gui.GetStockObject(win32con.WHITE_BRUSH)
         elif msg == win32con.WM_CLOSE:
             return 0  # 启动动画不可关闭
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
@@ -173,7 +267,157 @@ class SplashWindow:
     def _paint(self, hwnd):
         hdc, ps = win32gui.BeginPaint(hwnd)
         try:
-            cx, cy, r = 70, 86, 36
+            cx, cy, r = 76, 95, 38
+            old_pen = win32gui.SelectObject(hdc, self._pen_track)
+            old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
+            win32gui.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
+            win32gui.SelectObject(hdc, self._pen_arc)
+            a1 = math.radians(self._angle)
+            a2 = math.radians(self._angle + 280)
+            p1 = (int(cx + r * math.cos(a1)), int(cy + r * math.sin(a1)))
+            p2 = (int(cx + r * math.cos(a2)), int(cy + r * math.sin(a2)))
+            win32gui.Arc(hdc, cx - r, cy - r, cx + r, cy + r,
+                         p1[0], p1[1], p2[0], p2[1])
+            win32gui.SelectObject(hdc, old_brush)
+            win32gui.SelectObject(hdc, old_pen)
+        finally:
+            win32gui.EndPaint(hwnd, ps)
+
+
+class UpdateWindow:
+    """软件更新进度窗口：可最小化、不可关闭，带加载动画。"""
+
+    def __init__(self):
+        self._hwnd = None
+        self._bar = None
+        self._detail = None
+        self._pct = None
+        self._proc = None
+        self._font_title = None
+        self._font_detail = None
+        self._pen_track = None
+        self._pen_arc = None
+        self._angle = 0.0
+
+    def _register(self):
+        hinst = win32api.GetModuleHandle(None)
+        wc = win32gui.WNDCLASS()
+        wc.hInstance = hinst
+        wc.lpszClassName = "CQTUpdateClass"
+        wc.style = win32con.CS_HREDRAW | win32con.CS_VREDRAW
+        wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+        wc.hbrBackground = win32gui.CreateSolidBrush(WHITE)
+        self._proc = self._wnd_proc
+        wc.lpfnWndProc = self._proc
+        win32gui.RegisterClass(wc)
+
+    def show(self):
+        self._register()
+        self._font_title = _make_font(16, 700)
+        self._font_detail = _make_font(13)
+        self._pen_track = win32gui.CreatePen(win32con.PS_SOLID, 5, LIGHT)
+        self._pen_arc = win32gui.CreatePen(win32con.PS_SOLID, 5, BLUE)
+        hinst = win32api.GetModuleHandle(None)
+        w, h = 500, 190
+        x, y = _center_pos(w, h)
+        self._hwnd = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOPMOST,
+            "CQTUpdateClass", "软件更新",
+            win32con.WS_OVERLAPPED | win32con.WS_CAPTION | win32con.WS_SYSMENU |
+            win32con.WS_MINIMIZEBOX,
+            x, y, w, h, 0, 0, hinst, None)
+
+        # 统一图标
+        try:
+            icon = _make_tray_icon(APP_DATA_DIR)
+            win32gui.SendMessage(self._hwnd, win32con.WM_SETICON, win32con.ICON_SMALL, icon)
+            win32gui.SendMessage(self._hwnd, win32con.WM_SETICON, win32con.ICON_BIG, icon)
+        except Exception:
+            pass
+
+        win32gui.CreateWindowEx(
+            0, "STATIC", "班级叫号器 · 软件更新",
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
+            104, 16, 380, 26, self._hwnd, 501, hinst, None)
+        self._bar = win32gui.CreateWindowEx(
+            0, "msctls_progress32", None,
+            win32con.WS_CHILD | win32con.WS_VISIBLE,
+            104, 56, 376, 22, self._hwnd, 502, hinst, None)
+        self._detail = win32gui.CreateWindowEx(
+            0, "STATIC", "准备更新…",
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
+            104, 94, 376, 22, self._hwnd, 503, hinst, None)
+        self._pct = win32gui.CreateWindowEx(
+            0, "STATIC", "0%",
+            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_RIGHT,
+            370, 124, 110, 28, self._hwnd, 504, hinst, None)
+
+        win32gui.SendMessage(win32gui.GetDlgItem(self._hwnd, 501),
+                             win32con.WM_SETFONT, self._font_title, True)
+        win32gui.SendMessage(self._detail, win32con.WM_SETFONT, self._font_detail, True)
+        win32gui.SendMessage(self._pct, win32con.WM_SETFONT, self._font_title, True)
+
+        # 进度条范围 0-100
+        win32gui.SendMessage(self._bar, 0x0406, 0, 100)   # PBM_SETRANGE32
+        win32gui.SendMessage(self._bar, 0x0402, 0, 0)     # PBM_SETPOS
+
+        # 置灰关闭按钮：可最小化，不可关闭
+        try:
+            hmenu = win32gui.GetSystemMenu(self._hwnd, False)
+            win32gui.EnableMenuItem(hmenu, win32con.SC_CLOSE,
+                                    win32con.MF_BYCOMMAND | win32con.MF_GRAYED)
+        except Exception:
+            pass
+
+        win32gui.ShowWindow(self._hwnd, win32con.SW_SHOW)
+        win32gui.UpdateWindow(self._hwnd)
+
+    def set_progress(self, pct, detail):
+        pct = max(0, min(100, int(pct)))
+        if self._hwnd and win32gui.IsWindow(self._hwnd):
+            win32gui.SendMessage(self._bar, 0x0402, pct, 0)  # PBM_SETPOS
+            win32gui.SetWindowText(self._pct, "%d%%" % pct)
+            win32gui.SetWindowText(self._detail, str(detail))
+
+    def tick(self):
+        """加载动画：旋转左侧小圈。"""
+        self._angle = (self._angle + 12) % 360
+        if self._hwnd and win32gui.IsWindow(self._hwnd):
+            win32gui.InvalidateRect(self._hwnd, (22, 70, 86, 134), True)
+
+    def close(self):
+        try:
+            if self._hwnd and win32gui.IsWindow(self._hwnd):
+                win32gui.DestroyWindow(self._hwnd)
+        except Exception:
+            pass
+        self._hwnd = None
+        for obj in (self._font_title, self._font_detail, self._pen_track, self._pen_arc):
+            try:
+                if obj:
+                    win32gui.DeleteObject(obj)
+            except Exception:
+                pass
+        self._font_title = self._font_detail = None
+        self._pen_track = self._pen_arc = None
+
+    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == win32con.WM_CLOSE:
+            return 0  # 不可关闭
+        elif msg == win32con.WM_CTLCOLORSTATIC:
+            # 文本透明背景，与窗口背景一致
+            win32gui.SetTextColor(wparam, win32api.RGB(15, 23, 42))
+            win32gui.SetBkMode(wparam, win32con.TRANSPARENT)
+            return win32gui.GetStockObject(win32con.WHITE_BRUSH)
+        elif msg == win32con.WM_PAINT:
+            self._paint(hwnd)
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    def _paint(self, hwnd):
+        hdc, ps = win32gui.BeginPaint(hwnd)
+        try:
+            cx, cy, r = 54, 102, 26
             old_pen = win32gui.SelectObject(hdc, self._pen_track)
             old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
             win32gui.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
@@ -332,10 +576,11 @@ class DesktopUI:
         self.get_records = get_records
         self._queue = queue.Queue()
         self._quit = False
-        self._panel = None
-        self._listbox = None
-        self._status = None
+        self._hwnd = None       # 隐藏的托盘消息窗口（不再显示主窗口）
         self._tray_added = False
+        self._tray_icon = None
+        self._update_win = None
+        self._last_spin = 0.0
         self._popup = None
         self._popup_bmp = None
         self._remote_popup = None
@@ -352,17 +597,17 @@ class DesktopUI:
         self._font_note = None
         self._green_brush = None
         self._white_brush = None
-        self._panel_proc = None
+        self._tray_proc = None
         self._popup_proc = None
 
     # ------------------------------------------------------------------
     # 外部线程调用
     # ------------------------------------------------------------------
     def notify_call(self, record):
-        self._queue.put(("call", record))
+        self._queue.put(("popup", record))
 
     def add_record(self, record):
-        self._queue.put(("record", record))
+        pass  # 无主窗口，叫号记录只在网页端显示
 
     def show_popup(self, record):
         self._queue.put(("popup", record))
@@ -379,11 +624,20 @@ class DesktopUI:
     def close_popup(self):
         self._queue.put(("close_popup", None))
 
+    def show_update_window(self):
+        self._queue.put(("update_show", None))
+
+    def set_update_progress(self, pct, detail):
+        self._queue.put(("update_progress", (pct, detail)))
+
+    def close_update_window(self):
+        self._queue.put(("update_close", None))
+
     def show_panel(self):
-        self._queue.put(("show", None))
+        pass  # 无主窗口
 
     def clear_records(self):
-        self._queue.put(("clear", None))
+        pass  # 无主窗口，叫号记录只在网页端显示
 
     def quit(self):
         self._queue.put(("quit", None))
@@ -394,14 +648,17 @@ class DesktopUI:
     def run(self):
         try:
             self._register_classes()
-            self._create_panel()
             self._create_tray()
-            if self.get_records:
-                for r in self.get_records():
-                    self._append_record(r)
             while not self._quit:
                 win32gui.PumpWaitingMessages()
                 self._drain_queue()
+                # 更新窗口加载动画
+                if self._update_win is not None and time.time() - self._last_spin >= 0.06:
+                    self._last_spin = time.time()
+                    try:
+                        self._update_win.tick()
+                    except Exception:
+                        pass
                 time.sleep(0.02)
         finally:
             self._cleanup()
@@ -410,10 +667,7 @@ class DesktopUI:
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
-                if kind == "call":
-                    self._show_popup(payload)
-                    self._append_record(payload)
-                elif kind == "popup":
+                if kind == "popup":
                     self._show_popup(payload)
                 elif kind == "message_popup":
                     self._show_message_popup(payload)
@@ -423,16 +677,34 @@ class DesktopUI:
                     self._show_remote_popup(payload)
                 elif kind == "remote_off":
                     self._close_remote_popup()
-                elif kind == "record":
-                    self._append_record(payload)
-                elif kind == "show":
-                    self._show_panel()
-                elif kind == "clear":
-                    self._clear_records()
+                elif kind == "update_show":
+                    self._open_update_window()
+                elif kind == "update_progress":
+                    if self._update_win is not None:
+                        self._update_win.set_progress(payload[0], payload[1])
+                elif kind == "update_close":
+                    self._close_update_window()
                 elif kind == "quit":
                     self._quit_app()
         except queue.Empty:
             pass
+
+    def _open_update_window(self):
+        try:
+            if self._update_win is None:
+                self._update_win = UpdateWindow()
+                self._update_win.show()
+        except Exception as exc:
+            print("[更新窗口] 显示失败:", exc)
+            self._update_win = None
+
+    def _close_update_window(self):
+        try:
+            if self._update_win is not None:
+                self._update_win.close()
+        except Exception:
+            pass
+        self._update_win = None
 
     # ------------------------------------------------------------------
     # 窗口类
@@ -442,12 +714,12 @@ class DesktopUI:
 
         wc = win32gui.WNDCLASS()
         wc.hInstance = hinst
-        wc.lpszClassName = "CQTPanelClass"
+        wc.lpszClassName = "CQTMsgClass"   # 隐藏的托盘消息窗口
         wc.style = win32con.CS_HREDRAW | win32con.CS_VREDRAW
         wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
         wc.hbrBackground = win32gui.GetStockObject(win32con.WHITE_BRUSH)
-        self._panel_proc = self._panel_wnd_proc
-        wc.lpfnWndProc = self._panel_proc
+        self._tray_proc = self._tray_wnd_proc
+        wc.lpfnWndProc = self._tray_proc
         win32gui.RegisterClass(wc)
 
         wc2 = win32gui.WNDCLASS()
@@ -468,97 +740,20 @@ class DesktopUI:
         self._font_note = _make_font(14)
 
     # ------------------------------------------------------------------
-    # 面板
+    # 托盘消息窗口（隐藏，不显示主窗口）
     # ------------------------------------------------------------------
-    def _create_panel(self):
+    def _create_tray_window(self):
         hinst = win32api.GetModuleHandle(None)
-        self._panel = win32gui.CreateWindowEx(
-            0, "CQTPanelClass", APP_TITLE, win32con.WS_OVERLAPPEDWINDOW,
-            120, 100, 600, 500, 0, 0, hinst, None)
+        self._hwnd = win32gui.CreateWindowEx(
+            0, "CQTMsgClass", APP_TITLE, win32con.WS_POPUP,
+            0, 0, 0, 0, 0, 0, hinst, None)
 
-        self._listbox = win32gui.CreateWindowEx(
-            win32con.WS_EX_CLIENTEDGE, "LISTBOX", None,
-            win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_VSCROLL |
-            win32con.LBS_NOINTEGRALHEIGHT | win32con.LBS_NOTIFY,
-            12, 12, 576, 400, self._panel, ID_LIST, hinst, None)
-
-        self._status = win32gui.CreateWindowEx(
-            0, "STATIC", "已叫号 0 次", win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.SS_LEFT,
-            12, 418, 300, 26, self._panel, ID_STATUS, hinst, None)
-
-        win32gui.CreateWindowEx(
-            0, "BUTTON", "隐藏到托盘", win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.BS_PUSHBUTTON,
-            12, 452, 110, 30, self._panel, ID_BTN_HIDE, hinst, None)
-        win32gui.CreateWindowEx(
-            0, "BUTTON", "打开网页", win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.BS_PUSHBUTTON,
-            132, 452, 110, 30, self._panel, ID_BTN_WEB, hinst, None)
-        win32gui.CreateWindowEx(
-            0, "BUTTON", "退出", win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.BS_PUSHBUTTON,
-            252, 452, 110, 30, self._panel, ID_BTN_QUIT, hinst, None)
-
-        win32gui.SendMessage(self._listbox, win32con.WM_SETFONT, self._font_small, True)
-        win32gui.SendMessage(self._status, win32con.WM_SETFONT, self._font_small, True)
-
-        win32gui.ShowWindow(self._panel, win32con.SW_SHOW)
-        win32gui.UpdateWindow(self._panel)
-
-    def _panel_wnd_proc(self, hwnd, msg, wparam, lparam):
-        if msg == win32con.WM_COMMAND:
-            cid = win32api.LOWORD(wparam)
-            if cid == ID_BTN_HIDE:
-                self._hide_panel()
-                return 0
-            if cid == ID_BTN_WEB:
-                try:
-                    os.startfile("http://127.0.0.1:%d" % self.port)
-                except Exception:
-                    pass
-                return 0
-            if cid == ID_BTN_QUIT:
-                self._quit_app()
-                return 0
-        elif msg == win32con.WM_CLOSE:
-            self._hide_panel()
-            return 0
-        elif msg == TRAY_MSG:
+    def _tray_wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == TRAY_MSG:
             if lparam in (win32con.WM_RBUTTONUP, win32con.WM_LBUTTONUP):
                 self._show_tray_menu()
             return 0
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
-
-    def _hide_panel(self):
-        if self._panel:
-            win32gui.ShowWindow(self._panel, win32con.SW_HIDE)
-
-    def _show_panel(self):
-        if self._panel:
-            win32gui.ShowWindow(self._panel, win32con.SW_SHOW)
-            try:
-                win32gui.SetForegroundWindow(self._panel)
-            except Exception:
-                pass
-
-    def _append_record(self, rec):
-        if not self._listbox:
-            return
-        number = str(rec.get("number", ""))
-        name = str(rec.get("name", ""))
-        note = str(rec.get("note", ""))
-        when = str(rec.get("time", ""))[11:19]
-        line = "%s  %s %s  %s" % (when, number, name, note)
-        win32gui.SendMessage(self._listbox, win32con.LB_ADDSTRING, 0, line)
-        count = win32gui.SendMessage(self._listbox, win32con.LB_GETCOUNT, 0, 0)
-        if count > 300:
-            win32gui.SendMessage(self._listbox, win32con.LB_DELETESTRING, 0, 0)
-        win32gui.SendMessage(self._listbox, win32con.WM_VSCROLL, win32con.SB_BOTTOM, 0)
-        if self._status:
-            win32gui.SetWindowText(self._status, "已叫号 %d 次" % (rec.get("call_count", 0) or 0))
-
-    def _clear_records(self):
-        if self._listbox:
-            win32gui.SendMessage(self._listbox, win32con.LB_RESETCONTENT, 0, 0)
-        if self._status:
-            win32gui.SetWindowText(self._status, "叫号记录已清空")
 
     # ------------------------------------------------------------------
     # 右下角弹窗
@@ -856,10 +1051,11 @@ class DesktopUI:
     # ------------------------------------------------------------------
     def _create_tray(self):
         try:
-            icon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
-            nid = (self._panel, 0,
+            self._create_tray_window()
+            self._tray_icon = _make_tray_icon(self.data_dir)
+            nid = (self._hwnd, 0,
                    win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP,
-                   TRAY_MSG, icon, APP_TITLE)
+                   TRAY_MSG, self._tray_icon, APP_TITLE)
             win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
             self._tray_added = True
         except Exception as exc:
@@ -867,19 +1063,23 @@ class DesktopUI:
 
     def _show_tray_menu(self):
         menu = win32gui.CreatePopupMenu()
-        win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "显示面板")
+        win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "打开网页")
         win32gui.AppendMenu(menu, win32con.MF_STRING, 2, "退出")
         pos = win32gui.GetCursorPos()
         try:
-            win32gui.SetForegroundWindow(self._panel)
+            win32gui.SetForegroundWindow(self._hwnd)
         except Exception:
             pass
         cmd = win32gui.TrackPopupMenu(
-            menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON,
-            pos[0], pos[1], 0, self._panel, None)
+            menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON |
+            win32con.TPM_RETURNCMD,
+            pos[0], pos[1], 0, self._hwnd, None)
         win32gui.DestroyMenu(menu)
         if cmd == 1:
-            self._show_panel()
+            try:
+                os.startfile("http://127.0.0.1:%d" % self.port)
+            except Exception:
+                pass
         elif cmd == 2:
             self._quit_app()
 
@@ -888,12 +1088,18 @@ class DesktopUI:
         try:
             if self._tray_added:
                 win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE,
-                                          (self._panel, 0, 0, 0, 0, ""))
+                                          (self._hwnd, 0, 0, 0, 0, ""))
         except Exception:
             pass
         try:
-            if self._panel and win32gui.IsWindow(self._panel):
-                win32gui.DestroyWindow(self._panel)
+            if self._tray_icon:
+                win32gui.DestroyIcon(self._tray_icon)
+        except Exception:
+            pass
+        self._tray_icon = None
+        try:
+            if self._hwnd and win32gui.IsWindow(self._hwnd):
+                win32gui.DestroyWindow(self._hwnd)
         except Exception:
             pass
 
@@ -901,7 +1107,19 @@ class DesktopUI:
         try:
             if self._tray_added:
                 win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE,
-                                          (self._panel, 0, 0, 0, 0, ""))
+                                          (self._hwnd, 0, 0, 0, 0, ""))
+        except Exception:
+            pass
+        try:
+            if self._tray_icon:
+                win32gui.DestroyIcon(self._tray_icon)
+        except Exception:
+            pass
+        self._tray_icon = None
+        self._close_update_window()
+        try:
+            if self._hwnd and win32gui.IsWindow(self._hwnd):
+                win32gui.DestroyWindow(self._hwnd)
         except Exception:
             pass
         for obj in (self._font_small, self._font_num, self._font_teacher,

@@ -39,6 +39,7 @@ from fsapi import fs_bp
 from monitor import (monitor_bp, monitor_shutdown, set_config_getter,
                      ws_monitor_audio, ws_monitor_camera, ws_monitor_intercom)
 from remote import remote_bp, remote_shutdown, set_desktop, ws_remote
+import update as update_mod
 
 ROOT_DIR = os.path.dirname(BASE_DIR)   # 版本目录的上一级（程序根目录，含 data/ 与 version.json）
 DATA_DIR = os.path.join(ROOT_DIR, "data")   # 共享数据目录：OTA 更新时保留、不删除
@@ -69,6 +70,8 @@ DEFAULT_CONFIG = {
     "autostart": False,             # 开机自启
     "secure_enabled": True,         # 是否启用 HTTPS 安全端口（手机端激活/敏感功能用）
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
+    "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
+    "update_policy": "none",        # OTA 更新策略：none | check | download | install
 }
 
 try:
@@ -91,6 +94,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(monitor_bp)
 app.register_blueprint(remote_bp)
 app.register_blueprint(fs_bp)
+app.register_blueprint(update_mod.update_bp)
 
 # WebSocket 实时通道（低延迟：摄像头/麦克风/对讲/远程控制）
 sock.route("/ws/monitor/camera")(ws_monitor_camera)
@@ -687,14 +691,25 @@ def page_password():
     return render_template("password.html")
 
 
+@app.route("/update")
+def page_update():
+    return render_template("update.html")
+
+
 # ---------------------------------------------------------------------------
 # 状态与配置 API
 # ---------------------------------------------------------------------------
 @app.route("/api/health")
 def api_health():
     """启动自检用测试接口：HTTP/HTTPS 服务是否正常响应。"""
+    ver = "2.0.0"
+    try:
+        with open(os.path.join(ROOT_DIR, "version.json"), "r", encoding="utf-8") as f:
+            ver = str(json.load(f).get("version", "2.0.0"))
+    except Exception:
+        pass
     return jsonify({"ok": True, "app": "班级叫号器",
-                    "version": "2.0.0", "time": int(time.time())})
+                    "version": ver, "time": int(time.time())})
 
 
 @app.route("/api/status")
@@ -784,6 +799,48 @@ def api_settings():
         register_mdns(cfg)  # 主机名 / 开关变化立即重新注册
     return jsonify({"ok": True, "config": cfg,
                     "note": "端口修改后需重启软件生效"})
+
+
+def _restart_app(version=None):
+    """重启软件：派生一个无窗口的 pythonw 子进程，延迟 2 秒后重新拉起 app.py，
+    再结束当前进程。version 非空时启动 ROOT_DIR/<version>/app.py（OTA 更新后切换版本）。"""
+    try:
+        pyw = sys.executable
+        if os.path.basename(pyw).lower().startswith("python.exe"):
+            cand = os.path.join(os.path.dirname(pyw), "pythonw.exe")
+            if os.path.isfile(cand):
+                pyw = cand
+        if not os.path.isfile(pyw):
+            pyw = os.path.join(os.path.dirname(sys.executable), "python.exe")
+        if version:
+            app_path = os.path.join(ROOT_DIR, str(version), "app.py")
+            if not os.path.isfile(app_path):
+                app_path = os.path.abspath(__file__)
+        else:
+            app_path = os.path.abspath(__file__)
+        relaunch = ("import time, subprocess, sys\n"
+                    "time.sleep(2)\n"
+                    "subprocess.Popen([sys.executable, %r])\n" % app_path)
+        subprocess.Popen([pyw, "-c", relaunch],
+                         creationflags=_CREATE_NO_WINDOW, close_fds=True)
+    except Exception as exc:
+        print("[重启] 启动重启命令失败:", exc)
+    time.sleep(0.6)
+    os._exit(0)
+
+
+@app.route("/api/restart", methods=["POST"])
+def api_restart():
+    err = check_access()
+    if err:
+        return err
+
+    def do_restart():
+        time.sleep(1.0)   # 先让响应发回浏览器
+        _restart_app()
+
+    threading.Thread(target=do_restart, daemon=True, name="restart").start()
+    return jsonify({"ok": True, "message": "软件正在重启，网页即将断开"})
 
 
 @app.route("/api/calls")
@@ -1237,10 +1294,19 @@ def _resolve_mdns(hostname):
     return box.get("ip")
 
 
-def run_startup_checks(cfg, hostname, port, secure_port):
-    """启动自检，返回 [{level, name, detail, solution}]。level: ok/warn/error。"""
+def run_startup_checks(cfg, hostname, port, secure_port, progress=None):
+    """启动自检，返回 [{level, name, detail, solution}]。level: ok/warn/error。
+    progress(name) 会在每项检查开始前被调用，用于在启动动画上显示“正在检查什么”。"""
     checks = []
 
+    def step(name):
+        if progress:
+            try:
+                progress(name)
+            except Exception:
+                pass
+
+    step("网页服务")
     ok, detail = _http_get_ok("http://127.0.0.1:%d/api/health" % port)
     checks.append({
         "level": "ok" if ok else "error",
@@ -1250,6 +1316,7 @@ def run_startup_checks(cfg, hostname, port, secure_port):
     })
 
     if secure_port:
+        step("安全服务")
         try:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -1268,6 +1335,7 @@ def run_startup_checks(cfg, hostname, port, secure_port):
                            "solution": "可在设置中更换安全端口后重启。"})
 
     if cfg.get("mdns_enabled"):
+        step("mDNS 域名解析")
         if not HAS_ZEROCONF:
             checks.append({"level": "warn", "name": "mDNS",
                            "detail": "未安装 zeroconf 组件",
@@ -1293,6 +1361,7 @@ def run_startup_checks(cfg, hostname, port, secure_port):
                                "detail": "本机未能解析 %s.local（其他设备可能仍能访问）" % hostname,
                                "solution": "其他设备也可直接用 http://IP:端口 访问。"})
 
+    step("数据目录")
     try:
         probe = os.path.join(DATA_DIR, ".wtest")
         with open(probe, "w", encoding="utf-8") as f:
@@ -1305,6 +1374,7 @@ def run_startup_checks(cfg, hostname, port, secure_port):
                        "detail": "数据目录不可写: %s" % exc,
                        "solution": "确认 data 目录存在、未被占用，且磁盘有写入权限。"})
 
+    step("名条数据")
     try:
         n = len(get_roster())
         checks.append({"level": "ok", "name": "名条数据",
@@ -1316,9 +1386,45 @@ def run_startup_checks(cfg, hostname, port, secure_port):
     return checks
 
 
+_SINGLE_INSTANCE_MUTEX = None
+_SINGLE_INSTANCE_NAME = "Local\\CQT_ClassCaller_SingleInstance_9F2A"
+
+
+def acquire_single_instance():
+    """用 Windows 命名互斥体实现单实例：已有实例在运行返回 False。"""
+    global _SINGLE_INSTANCE_MUTEX
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_NAME)
+        if not handle:
+            return True  # 创建失败时放行，避免误拦
+        _SINGLE_INSTANCE_MUTEX = handle
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            _SINGLE_INSTANCE_MUTEX = None
+            return False
+        return True
+    except Exception:
+        return True
+
+
 def _main():
     global _running_port, _running_secure_port, _desktop
     set_config_getter(get_config)
+    update_mod.set_config_getter(get_config)
+    update_mod.set_restart_callback(_restart_app)
+
+    # 单实例保护：已有实例运行时直接提示并退出
+    if not acquire_single_instance():
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, "班级叫号器已经在运行了，请查看屏幕右下角的托盘图标。",
+                "班级叫号器", 0x40 | 0x0)
+        except Exception:
+            pass
+        return
 
     # 桌面组件（启动动画 / 错误弹窗）
     SplashWindow = show_fatal_error = DesktopUI = None
@@ -1340,7 +1446,6 @@ def _main():
         print("[启动] " + text)
         if splash is not None:
             splash.set_status(text)
-            splash.pump()
 
     cfg = get_config()
     port = int(cfg.get("port", 8000))
@@ -1420,14 +1525,13 @@ def _main():
     if cfg.get("mdns_enabled"):
         status("正在注册 mDNS…")
         register_mdns(cfg)
-        if splash is not None:
-            splash.pump()
     else:
         print("[mDNS] 已关闭")
 
-    # 启动自检
-    status("正在进行启动自检…")
-    checks = run_startup_checks(cfg, hostname, port, _running_secure_port)
+    # 启动自检（逐项显示“正在检查什么”）
+    checks = run_startup_checks(
+        cfg, hostname, port, _running_secure_port,
+        progress=lambda name: status("正在检查：%s…" % name))
     for c in checks:
         print("[自检] %s %s: %s" % (c["name"], c["level"], c["detail"]))
 
@@ -1467,8 +1571,6 @@ def _main():
     status("启动完成，正在打开面板…")
     if splash is not None:
         try:
-            splash.pump()
-            time.sleep(0.25)
             splash.close()
         except Exception:
             pass
@@ -1486,6 +1588,8 @@ def _main():
     try:
         _desktop = DesktopUI(DATA_DIR, port, get_records=get_calls)
         set_desktop(_desktop)
+        update_mod.set_desktop(_desktop)
+        update_mod.maybe_auto_update()
         _desktop.run()
     except Exception as exc:
         print("[桌面] 桌面组件不可用，仅运行网页服务:", exc)

@@ -1,0 +1,165 @@
+/* 软件更新页面逻辑 */
+"use strict";
+const $ = (id) => document.getElementById(id);
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.add("hidden"), 2600);
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+}[c]));
+
+async function api(url, options = {}) {
+  const res = await Auth.fetchAuthed(url, options);
+  const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
+  if (!res.ok || data.ok === false) {
+    const e = new Error(data.error || ("请求失败 " + res.status));
+    e.status = res.status;
+    throw e;
+  }
+  return data;
+}
+
+let latestInfo = null;
+let pollTimer = null;
+
+async function loadConfig() {
+  try {
+    const d = await api("/api/update/config");
+    $("cur-version").textContent = d.current_version || "?";
+    $("cur-channel").textContent = ({ stable: "稳定", beta: "内测", dev: "开发" })[d.update_channel] || d.update_channel;
+    $("set-channel").value = d.update_channel || "stable";
+    $("set-policy").value = d.update_policy || "none";
+  } catch (e) { toast("加载配置失败：" + e.message); }
+}
+
+async function checkUpdate() {
+  try {
+    $("latest-info").textContent = "正在检查更新…";
+    const d = await api("/api/update/check");
+    if (!d.latest) {
+      latestInfo = null;
+      $("latest-info").textContent = "已是最新版本。";
+      $("btn-update").classList.add("hidden");
+      return;
+    }
+    latestInfo = d.latest;
+    $("latest-info").textContent = "发现新版本：" + d.latest.version + "（通道：" + d.latest.channel + "）";
+    $("btn-update").classList.remove("hidden");
+    renderNotes(d.latest.notes);
+  } catch (e) { toast("检查失败：" + e.message); }
+}
+
+function renderNotes(notes) {
+  const box = $("update-notes");
+  box.textContent = "";
+  if (!notes) { box.textContent = "无更新日志"; return; }
+  for (const line of String(notes).split(/\r?\n/)) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    box.appendChild(div);
+  }
+}
+
+async function startUpdate() {
+  if (!latestInfo) { toast("请先检查更新"); return; }
+  if (!confirm("确定更新到 " + latestInfo.version + " 吗？更新完成后软件会自动重启。")) return;
+  try {
+    await api("/api/update/start", { method: "POST", body: JSON.stringify({}) });
+    showProgress();
+    startPolling();
+  } catch (e) { toast("开始更新失败：" + e.message); }
+}
+
+function showProgress() {
+  $("progress-panel").style.display = "";
+  $("progress-fill").style.width = "0%";
+  $("progress-stage").textContent = "准备中";
+  $("progress-pct").textContent = "0%";
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const d = await api("/api/update/progress");
+      const p = d.progress || {};
+      $("progress-fill").style.width = (p.percent || 0) + "%";
+      $("progress-pct").textContent = (p.percent || 0) + "%";
+      $("progress-stage").textContent = stageText(p.stage);
+      $("progress-detail").textContent = p.detail || "";
+      if (p.stage === "done") {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        toast("更新完成，正在重启…");
+        setTimeout(() => location.reload(), 8000);
+      } else if (p.stage === "error") {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        toast("更新失败：" + (p.error || p.detail));
+      }
+    } catch (e) { /* 忽略轮询瞬时错误 */ }
+  }, 1000);
+}
+
+function stageText(stage) {
+  const m = {
+    idle: "空闲", check: "检查更新", speedtest: "测速选择线路",
+    download: "下载更新包", extract: "解压安装", final: "收尾工作",
+    done: "完成", error: "失败", start: "准备中",
+  };
+  return m[stage] || stage || "…";
+}
+
+async function uploadZip(file) {
+  if (!file) return;
+  if (!confirm("确定用本地 zip 覆盖更新吗？更新完成后会自动重启。")) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await Auth.fetchAuthed("/api/update/upload", { method: "POST", body: fd });
+    const d = await res.json();
+    if (!res.ok || d.ok === false) throw new Error(d.error || "上传失败");
+    toast("已开始安装手动更新包");
+    showProgress();
+    startPolling();
+  } catch (e) { toast("上传失败：" + e.message); }
+}
+
+async function savePolicy() {
+  try {
+    await api("/api/update/config", {
+      method: "POST",
+      body: JSON.stringify({
+        update_channel: $("set-channel").value,
+        update_policy: $("set-policy").value,
+      }),
+    });
+    toast("更新设置已保存");
+    $("menu-pop").classList.add("hidden");
+    loadConfig();
+  } catch (e) { toast("保存失败：" + e.message); }
+}
+
+/* 事件 */
+$("btn-check").addEventListener("click", checkUpdate);
+$("btn-update").addEventListener("click", startUpdate);
+$("btn-upload").addEventListener("click", () => {
+  const f = $("zip-file").files[0];
+  if (f) uploadZip(f); else toast("请先选择 zip 文件");
+});
+$("btn-menu").addEventListener("click", () => {
+  $("menu-pop").classList.toggle("hidden");
+});
+$("btn-save-policy").addEventListener("click", savePolicy);
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#menu-pop") && !e.target.closest("#btn-menu")) {
+    $("menu-pop").classList.add("hidden");
+  }
+});
+
+loadConfig();
+checkUpdate();

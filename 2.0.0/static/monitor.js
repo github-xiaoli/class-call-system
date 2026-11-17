@@ -15,6 +15,9 @@ let camWs = null;
 let micWs = null;
 let monitoring = false;
 let lastCamUrl = null;
+let videoBusy = false;
+let pcmChunks = [];
+let pcmTotal = 0;
 
 let talkCtx = null;
 let talkStream = null;
@@ -85,12 +88,21 @@ function playPcm16(bytes) {
   if (!bytes || !bytes.length) return;
   const int16 = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   if (!int16.length) return;
+  pcmChunks.push(int16);
+  pcmTotal += int16.length;
+  // 攒到约 85ms 再一起播放，减少小块调度导致的断续
+  if (pcmTotal < 4096) return;
+  const all = new Int16Array(pcmTotal);
+  let off = 0;
+  for (const c of pcmChunks) { all.set(c, off); off += c.length; }
+  pcmChunks = [];
+  pcmTotal = 0;
   // 积压超过 0.5 秒就丢弃旧音频，保持低延迟
   if (audioCtx && nextTime < audioCtx.currentTime - 0.5) {
     nextTime = audioCtx.currentTime + 0.03;
   }
-  const f32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768;
+  const f32 = new Float32Array(all.length);
+  for (let i = 0; i < all.length; i++) f32[i] = all[i] / 32768;
   const buf = audioCtx.createBuffer(1, f32.length, 48000);
   buf.copyToChannel(f32, 0);
   const src = audioCtx.createBufferSource();
@@ -114,6 +126,9 @@ async function startMonitor() {
     camWs = openWs(cUrl);
     camWs.binaryType = "arraybuffer";
     camWs.onmessage = (e) => {
+      // 只渲染最新一帧：解码忙时丢弃中间帧，避免画面拖尾卡顿
+      if (videoBusy) return;
+      videoBusy = true;
       const blob = new Blob([e.data], { type: "image/jpeg" });
       const canvas = $("video");
       const cctx = canvas.getContext("2d");
@@ -125,7 +140,8 @@ async function startMonitor() {
           bmp.close();
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
-        }).catch(() => {});
+          videoBusy = false;
+        }).catch(() => { videoBusy = false; });
       } else {
         const u = URL.createObjectURL(blob);
         const img = new Image();
@@ -136,7 +152,9 @@ async function startMonitor() {
           URL.revokeObjectURL(u);
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
+          videoBusy = false;
         };
+        img.onerror = () => { videoBusy = false; };
         img.src = u;
       }
     };
@@ -161,6 +179,9 @@ async function startMonitor() {
 
 function stopMonitor() {
   monitoring = false;
+  videoBusy = false;
+  pcmChunks = [];
+  pcmTotal = 0;
   if (camWs) { try { camWs.close(); } catch (e) {} camWs = null; }
   if (micWs) { try { micWs.close(); } catch (e) {} micWs = null; }
   if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }

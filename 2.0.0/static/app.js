@@ -396,6 +396,22 @@ async function saveSettings() {
   }
 }
 
+/* ---------- 重启软件 ---------- */
+async function restartApp() {
+  if (!confirm("确定重启软件吗？网页会短暂断开，约十几秒后自动恢复。")) return;
+  try {
+    await authedApi("/api/restart", { method: "POST", body: JSON.stringify({}) });
+    toast("软件正在重启，网页即将断开…");
+    setTimeout(() => { location.reload(); }, 3000);
+  } catch (e) {
+    if (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message)) {
+      openModal("modal-activate");
+    } else {
+      toast("重启失败：" + e.message);
+    }
+  }
+}
+
 /* ---------- 激活 ---------- */
 function openActivate() {
   $("act-password").value = "";
@@ -623,11 +639,13 @@ function bindEvents() {
   $("btn-settings").addEventListener("click", () => {
     loadConfig().then(() => { fillSettingsForm(); openModal("modal-settings"); });
   });
+  $("btn-update").addEventListener("click", () => { location.href = "/update"; });
   $("set-phrase").addEventListener("input", updatePhrasePreview);
   $("set-volume-enabled").addEventListener("change", () => {
     $("set-volume").disabled = !$("set-volume-enabled").checked;
   });
   $("btn-save-settings").addEventListener("click", saveSettings);
+  $("btn-restart").addEventListener("click", restartApp);
   $("set-sound-file").addEventListener("change", (e) => uploadSound(e.target.files[0]));
 
   // CSV

@@ -268,6 +268,17 @@ button.mini {
 button.mini.danger { background: #fee2e2; color: var(--danger); border-color: #fecaca; }
 button.mini:active { transform: scale(.96); }
 
+/* ---------- 软件更新 ---------- */
+.update-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.update-progress-bar { background: #e2e8f0; border-radius: 999px; height: 20px; overflow: hidden; }
+#progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #2563eb, #22c55e); transition: width .3s ease; border-radius: 999px; }
+.update-notes { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
+.update-notes div { padding: 8px 10px; border-left: 3px solid var(--primary); background: #f8fafc; border-radius: 6px; font-size: 14px; }
+.menu-pop { position: fixed; top: 60px; right: 16px; z-index: 90; }
+.menu-pop-box { background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(15,23,42,.15); padding: 14px; display: flex; flex-direction: column; gap: 10px; width: 260px; }
+.menu-pop-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: #334155; }
+.menu-pop-box select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+
 /* ---------- 密码管理 ---------- */
 .pw-row { display: flex; gap: 8px; align-items: center; }
 .pw-row input { flex: 1; min-width: 0; }

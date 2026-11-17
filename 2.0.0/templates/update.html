@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>软件更新</title>
+<link rel="stylesheet" href="/static/style.css?v=20261117">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🔄 软件更新</div>
+  <div class="topbar-right">
+    <a href="/" class="btn ghost">← 返回主页</a>
+    <button id="btn-menu" class="btn ghost">⋮</button>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <section class="panel">
+    <div class="update-head">
+      <div>
+        <h2>当前版本</h2>
+        <p class="hint"><b id="cur-version">…</b> · 通道：<span id="cur-channel">…</span></p>
+      </div>
+      <div>
+        <button id="btn-check" class="btn primary">🔍 检查更新</button>
+        <button id="btn-update" class="btn primary hidden">⬇ 立即更新</button>
+      </div>
+    </div>
+    <p class="hint" id="latest-info">尚未检查更新。</p>
+  </section>
+
+  <section class="panel" id="progress-panel" style="display:none">
+    <h2 style="margin-bottom:10px">更新进度</h2>
+    <div class="update-progress-bar"><div id="progress-fill"></div></div>
+    <p class="hint" style="margin-top:8px"><span id="progress-stage">准备中</span> · <span id="progress-pct">0%</span></p>
+    <p class="hint" id="progress-detail"></p>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-bottom:10px">更新日志</h2>
+    <div id="update-notes" class="update-notes">—</div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-bottom:10px">手动上传更新包</h2>
+    <div class="fs-toolbar">
+      <input id="zip-file" type="file" accept=".zip" />
+      <button id="btn-upload" class="btn primary">上传并安装 zip</button>
+    </div>
+    <p class="hint">zip 第一层目录需为新版本号目录（内含 app.py）。</p>
+  </section>
+</main>
+
+<!-- 设置菜单弹层 -->
+<div id="menu-pop" class="menu-pop hidden">
+  <div class="menu-pop-box">
+    <label>更新通道
+      <select id="set-channel">
+        <option value="stable">稳定（推荐）</option>
+        <option value="beta">内测</option>
+        <option value="dev">开发</option>
+      </select>
+    </label>
+    <label>更新策略
+      <select id="set-policy">
+        <option value="none">不检查更新</option>
+        <option value="check">启动时检查更新</option>
+        <option value="download">自动静默下载但不安装</option>
+        <option value="install">自动解压安装</option>
+      </select>
+    </label>
+    <button id="btn-save-policy" class="btn primary">保存</button>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/auth.js?v=20261113d"></script>
+<script src="/static/update.js?v=20261117"></script>
+</body>
+</html>
