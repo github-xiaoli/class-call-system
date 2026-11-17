@@ -9,6 +9,7 @@ OTA 软件更新模块：
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -79,7 +80,7 @@ _state = {
 
 # 已下载待安装的版本（两段式更新：先下载解压，再手动安装重启）
 _prep_lock = threading.Lock()
-_prepared = {"version": "", "path": ""}
+_prepared = {"version": "", "path": "", "python_delta": ""}
 
 _config_getter = None
 _restart_callback = None
@@ -210,7 +211,7 @@ def _cdn_speedtest(info_url):
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     total = len(CDN_BASES)
-    _set(stage="speedtest", percent=1, detail="正在测速选择最快线路（0/%d）…" % total)
+    _set(stage="speedtest", percent=3, detail="正在测速选择最快线路（0/%d）…" % total)
 
     def probe(base):
         t0 = time.time()
@@ -236,7 +237,7 @@ def _cdn_speedtest(info_url):
             if ms is not None and (best_ms is None or ms < best_ms):
                 best_ms = ms
                 best = base
-            _set(percent=1,
+            _set(percent=3 + int(done / total * 12),
                  detail="正在测速选择最快线路（%d/%d，最快 %s）…"
                         % (done, total, ("%.0fms" % best_ms) if best_ms else "—"))
     return best or CDN_BASES[0]
@@ -271,7 +272,7 @@ def _download(url, dest, p0, p1):
 
 def _install_zip(zip_path, new_version):
     """解压并安装新版本，返回新版本目录名。"""
-    _set(stage="extract", percent=50, detail="正在解压更新包…")
+    _set(stage="extract", percent=55, detail="正在解压更新包…")
     tmp = os.path.join(ROOT_DIR, "_update_tmp")
     if os.path.isdir(tmp):
         shutil.rmtree(tmp, ignore_errors=True)
@@ -288,24 +289,35 @@ def _install_zip(zip_path, new_version):
                 raise RuntimeError("更新包包含非法路径")
             zf.extract(n, tmp)
             if i % 200 == 0 or i == total - 1:
-                pct = 50 + int((i + 1) / total * 49)
+                pct = 55 + int((i + 1) / total * 37)
                 _set(percent=pct, stage="extract",
                      detail="正在解压 %d/%d" % (i + 1, total))
 
-    # 找新版本目录
+    # 找新版本目录（python/ 是运行环境增量，不算版本目录）
     entries = [e for e in os.listdir(tmp) if os.path.isdir(os.path.join(tmp, e))]
-    if new_version and new_version in entries:
+    py_delta = os.path.join(tmp, "python")
+    has_py_delta = os.path.isdir(py_delta)
+    ver_entries = [e for e in entries if e.lower() != "python"]
+    if new_version and new_version in ver_entries:
         src = os.path.join(tmp, new_version)
-    elif entries:
-        src = os.path.join(tmp, entries[0])
+    elif ver_entries:
+        src = os.path.join(tmp, ver_entries[0])
+        if not new_version:
+            new_version = ver_entries[0]
     else:
-        src = tmp
-        new_version = new_version or "unknown"
+        src = None
 
     # 校验包含 app.py
-    if not os.path.isfile(os.path.join(src, "app.py")):
+    if not src or not os.path.isfile(os.path.join(src, "app.py")):
         shutil.rmtree(tmp, ignore_errors=True)
         raise RuntimeError("更新包内未找到 app.py，不是有效的更新包")
+
+    # 运行环境增量：搬到不会被清理的临时目录，安装阶段再合并
+    pending_py = os.path.join(ROOT_DIR, "_update_py_pending")
+    if os.path.isdir(pending_py):
+        shutil.rmtree(pending_py, ignore_errors=True)
+    if has_py_delta:
+        shutil.move(py_delta, pending_py)
 
     dest = os.path.join(ROOT_DIR, new_version)
     if os.path.isdir(dest):
@@ -316,7 +328,42 @@ def _install_zip(zip_path, new_version):
         shutil.rmtree(dest, ignore_errors=True)
     shutil.move(src, dest)
     shutil.rmtree(tmp, ignore_errors=True)
-    return new_version
+    return new_version, (pending_py if has_py_delta else "")
+
+
+def _apply_python_delta(pending_py):
+    """把待安装的 python 增量合并进 ROOT/python（覆盖同名文件，跳过被占用的）。
+
+    返回 (已更新文件数, 跳过文件数)。
+    """
+    if not pending_py or not os.path.isdir(pending_py):
+        return 0, 0
+    target_root = os.path.join(ROOT_DIR, "python")
+    copied = 0
+    skipped = 0
+    pending_abs = os.path.abspath(pending_py)
+    for dirpath, _dirnames, filenames in os.walk(pending_py):
+        rel = os.path.relpath(dirpath, pending_py)
+        out_dir = target_root if rel == "." else os.path.join(target_root, rel)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            skipped += len(filenames)
+            continue
+        for name in filenames:
+            src = os.path.join(dirpath, name)
+            if not os.path.abspath(src).startswith(pending_abs):
+                continue
+            dst = os.path.join(out_dir, name)
+            try:
+                shutil.copy2(src, dst)
+                copied += 1
+            except Exception:
+                skipped += 1
+            _set(stage="final", percent=98,
+                 detail="正在更新运行环境（%d 个文件）…" % copied)
+    shutil.rmtree(pending_py, ignore_errors=True)
+    return copied, skipped
 
 
 def _update_version_file(new_version):
@@ -344,12 +391,13 @@ def _close_desktop_window():
 def _clear_prepared():
     with _prep_lock:
         _prepared.clear()
-        _prepared.update({"version": "", "path": ""})
+        _prepared.update({"version": "", "path": "", "python_delta": ""})
 
 
-def _set_prepared(version, path):
+def _set_prepared(version, path, python_delta=""):
     with _prep_lock:
-        _prepared.update({"version": version, "path": path})
+        _prepared.update({"version": version, "path": path,
+                          "python_delta": python_delta or ""})
 
 
 def _get_prepared():
@@ -379,7 +427,7 @@ def _do_prepare(info=None, zip_path=None, channel=None):
                 _close_desktop_window()
                 return False
         new_version = str(info.get("version", "") or "")
-        if zip_path is None and new_version and new_version == _current_version():
+        if zip_path is None and new_version and not _is_newer(new_version, _current_version()):
             _set(stage="idle", percent=0, running=False, detail="已是最新版本",
                  version=new_version)
             _close_desktop_window()
@@ -391,20 +439,21 @@ def _do_prepare(info=None, zip_path=None, channel=None):
         if zip_path is None:
             base = _cdn_speedtest(info.get("info_url", "") or info.get("zip_url", ""))
             url = base + info.get("zip_url", "")
-            _set(stage="download", percent=2, detail="开始下载…")
+            _set(stage="download", percent=15, detail="开始下载…")
             cache = os.path.join(DATA_DIR, "update_cache")
             os.makedirs(cache, exist_ok=True)
             local_zip = os.path.join(cache, "update_" + (new_version or "tmp") + ".zip")
-            _download(url, local_zip, 2, 50)
+            _download(url, local_zip, 15, 55)
         else:
             local_zip = zip_path
 
-        ready_version = _install_zip(local_zip, new_version)
+        ready_version, py_delta = _install_zip(local_zip, new_version)
         dest = os.path.join(ROOT_DIR, ready_version)
-        _set_prepared(ready_version, dest)
+        _set_prepared(ready_version, dest, py_delta)
 
         _set(stage="ready", percent=100, running=False, version=ready_version,
-             detail="已下载并解压完成，请点击「安装并重启」")
+             detail=("已下载并解压完成（含运行环境更新），请点击「安装并重启」" if py_delta
+                     else "已下载并解压完成，请点击「安装并重启」"))
         _close_desktop_window()
         return True
     except Exception as exc:
@@ -414,12 +463,48 @@ def _do_prepare(info=None, zip_path=None, channel=None):
         return False
 
 
+REQUIRED_MODULES = ("flask", "zeroconf", "win32api", "win32gui", "PIL")
+
+
+def _verify_env(target_version=None):
+    """用目标版本代码检查依赖能否导入，返回 (ok, 错误文本)。
+
+    防止更新后缺少/不兼容新版库导致启动失败。
+    """
+    pyw = os.path.join(ROOT_DIR, "python", "python.exe")
+    if not os.path.isfile(pyw):
+        return True, ""
+    code_dir = os.path.join(ROOT_DIR, target_version) if target_version else BASE_DIR
+    snippet = (
+        "import sys; sys.path.insert(0, r'%s');\n"
+        "mods = %r\n"
+        "bad = []\n"
+        "for m in mods:\n"
+        "    try:\n"
+        "        __import__(m)\n"
+        "    except Exception as e:\n"
+        "        bad.append(m + ': ' + str(e))\n"
+        "print('OK' if not bad else 'BAD|' + '; '.join(bad))\n"
+    ) % (code_dir, list(REQUIRED_MODULES))
+    try:
+        out = subprocess.run([pyw, "-c", snippet], capture_output=True, timeout=60,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        text = (out.stdout or b"").decode("utf-8", "replace").strip()
+        err = (out.stderr or b"").decode("utf-8", "replace").strip()
+        if text.startswith("OK"):
+            return True, ""
+        return False, text or err or "依赖检查失败"
+    except Exception as exc:
+        return False, "依赖检查异常：%s" % exc
+
+
 def _do_install():
-    """把已解压的版本装上：更新 version.json 并重启切换到新版本。"""
+    """把已解压的版本装上：更新运行环境 + version.json，然后重启。"""
     try:
         prep = _get_prepared()
         version = prep.get("version", "")
         path = prep.get("path", "")
+        pending_py = prep.get("python_delta", "")
         if not version or not os.path.isdir(path):
             _set(stage="error", percent=0, running=False,
                  error="没有已下载的更新包", detail="请先点击「开始更新」下载")
@@ -431,6 +516,27 @@ def _do_install():
             except Exception:
                 pass
 
+        # 1) 先更新运行环境（如果有 python/ 增量）
+        if pending_py:
+            _set(running=True, stage="final", percent=96, version=version,
+                 detail="正在更新运行环境…")
+            copied, skipped = _apply_python_delta(pending_py)
+            if skipped:
+                _set(percent=97, detail="运行环境已更新（%d 个，%d 个被占用跳过）"
+                     % (copied, skipped))
+
+        # 2) 依赖自检：缺库就不切换，避免更新后起不来
+        _set(running=True, stage="final", percent=98, version=version,
+             detail="正在检查运行环境…")
+        ok, err = _verify_env(version)
+        if not ok:
+            _set(stage="error", percent=98, running=False, version=version,
+                 error=err,
+                 detail="运行环境检查未通过，已取消安装（原版本继续可用）：" + err)
+            _close_desktop_window()
+            return False
+
+        # 3) 切换版本
         _set(running=True, stage="final", percent=99, version=version,
              detail="正在安装 %s…" % version)
         _update_version_file(version)
@@ -509,21 +615,48 @@ def _current_version():
         return "2.0.0"
 
 
+def _parse_ver(v):
+    """把 "v2.0.10-beta" 解析为 (2, 0, 10)，用于正确比较大小。"""
+    s = re.sub(r"^[^\d]+", "", str(v or "").strip())
+    parts = []
+    for seg in re.split(r"[.\-_+~]", s):
+        m = re.match(r"^(\d+)", seg)
+        parts.append(int(m.group(1)) if m else 0)
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def _is_newer(remote, current):
+    """remote 是否比 current 新。"""
+    return _parse_ver(remote) > _parse_ver(current)
+
+
 @update_bp.route("/api/update/check", methods=["GET"])
 def api_update_check():
     err = _need_auth()
     if err:
         return err
     channel = _cfg().get("update_channel", "stable")
+    cur = _current_version()
     _set(stage="check", percent=1, detail="正在检查更新…", running=True)
     try:
         info = _find_latest(channel)
         _set(stage="idle", percent=0, running=False, detail="检查完成")
         if not info:
-            return jsonify({"ok": True, "latest": None,
-                            "current": _current_version(), "channel": channel})
-        return jsonify({"ok": True, "latest": info,
-                        "current": _current_version(), "channel": channel})
+            return jsonify({"ok": True, "latest": None, "up_to_date": True,
+                            "current": cur, "channel": channel,
+                            "message": "未找到可用更新"})
+        if not _is_newer(info.get("version", ""), cur):
+            # 已是最新（或远端更低），不再提示「发现新版本」
+            return jsonify({"ok": True, "latest": None, "up_to_date": True,
+                            "current": cur, "channel": channel,
+                            "remote": {"version": info.get("version", ""),
+                                       "channel": info.get("channel", channel),
+                                       "notes": info.get("notes", "")},
+                            "message": "已是最新版本"})
+        return jsonify({"ok": True, "latest": info, "up_to_date": False,
+                        "current": cur, "channel": channel})
     except Exception as exc:
         _set(stage="idle", percent=0, running=False, detail="检查失败")
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -599,6 +732,7 @@ def api_update_progress():
     prep = _get_prepared()
     snap["ready"] = bool(prep.get("version")) and os.path.isdir(prep.get("path", ""))
     snap["ready_version"] = prep.get("version", "")
+    snap["python_delta"] = bool(prep.get("python_delta"))
     return jsonify({"ok": True, "progress": snap})
 
 
@@ -612,7 +746,7 @@ def maybe_auto_update():
     def work():
         try:
             info = _find_latest(channel)
-            if not info or info.get("version") == _current_version():
+            if not info or not _is_newer(info.get("version", ""), _current_version()):
                 return
             if policy == "check":
                 print("[OTA] 发现新版本", info.get("version"))

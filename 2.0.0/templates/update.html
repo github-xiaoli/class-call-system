@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>软件更新</title>
-<link rel="stylesheet" href="/static/style.css?v=20261117">
+<link rel="stylesheet" href="/static/style.css?v=20261117b">
 </head>
 <body>
 <header class="topbar">
@@ -49,7 +49,7 @@
       <input id="zip-file" type="file" accept=".zip" />
       <button id="btn-upload" class="btn primary">上传并安装 zip</button>
     </div>
-    <p class="hint">zip 第一层目录需为新版本号目录（内含 app.py）。</p>
+    <p class="hint">zip 第一层目录需为新版本号目录（内含 app.py）；如需同时更新运行环境，可在压缩包里附带 <b>python/</b> 目录，安装时会增量覆盖。</p>
   </section>
 </main>
 
@@ -77,6 +77,6 @@
 
 <div id="toast" class="toast hidden"></div>
 <script src="/static/auth.js?v=20261113d"></script>
-<script src="/static/update.js?v=20261117c"></script>
+<script src="/static/update.js?v=20261117d"></script>
 </body>
 </html>

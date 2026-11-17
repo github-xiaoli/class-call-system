@@ -26,11 +26,14 @@ async function api(url, options = {}) {
 let latestInfo = null;
 let pollTimer = null;
 
+const CHANNEL_NAMES = { stable: "稳定", beta: "内测", dev: "开发" };
+const channelName = (c) => CHANNEL_NAMES[c] || c || "稳定";
+
 async function loadConfig() {
   try {
     const d = await api("/api/update/config");
     $("cur-version").textContent = d.current_version || "?";
-    $("cur-channel").textContent = ({ stable: "稳定", beta: "内测", dev: "开发" })[d.update_channel] || d.update_channel;
+    $("cur-channel").textContent = channelName(d.update_channel);
     $("set-channel").value = d.update_channel || "stable";
     $("set-policy").value = d.update_policy || "none";
   } catch (e) { toast("加载配置失败：" + e.message); }
@@ -42,12 +45,17 @@ async function checkUpdate() {
     const d = await api("/api/update/check");
     if (!d.latest) {
       latestInfo = null;
-      $("latest-info").textContent = "已是最新版本。";
       $("btn-update").classList.add("hidden");
+      const remote = d.remote ? d.remote.version : "";
+      $("latest-info").textContent = "已是最新版本（当前 " + (d.current || "?") +
+        "，通道：" + channelName(d.channel) + "）" +
+        (remote && remote !== d.current ? "，远端 " + remote : "");
+      $("update-notes").textContent = "无可用更新";
       return;
     }
     latestInfo = d.latest;
-    $("latest-info").textContent = "发现新版本：" + d.latest.version + "（通道：" + d.latest.channel + "）";
+    $("latest-info").textContent = "发现新版本：" + d.latest.version +
+      "（当前 " + (d.current || "?") + "，通道：" + channelName(d.latest.channel) + "）";
     $("btn-update").classList.remove("hidden");
     renderNotes(d.latest.notes);
   } catch (e) { toast("检查失败：" + e.message); }

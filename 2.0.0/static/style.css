@@ -271,6 +271,12 @@ button.mini:active { transform: scale(.96); }
 /* ---------- 软件更新 ---------- */
 .update-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .update-progress-bar { background: #e2e8f0; border-radius: 999px; height: 20px; overflow: hidden; }
+.update-progress-bar > div {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, #2563eb, #38bdf8);
+  border-radius: 999px;
+  transition: width .45s ease;
+}
 #progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #2563eb, #22c55e); transition: width .3s ease; border-radius: 999px; }
 .update-notes { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
 .update-notes div { padding: 8px 10px; border-left: 3px solid var(--primary); background: #f8fafc; border-radius: 6px; font-size: 14px; }
