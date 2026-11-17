@@ -28,8 +28,10 @@ GITHUB_REPO = "github-xiaoli/class-call-system"
 GITHUB_API = "https://api.github.com/repos/" + GITHUB_REPO
 GITHUB_WEB = "https://github.com/" + GITHUB_REPO
 
-# 更新通道
+# 更新通道（数字越大越"激进"）：高通道能收到低通道的版本
+# dev 能收 dev/beta/stable，beta 能收 beta/stable，stable 只收 stable
 CHANNELS = ("stable", "beta", "dev")
+CHANNEL_RANK = {"stable": 1, "beta": 2, "dev": 3}
 
 # CDN 加速前缀（自动测速选最快）
 CDN_BASES = [
@@ -164,14 +166,19 @@ def _github_api(path):
 
 
 def _find_latest(channel):
-    """返回匹配通道的最新 release 信息；找不到返回 None。"""
-    releases = _github_api("/releases?per_page=20")
+    """返回该通道可见的最新 release。
+
+    通道向下兼容：dev 收 dev/beta/stable，beta 收 beta/stable，stable 只收 stable。
+    在可见范围内取版本号最高的一个（同版本优先更稳定的通道）。
+    """
+    releases = _github_api("/releases?per_page=50")
     if not isinstance(releases, list):
         return None
+    rank = CHANNEL_RANK.get(channel, 1)
+    best_key = None
+    best = None
     for rel in releases:
         if rel.get("draft"):
-            continue
-        if rel.get("prerelease") and channel == "stable":
             continue
         info = None
         info_url = ""
@@ -188,17 +195,30 @@ def _find_latest(channel):
                 zip_asset = asset
         if not info or not zip_asset:
             continue
-        if info.get("channel", "stable") == channel:
-            return {
-                "version": str(info.get("version", "")),
-                "channel": str(info.get("channel", channel)),
-                "notes": str(info.get("notes", "")),
-                "zip_url": zip_asset.get("browser_download_url", ""),
-                "zip_asset": zip_asset.get("name", ""),
-                "tag": rel.get("tag_name", ""),
-                "info_url": info_url,
-            }
-    return None
+        rel_channel = str(info.get("channel", "stable") or "stable").strip().lower()
+        if rel_channel not in CHANNEL_RANK:
+            rel_channel = "stable"
+        rel_rank = CHANNEL_RANK[rel_channel]
+        # 该版本比当前通道更"激进"→ 不可见
+        if rel_rank > rank:
+            continue
+        # 标了预发布却声明 stable 的，保守起见只给 dev 通道
+        if rel.get("prerelease") and rel_channel == "stable" and rank < 3:
+            continue
+        cand = {
+            "version": str(info.get("version", "")),
+            "channel": rel_channel,
+            "notes": str(info.get("notes", "")),
+            "zip_url": zip_asset.get("browser_download_url", ""),
+            "zip_asset": zip_asset.get("name", ""),
+            "tag": rel.get("tag_name", ""),
+            "info_url": info_url,
+        }
+        key = (_parse_ver(cand["version"]), -rel_rank)
+        if best_key is None or key > best_key:
+            best_key = key
+            best = cand
+    return best
 
 
 def _cdn_speedtest(info_url):
