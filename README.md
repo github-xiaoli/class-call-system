@@ -17,8 +17,13 @@
 
 ## 许可证
 
-本项目以 **GNU 通用公共许可证第 3 版（GPL-3.0-or-later）** 发布。
+本项目以 **GNU 通用公共许可证第 3 版，或（由你选择）任何更高版本（GPL-3.0-or-later）** 发布。
 
 - 你可以自由使用、修改、再分发，但分发时需保留同样的许可并提供源代码。
-- 完整许可证正文见仓库根目录 LICENSE，或 <https://www.gnu.org/licenses/gpl-3.0.html>。
+- 许可证全文见仓库根目录 [`LICENSE`](LICENSE)（自由软件基金会发布的官方原文，未做任何修改）。
+- 版权与「或任何更高版本」声明见 [`NOTICE`](NOTICE)；SPDX 标识：`GPL-3.0-or-later`。
+- 许可证官方地址：<https://www.gnu.org/licenses/gpl-3.0.html>
 - Copyright (C) 2026 xiaoli
+
+> LICENSE 保持 GPL 官方原文不变，是为了让 GitHub 等平台能自动识别为 `GPL-3.0`；
+> 版权人和「或更高版本」的说明放在 NOTICE 里，两者配合才完整。

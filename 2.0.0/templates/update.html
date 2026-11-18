@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="/static/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>软件更新</title>
-<link rel="stylesheet" href="/static/style.css?v=20261117d">
+<link rel="stylesheet" href="/static/style.css?v=20261118a">
 </head>
 <body>
 <header class="topbar">
@@ -84,8 +84,20 @@
   </div>
 </div>
 
+<!-- 更新进行中的整页锁定层：只显示进度，其他按钮点不到 -->
+<div id="busy-mask" class="hidden">
+  <div class="busy-card">
+    <div class="busy-spin"></div>
+    <h3 id="busy-title">正在下载更新</h3>
+    <div class="busy-pct" id="busy-pct">0%</div>
+    <div class="busy-bar"><div id="busy-fill"></div></div>
+    <div class="busy-detail" id="busy-detail">正在准备…</div>
+    <div class="busy-tip">更新进行中，页面已锁定（避免重复下载）。<br>可以关闭本页，软件会在后台继续下载。</div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
-<script src="/static/auth.js?v=20261113d"></script>
-<script src="/static/update.js?v=20261117i"></script>
+<script src="/static/auth.js?v=20261118a"></script>
+<script src="/static/update.js?v=20261118a"></script>
 </body>
 </html>

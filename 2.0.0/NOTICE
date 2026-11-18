@@ -1,0 +1,24 @@
+班级叫号器 (Class Caller)
+Copyright (C) 2026 xiaoli
+
+本程序是自由软件：你可以依据自由软件基金会（Free Software Foundation, Inc.）
+发布的 GNU 通用公共许可证第 3 版，或（由你选择）任何更高版本的条款，
+再分发和/或修改本程序。
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+本程序分发时希望它有用，但不提供任何担保；甚至不提供适销性或特定用途的
+默示担保。详见 GNU 通用公共许可证。
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+许可证全文见同目录 LICENSE 文件（GNU 官方原文，未经修改），
+或 <https://www.gnu.org/licenses/gpl-3.0.txt>。
+
+SPDX-License-Identifier: GPL-3.0-or-later
+源码仓库：https://github.com/github-xiaoli/class-call-system

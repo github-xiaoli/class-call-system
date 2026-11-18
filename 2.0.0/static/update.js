@@ -95,18 +95,59 @@ function setBusy(b) {
   });
 }
 
+/* 更新进行中：整页蒙层锁死，只显示进度，避免重复点击/重复下载 */
+function lockUI(title, detail) {
+  const m = $("busy-mask");
+  if (!m) return;
+  $("busy-title").textContent = title || "正在下载更新";
+  $("busy-detail").textContent = detail || "正在准备…";
+  $("busy-fill").style.width = "0%";
+  $("busy-pct").textContent = "0%";
+  m.classList.remove("hidden");
+  document.body.classList.add("ui-locked");
+}
+
+function unlockUI() {
+  const m = $("busy-mask");
+  if (m) m.classList.add("hidden");
+  document.body.classList.remove("ui-locked");
+}
+
+/* 进度显示：下载阶段保留一位小数（不会出现 0/16/32/48 这种跳变） */
+function pctText(v, stage) {
+  const n = Number(v) || 0;
+  const frac = ["download", "speedtest", "extract", "final"].indexOf(stage) >= 0;
+  return (frac && n < 100 ? n.toFixed(1) : String(Math.round(n))) + "%";
+}
+
+function paintBusy(p) {
+  const m = $("busy-mask");
+  if (!m || m.classList.contains("hidden")) return;
+  $("busy-title").textContent = stageText(p.stage);
+  $("busy-fill").style.width = (Number(p.percent) || 0) + "%";
+  $("busy-pct").textContent = pctText(p.percent, p.stage);
+  $("busy-detail").textContent = p.detail || "";
+}
+
 async function startUpdate() {
   if (uiBusy) { toast("正在处理中，请稍候…"); return; }
   const v = latestInfo ? latestInfo.version : "最新版本";
   if (!confirm("确定下载 " + v + " 的更新包吗？下载解压完成后需要你再点一次「安装并重启」。")) return;
   setBusy(true);
   showProgress();
-  $("progress-stage").textContent = "正在检查更新";
+  lockUI("正在检查更新", "正在准备下载…");
   try {
     await api("/api/update/start", { method: "POST", body: JSON.stringify({}) });
     startPolling();
   } catch (e) {
+    if (e.status === 409) {
+      // 服务器拒绝重复的下载请求：保持锁定并接着看已有任务的进度
+      toast("更新已在进行中，正在显示进度…");
+      startPolling();
+      return;
+    }
     setBusy(false);
+    unlockUI();
     toast("开始下载失败：" + e.message);
   }
 }
@@ -116,13 +157,14 @@ async function installUpdate() {
   if (!confirm("立即安装并重启吗？重启期间网页会短暂断开。")) return;
   setBusy(true);
   showProgress();
-  $("progress-stage").textContent = "正在安装";
+  lockUI("正在安装", "正在切换版本，重启期间网页会短暂断开…");
   try {
     await api("/api/update/install", { method: "POST", body: JSON.stringify({}) });
     $("btn-install").classList.add("hidden");
     startPolling();
   } catch (e) {
     setBusy(false);
+    unlockUI();
     toast("安装失败：" + e.message);
   }
 }
@@ -138,10 +180,13 @@ const ACTIVE_STAGES = ["start", "check", "speedtest", "download", "extract", "fi
 
 function renderProgress(p) {
   p = p || {};
+  const active = !!p.running || ACTIVE_STAGES.indexOf(p.stage) >= 0;
+  if (active) lockUI(stageText(p.stage), p.detail || "");
   $("progress-fill").style.width = (p.percent || 0) + "%";
-  $("progress-pct").textContent = (p.percent || 0) + "%";
+  $("progress-pct").textContent = pctText(p.percent, p.stage);
   $("progress-stage").textContent = stageText(p.stage);
   $("progress-detail").textContent = p.detail || "";
+  paintBusy(p);
   // 服务端不再"运行中"时解除按钮禁用，避免连续点击产生多次任务
   if (!p.running) setBusy(false);
   // 下载解压完成 -> 显示「安装并重启」按钮
@@ -149,6 +194,9 @@ function renderProgress(p) {
     const v = p.ready_version || p.version || "";
     $("btn-install").textContent = v ? ("✅ 安装并重启（" + v + "）") : "✅ 安装并重启";
     $("btn-install").classList.remove("hidden");
+    unlockUI();
+  } else if (!p.running && ACTIVE_STAGES.indexOf(p.stage) < 0) {
+    unlockUI();   // 出错/空闲：解除锁定，允许重试
   }
 }
 
@@ -214,6 +262,7 @@ async function uploadZip(file) {
   if (uiBusy) { toast("正在处理中，请稍候…"); return; }
   if (!confirm("确定用本地 zip 覆盖更新吗？更新完成后会自动重启。")) return;
   setBusy(true);
+  lockUI("正在上传更新包", "正在把本地 zip 上传到软件…");
   const fd = new FormData();
   fd.append("file", file);
   try {
@@ -223,7 +272,7 @@ async function uploadZip(file) {
     toast("已开始安装手动更新包");
     showProgress();
     setTimeout(startPolling, 400);
-  } catch (e) { toast("上传失败：" + e.message); }
+  } catch (e) { unlockUI(); toast("上传失败：" + e.message); }
 }
 
 async function savePolicy() {

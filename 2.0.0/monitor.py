@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# 班级叫号器 (Class Caller)  Copyright (C) 2026 xiaoli
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 本程序是自由软件：你可以依据自由软件基金会（FSF）发布的 GNU 通用公共许可证
+# 第 3 版或任何更高版本的条款，再分发和/或修改本程序。不提供任何担保。
 """
 远程监控与对讲：
 - 摄像头 MJPEG 流（网页查看时才占用摄像头，停止/断开即释放）

@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# 班级叫号器 (Class Caller)  Copyright (C) 2026 xiaoli
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 本程序是自由软件：你可以依据自由软件基金会（FSF）发布的 GNU 通用公共许可证
+# 第 3 版或任何更高版本的条款，再分发和/或修改本程序。不提供任何担保。
 """
 OTA 软件更新模块：
 - GitHub Release 检查（按通道：dev / beta / stable）
@@ -77,6 +81,9 @@ CDN_BASES = [
     "https://g.blfrp.cn/",
 ]
 
+# 测速总预算（秒）：31 条线路同时发请求，最多等 4 秒就取已返回里最快的
+SPEEDTEST_BUDGET = 4.0
+
 # 全局进度状态
 _lock = threading.Lock()
 _state = {
@@ -87,6 +94,9 @@ _state = {
     "error": "",
     "version": "",
     "current_version": "",
+    "speed": 0,           # 当前下载速度（字节/秒）
+    "prepares": 0,        # 真正启动过几次「下载解压」任务（用于验证连点不会重复下载）
+    "installts": 0,       # 真正启动过几次「安装」任务
 }
 
 # 已下载待安装的版本（两段式更新：先下载解压，再手动安装重启）
@@ -141,10 +151,24 @@ def _cfg():
         return {}
 
 
-def _set(percent=None, stage=None, detail=None, error=None, version=None, running=None):
+def _toast(text):
+    """右下角提示气泡（可关闭、10 秒自动消失、点击打开更新界面）。"""
+    if _desktop is None:
+        return
+    try:
+        _desktop.notify_update_toast(text)
+    except Exception:
+        pass
+
+
+def _set(percent=None, stage=None, detail=None, error=None, version=None, running=None,
+         speed=None):
     with _lock:
         if percent is not None:
-            _state["percent"] = int(percent)
+            # 保留一位小数：进度不再是 0/13/16/… 这种跳变，下载时数值更细腻
+            _state["percent"] = round(float(percent), 1)
+        if speed is not None:
+            _state["speed"] = int(speed)
         if stage is not None:
             _state["stage"] = stage
         if detail is not None:
@@ -169,7 +193,7 @@ def _get_state():
         return dict(_state)
 
 
-def _http_get(url, timeout=20, binary=False, headers=None):
+def _http_get(url, timeout=20, binary=False, headers=None, retries=3):
     import urllib.request
     import ssl as _ssl
     ctx = _ssl.create_default_context()
@@ -179,7 +203,7 @@ def _http_get(url, timeout=20, binary=False, headers=None):
     if headers:
         hdrs.update(headers)
     last = None
-    for attempt in range(3):  # 网络抖动时重试，避免“检查不到更新”
+    for attempt in range(max(1, int(retries))):  # 网络抖动时重试，避免“检查不到更新”
         try:
             req = urllib.request.Request(url, headers=hdrs)
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
@@ -187,7 +211,7 @@ def _http_get(url, timeout=20, binary=False, headers=None):
             return data if binary else data.decode("utf-8-sig", errors="replace")
         except Exception as exc:
             last = exc
-            if attempt < 2:
+            if attempt < retries - 1:
                 time.sleep(0.4 * (attempt + 1))
     raise last
 
@@ -295,21 +319,27 @@ def _find_latest_api(channel):
 
 
 def _cdn_speedtest(info_url):
-    """并发探测各 CDN，返回按耗时排序的线路列表（第一个最快）。
+    """31 条 CDN 同时发请求，最多等 SPEEDTEST_BUDGET(4s)，按耗时排序返回线路列表。
 
-    并发 12 路 + 单个 4s 超时；下载大文件时按这个顺序逐个回退重试。
+    - 全部并发（线程数 = 线路数），不再分批，因此总耗时 ≈ 单次请求耗时
+    - 单条请求超时 3.5s、不重试，保证 4 秒内一定有结果
+    - 4 秒内没回来的线路直接排到后面兜底，不阻塞更新流程
     """
     if not info_url:
         return list(CDN_BASES)
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
     total = len(CDN_BASES)
-    _set(stage="speedtest", percent=3, detail="正在测速选择最快线路（0/%d）…" % total)
+    t_start = time.time()
+    deadline = t_start + SPEEDTEST_BUDGET
+    _set(stage="speedtest", percent=3,
+         detail="正在测速选择最快线路（%d 条线路同时测，限时 %d 秒）…"
+                % (total, int(SPEEDTEST_BUDGET)))
 
     def probe(base):
         t0 = time.time()
         try:
-            data = _http_get(base + info_url, timeout=4, binary=True)
+            data = _http_get(base + info_url, timeout=3.5, binary=True, retries=1)
             if data:
                 return base, (time.time() - t0) * 1000.0
         except Exception:
@@ -317,35 +347,64 @@ def _cdn_speedtest(info_url):
         return base, None
 
     ok = []
-    done = 0
-    best_ms = None
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    ex = ThreadPoolExecutor(max_workers=total)
+    try:
         futures = [ex.submit(probe, b) for b in CDN_BASES]
-        for fut in as_completed(futures):
-            try:
-                base, ms = fut.result()
-            except Exception:
-                continue
-            done += 1
-            if ms is not None:
-                ok.append((ms, base))
-                if best_ms is None or ms < best_ms:
-                    best_ms = ms
-            _set(percent=3 + int(done / total * 12),
-                 detail="正在测速选择最快线路（%d/%d，最快 %s）…"
-                        % (done, total, ("%.0fms" % best_ms) if best_ms else "—"))
+        pending = set(futures)
+        done = 0
+        while pending:
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            finished, pending = wait(pending, timeout=left, return_when=FIRST_COMPLETED)
+            if not finished:
+                break
+            for fut in finished:
+                done += 1
+                try:
+                    base, ms = fut.result()
+                except Exception:
+                    continue
+                if ms is not None:
+                    ok.append((ms, base))
+            best = min((m for m, _b in ok), default=None)
+            _set(percent=round(3 + 12.0 * done / total, 1),
+                 detail="正在测速选择最快线路（%d/%d 返回，最快 %s）…"
+                        % (done, total, ("%.0fms" % best) if best else "—"))
+    finally:
+        ex.shutdown(wait=False)
+
     ok.sort(key=lambda x: x[0])
     ordered = [b for _ms, b in ok]
     for b in CDN_BASES:            # 测速失败的也排在后面兜底
         if b not in ordered:
             ordered.append(b)
+    print("[更新] 测速完成：%d/%d 条可用，耗时 %.1fs，最快 %s"
+          % (len(ok), total, time.time() - t_start, ordered[0] if ordered else "—"))
     return ordered
 
 
-def _download(url, dest, p0, p1, retries=3):
+def _fmt_size(n):
+    n = float(n or 0)
+    if n >= 1073741824:
+        return "%.2f GB" % (n / 1073741824)
+    if n >= 1048576:
+        return "%.1f MB" % (n / 1048576)
+    return "%.0f KB" % (n / 1024)
+
+
+def _fmt_speed(bps):
+    bps = float(bps or 0)
+    if bps >= 1048576:
+        return "%.1f MB/s" % (bps / 1048576)
+    return "%.0f KB/s" % (bps / 1024)
+
+
+def _download(url, dest, p0, p1, retries=3, label="更新包"):
     """带进度下载，p0..p1 百分比区间。
 
     支持断点续传（Range）+ 断线自动重试：网络不稳时不至于每次都从 0 重来。
+    进度为一位小数，并带实时速度、已下载/总大小。
     """
     import urllib.request
     import ssl as _ssl
@@ -363,7 +422,7 @@ def _download(url, dest, p0, p1, retries=3):
             headers["Range"] = "bytes=%d-" % have
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=180, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
                 code = getattr(resp, "status", 200)
                 if have > 0 and code != 206:
                     # 服务端不支持续传：只能从头来
@@ -376,22 +435,34 @@ def _download(url, dest, p0, p1, retries=3):
                 clen = int(resp.headers.get("Content-Length") or 0)
                 total = (have + clen) if code == 206 else (clen or total)
                 done = have
+                base_done = have
+                base_t = time.time()
+                last_t = 0.0
+                speed = 0.0
                 with open(dest, mode) as f:
                     while True:
-                        chunk = resp.read(512 * 1024)
+                        chunk = resp.read(64 * 1024)
                         if not chunk:
                             break
                         f.write(chunk)
                         done += len(chunk)
+                        now = time.time()
+                        cost = now - base_t
+                        if cost > 0.2:
+                            speed = (done - base_done) / cost
                         if total > 0:
-                            pct = p0 + int((done / total) * (p1 - p0))
-                            detail = "正在下载 %d / %d KB%s" % (
-                                done // 1024, total // 1024,
+                            pct = round(p0 + (float(done) / total) * (p1 - p0), 1)
+                            detail = "%s %s · %s / %s%s" % (
+                                label, _fmt_speed(speed),
+                                _fmt_size(done), _fmt_size(total),
                                 "" if attempt == 0 else "（第 %d 次重试）" % (attempt + 1))
                         else:
                             pct = p0
-                            detail = "正在下载 %d KB" % (done // 1024)
-                        _set(percent=pct, stage="download", detail=detail)
+                            detail = "%s %s · %s" % (label, _fmt_speed(speed), _fmt_size(done))
+                        # 每 0.2s 刷一次状态；进度是一位小数，不会再出现 16 的倍数那种跳变
+                        if now - last_t >= 0.2:
+                            last_t = now
+                            _set(percent=pct, stage="download", detail=detail, speed=speed)
             if total and os.path.getsize(dest) < total:
                 raise IOError("下载不完整：%d/%d" % (os.path.getsize(dest), total))
             return total or os.path.getsize(dest)
@@ -399,7 +470,7 @@ def _download(url, dest, p0, p1, retries=3):
             last_err = exc
             print("[更新] 下载中断（第 %d 次）：%s" % (attempt + 1, exc))
             if attempt < retries - 1:
-                _set(stage="download", percent=p0,
+                _set(stage="download", percent=p0, speed=0,
                      detail="网络中断，正在续传（%d/%d）…" % (attempt + 1, retries))
                 time.sleep(1.0)
     raise last_err if last_err else IOError("下载失败")
@@ -548,12 +619,12 @@ def _do_prepare(info=None, zip_path=None, channel=None):
     完成后状态为 stage="ready"，等待用户点「安装并重启」。
     """
     try:
-        if _desktop is not None:
-            try:
-                _desktop.show_update_window()
-            except Exception:
-                pass
+        # 统计真正跑起来的更新任务次数（自动化测试用来验证连点不会重复下载）
+        with _lock:
+            _state["prepares"] = int(_state.get("prepares") or 0) + 1
 
+        # 不默认弹出更新窗口：只在屏幕右下角弹一个可关闭的提示气泡（10 秒自动消失），
+        # 想看详细进度就点气泡或托盘里的「软件更新」。气泡等确认真的要下载了再弹。
         _set(running=True, stage="check", percent=0, detail="正在检查更新…")
 
         if info is None:
@@ -570,6 +641,8 @@ def _do_prepare(info=None, zip_path=None, channel=None):
             _close_desktop_window()
             return False
 
+        _toast("正在后台下载 %s 更新包，下载完需要你确认安装（点这里看进度）"
+               % (new_version or ""))
         _set(running=True, stage="start", percent=0,
              detail="准备下载更新包…", version=new_version)
 
@@ -582,9 +655,9 @@ def _do_prepare(info=None, zip_path=None, channel=None):
             last_exc = None
             for i, base in enumerate(bases):
                 try:
-                    _set(stage="download", percent=15,
-                         detail="正在下载（线路 %d/%d）…" % (i + 1, min(len(bases), 6)))
-                    _download(base + tail, local_zip, 15, 55)
+                    _set(stage="download", percent=15, speed=0,
+                         detail="正在下载更新包（线路 %d/%d）…" % (i + 1, min(len(bases), 6)))
+                    _download(base + tail, local_zip, 15, 55, label="更新包")
                     last_exc = None
                     break
                 except Exception as exc:
@@ -628,11 +701,13 @@ def _do_prepare(info=None, zip_path=None, channel=None):
         _set(stage="ready", percent=100, running=False, version=ready_version,
              detail=detail)
         _close_desktop_window()
+        _toast("%s 已下载完成，点这里确认「安装并重启」" % ready_version)
         return True
     except Exception as exc:
         _set(stage="error", percent=_get_state().get("percent", 0), running=False,
              error=str(exc), detail="下载失败：" + str(exc))
         _close_desktop_window()
+        _toast("更新失败：%s" % exc)
         return False
 
 
@@ -687,10 +762,10 @@ def _download_env(info, new_version):
     last_exc = None
     for i, base in enumerate(bases[:6]):
         try:
-            _set(stage="download", percent=60,
+            _set(stage="download", percent=60, speed=0,
                  detail="正在下载运行环境（线路 %d/6，约 %d MB）…"
                         % (i + 1, int(int(info.get("env_bytes") or 0) / 1048576)))
-            _download(base + env_url, env_zip, 60, 85)
+            _download(base + env_url, env_zip, 60, 85, label="运行环境")
             last_exc = None
             break
         except Exception as exc:
@@ -761,6 +836,8 @@ def _verify_env(target_version=None):
 def _do_install():
     """把已解压的版本装上：更新运行环境 + version.json，然后重启。"""
     try:
+        with _lock:
+            _state["installts"] = int(_state.get("installts") or 0) + 1
         prep = _get_prepared()
         version = prep.get("version", "")
         path = prep.get("path", "")
@@ -960,7 +1037,14 @@ def api_update_start():
                         "version": prep.get("version")})
     # 先拿锁再改状态：拿不到锁说明已有任务在跑，绝不能覆盖它的进度
     if not _start_worker("ota-prepare", _do_prepare, None, None, channel):
-        return jsonify({"ok": True, "message": "更新已在进行中"}), 202
+        cur = _get_state()
+        print("[更新] 拒绝重复的下载请求（已有任务在跑 %s%%）" % cur.get("percent"))
+        return jsonify({
+            "ok": False, "busy": True, "duplicated": True,
+            "error": "更新已在进行中（%s%%，%s），请等待当前任务完成"
+                     % (cur.get("percent", 0), cur.get("detail") or "下载中"),
+            "progress": cur,
+        }), 409
     return jsonify({"ok": True, "message": "开始下载更新包", "channel": channel})
 
 
@@ -986,7 +1070,12 @@ def api_update_upload():
         ver = ""
     info = {"version": ver or "", "notes": "手动上传", "channel": "manual"}
     if not _start_worker("ota-upload", _do_update, info, path):
-        return jsonify({"ok": True, "message": "正在处理中"}), 202
+        try:
+            os.remove(path)     # 重复请求：把多上传的包删掉，避免占空间
+        except Exception:
+            pass
+        return jsonify({"ok": False, "busy": True, "duplicated": True,
+                        "error": "更新已在进行中，请等待当前任务完成"}), 409
     return jsonify({"ok": True, "message": "开始下载并安装手动更新包"})
 
 
@@ -1003,9 +1092,11 @@ def api_update_install():
         _clear_prepared()
         return jsonify({"ok": False, "error": "更新包目录不完整，请重新下载"}), 400
     if _get_state().get("running"):
-        return jsonify({"ok": True, "message": "正在处理中"})
+        return jsonify({"ok": False, "busy": True, "duplicated": True,
+                        "error": "更新正在进行中，请稍候"}), 409
     if not _start_worker("ota-install", _do_install):
-        return jsonify({"ok": True, "message": "正在处理中"}), 202
+        return jsonify({"ok": False, "busy": True, "duplicated": True,
+                        "error": "更新正在进行中，请稍候"}), 409
     return jsonify({"ok": True, "message": "开始安装并重启", "version": prep.get("version")})
 
 

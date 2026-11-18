@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# 班级叫号器 (Class Caller)  Copyright (C) 2026 xiaoli
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 本程序是自由软件：你可以依据自由软件基金会（FSF）发布的 GNU 通用公共许可证
+# 第 3 版或任何更高版本的条款，再分发和/或修改本程序。不提供任何担保。
 """
 班级叫号器 桌面组件
 - 右下角叫号弹窗（学号、老师大字绿色显示，可关闭）
@@ -316,6 +320,156 @@ class SplashWindow:
             win32gui.EndPaint(hwnd, ps)
 
 
+class UpdateToast:
+    """右下角更新提示气泡：无标题栏、可点击、可关闭，10 秒后自动消失。
+
+    设计目的：后台下载/解压更新包时**不再**弹大窗口挡住屏幕，只在右下角提示一下。
+    点气泡 → 打开「软件更新」网页看详细进度；点右上角 ✕ → 关闭。
+    """
+
+    W, H = 384, 116
+    AUTO_CLOSE = 10.0
+
+    def __init__(self, text, on_click=None):
+        self._text = str(text or "")
+        self._on_click = on_click
+        self._hwnd = None
+        self._proc = None
+        self._font_title = None
+        self._font_body = None
+        self._born = 0.0
+        self._close_rect = (0, 0, 0, 0)
+
+    # -- 创建/销毁 ------------------------------------------------------
+    def _register(self):
+        hinst = win32api.GetModuleHandle(None)
+        wc = win32gui.WNDCLASS()
+        wc.hInstance = hinst
+        wc.lpszClassName = "CQTToastClass"
+        wc.style = win32con.CS_HREDRAW | win32con.CS_VREDRAW
+        wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_HAND)
+        wc.hbrBackground = win32gui.CreateSolidBrush(WHITE)
+        self._proc = self._wnd_proc
+        wc.lpfnWndProc = self._proc
+        try:
+            win32gui.RegisterClass(wc)
+        except Exception:
+            pass
+
+    def show(self):
+        self._register()
+        self._font_title = _make_font(18, 700)
+        self._font_body = _make_font(15)
+        w, h = self.W, self.H
+        try:
+            area = win32api.GetMonitorInfo(
+                win32api.MonitorFromPoint((0, 0))).get("Work") or (0, 0, 1920, 1040)
+        except Exception:
+            area = (0, 0, 1920, 1040)
+        x = area[2] - w - 18
+        y = area[3] - h - 18
+        self._hwnd = win32gui.CreateWindowEx(
+            win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
+            "CQTToastClass", "软件更新",
+            win32con.WS_POPUP,
+            x, y, w, h, 0, 0, win32api.GetModuleHandle(None), None)
+        self._close_rect = (w - 34, 4, w - 8, 30)
+        self._born = time.time()
+        win32gui.ShowWindow(self._hwnd, win32con.SW_SHOWNOACTIVATE)
+        win32gui.UpdateWindow(self._hwnd)
+
+    def set_text(self, text):
+        self._text = str(text or "")
+        if self._hwnd and win32gui.IsWindow(self._hwnd):
+            win32gui.InvalidateRect(self._hwnd, None, True)
+
+    def expired(self):
+        return self._born and (time.time() - self._born) >= self.AUTO_CLOSE
+
+    def close(self):
+        try:
+            if self._hwnd and win32gui.IsWindow(self._hwnd):
+                win32gui.DestroyWindow(self._hwnd)
+        except Exception:
+            pass
+        self._hwnd = None
+        for obj in (self._font_title, self._font_body):
+            try:
+                if obj:
+                    win32gui.DeleteObject(obj)
+            except Exception:
+                pass
+        self._font_title = self._font_body = None
+
+    # -- 消息 ----------------------------------------------------------
+    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == win32con.WM_LBUTTONUP:
+            x = win32api.LOWORD(lparam)
+            y = win32api.HIWORD(lparam)
+            r = self._close_rect
+            if r[0] <= x <= r[2] and r[1] <= y <= r[3]:
+                self.close()
+                return 0
+            if self._on_click is not None:
+                try:
+                    self._on_click()
+                except Exception:
+                    pass
+            self.close()
+            return 0
+        elif msg == win32con.WM_SETCURSOR and win32api.LOWORD(lparam) == 1:  # HTCLIENT
+            try:
+                win32gui.SetCursor(win32gui.LoadCursor(0, win32con.IDC_HAND))
+                return 1
+            except Exception:
+                pass
+        elif msg == win32con.WM_PAINT:
+            self._paint(hwnd)
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    def _paint(self, hwnd):
+        hdc, ps = win32gui.BeginPaint(hwnd)
+        try:
+            w, h = self.W, self.H
+            brush = win32gui.CreateSolidBrush(WHITE)
+            win32gui.FillRect(hdc, (0, 0, w, h), brush)
+            win32gui.DeleteObject(brush)
+            pen = win32gui.CreatePen(win32con.PS_SOLID, 1, LIGHT)
+            old_pen = win32gui.SelectObject(hdc, pen)
+            old_brush = win32gui.SelectObject(
+                hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
+            win32gui.Rectangle(hdc, 0, 0, w, h)
+            win32gui.SelectObject(hdc, old_brush)
+            win32gui.SelectObject(hdc, old_pen)
+            win32gui.DeleteObject(pen)
+            # 左侧蓝色装饰条
+            bar = win32gui.CreateSolidBrush(BLUE)
+            win32gui.FillRect(hdc, (0, 0, 4, h), bar)
+            win32gui.DeleteObject(bar)
+
+            win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+            old_font = win32gui.SelectObject(hdc, self._font_title)
+            win32gui.SetTextColor(hdc, win32api.RGB(15, 23, 42))
+            win32gui.DrawText(hdc, "班级叫号器 · 软件更新", -1,
+                              (14, 8, w - 40, 32),
+                              win32con.DT_LEFT | win32con.DT_SINGLELINE)
+            win32gui.SetTextColor(hdc, DARK_GRAY)
+            win32gui.DrawText(hdc, "✕", -1, (w - 34, 6, w - 8, 30),
+                              win32con.DT_CENTER | win32con.DT_SINGLELINE)
+            win32gui.SelectObject(hdc, self._font_body)
+            win32gui.SetTextColor(hdc, win32api.RGB(51, 65, 85))
+            win32gui.DrawText(hdc, self._text, -1, (14, 36, w - 16, h - 24),
+                              win32con.DT_LEFT | win32con.DT_WORDBREAK | win32con.DT_NOPREFIX)
+            win32gui.SetTextColor(hdc, BLUE)
+            win32gui.DrawText(hdc, "点击这里查看更新进度 · 10 秒后自动关闭", -1,
+                              (14, h - 24, w - 16, h - 4),
+                              win32con.DT_LEFT | win32con.DT_SINGLELINE)
+            win32gui.SelectObject(hdc, old_font)
+        finally:
+            win32gui.EndPaint(hwnd, ps)
+
+
 class UpdateWindow:
     """软件更新进度窗口：可最小化、不可关闭，带加载动画。"""
 
@@ -626,6 +780,8 @@ class DesktopUI:
         self._tray_added = False
         self._tray_icon = None
         self._update_win = None
+        self._toast = None
+        self._updating = False
         self._last_spin = 0.0
         self._popup = None
         self._popup_bmp = None
@@ -679,6 +835,35 @@ class DesktopUI:
     def close_update_window(self):
         self._queue.put(("update_close", None))
 
+    def notify_update_toast(self, text):
+        """后台下载更新时只弹右下角气泡（不弹大窗口）。"""
+        self._queue.put(("update_toast", text))
+
+    def _open_update_page(self):
+        """打开网页版更新界面（和托盘菜单共用）。"""
+        self._close_toast()
+        try:
+            os.startfile("http://127.0.0.1:%d/update" % self.port)
+        except Exception as exc:
+            print("[更新] 打开更新页面失败:", exc)
+
+    def _open_toast(self, text):
+        self._close_toast()
+        try:
+            self._toast = UpdateToast(text, self._open_update_page)
+            self._toast.show()
+        except Exception as exc:
+            print("[更新提示] 显示失败:", exc)
+            self._toast = None
+
+    def _close_toast(self):
+        try:
+            if self._toast is not None:
+                self._toast.close()
+        except Exception:
+            pass
+        self._toast = None
+
     def show_panel(self):
         pass  # 无主窗口
 
@@ -705,6 +890,9 @@ class DesktopUI:
                         self._update_win.tick()
                     except Exception:
                         pass
+                # 右下角气泡 10 秒自动关闭
+                if self._toast is not None and self._toast.expired():
+                    self._close_toast()
                 time.sleep(0.02)
         finally:
             self._cleanup()
@@ -725,10 +913,20 @@ class DesktopUI:
                     self._close_remote_popup()
                 elif kind == "update_show":
                     self._open_update_window()
+                elif kind == "update_toast":
+                    self._updating = True
+                    self._open_toast(payload)
                 elif kind == "update_progress":
                     if self._update_win is not None:
                         self._update_win.set_progress(payload[0], payload[1])
+                    if self._toast is not None:
+                        try:
+                            self._toast.set_text("%s（%s%%）" % (payload[1], payload[0]))
+                        except Exception:
+                            pass
                 elif kind == "update_close":
+                    self._updating = False
+                    self._close_toast()
                     self._close_update_window()
                 elif kind == "quit":
                     self._quit_app()
@@ -796,6 +994,10 @@ class DesktopUI:
 
     def _tray_wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == TRAY_MSG:
+            # 有更新在跑时，左键点托盘直接打开更新界面；否则弹菜单
+            if lparam == win32con.WM_LBUTTONUP and self._updating:
+                self._open_update_page()
+                return 0
             if lparam in (win32con.WM_RBUTTONUP, win32con.WM_LBUTTONUP):
                 self._show_tray_menu()
             return 0
@@ -1110,6 +1312,9 @@ class DesktopUI:
     def _show_tray_menu(self):
         menu = win32gui.CreatePopupMenu()
         win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "打开网页")
+        win32gui.AppendMenu(menu, win32con.MF_STRING, 3,
+                            "软件更新（查看进度）" if self._updating else "软件更新")
+        win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
         win32gui.AppendMenu(menu, win32con.MF_STRING, 2, "退出")
         pos = win32gui.GetCursorPos()
         try:
@@ -1126,6 +1331,8 @@ class DesktopUI:
                 os.startfile("http://127.0.0.1:%d" % self.port)
             except Exception:
                 pass
+        elif cmd == 3:
+            self._open_update_page()
         elif cmd == 2:
             self._quit_app()
 
@@ -1162,6 +1369,7 @@ class DesktopUI:
         except Exception:
             pass
         self._tray_icon = None
+        self._close_toast()
         self._close_update_window()
         try:
             if self._hwnd and win32gui.IsWindow(self._hwnd):
