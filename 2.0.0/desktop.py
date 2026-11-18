@@ -320,6 +320,26 @@ class SplashWindow:
             win32gui.EndPaint(hwnd, ps)
 
 
+# Win32 的窗口类只注册一次，消息永远送到注册时绑定的那个 wndproc。
+# 所以这里用「hwnd -> 实例」的分发表，保证第二次弹出的气泡/窗口也能正确响应点击。
+_TOAST_WINDOWS = {}
+_UPDATE_WINDOWS = {}
+
+
+def _toast_wnd_dispatch(hwnd, msg, wparam, lparam):
+    inst = _TOAST_WINDOWS.get(hwnd)
+    if inst is not None:
+        return inst._handle(hwnd, msg, wparam, lparam)
+    return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+
+def _update_wnd_dispatch(hwnd, msg, wparam, lparam):
+    inst = _UPDATE_WINDOWS.get(hwnd)
+    if inst is not None:
+        return inst._handle(hwnd, msg, wparam, lparam)
+    return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+
 class UpdateToast:
     """右下角更新提示气泡：无标题栏、可点击、可关闭，10 秒后自动消失。
 
@@ -329,6 +349,7 @@ class UpdateToast:
 
     W, H = 384, 116
     AUTO_CLOSE = 10.0
+    _class_ready = False
 
     def __init__(self, text, on_click=None):
         self._text = str(text or "")
@@ -342,6 +363,8 @@ class UpdateToast:
 
     # -- 创建/销毁 ------------------------------------------------------
     def _register(self):
+        if UpdateToast._class_ready:
+            return
         hinst = win32api.GetModuleHandle(None)
         wc = win32gui.WNDCLASS()
         wc.hInstance = hinst
@@ -349,12 +372,13 @@ class UpdateToast:
         wc.style = win32con.CS_HREDRAW | win32con.CS_VREDRAW
         wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_HAND)
         wc.hbrBackground = win32gui.CreateSolidBrush(WHITE)
-        self._proc = self._wnd_proc
+        self._proc = _toast_wnd_dispatch
         wc.lpfnWndProc = self._proc
         try:
             win32gui.RegisterClass(wc)
         except Exception:
             pass
+        UpdateToast._class_ready = True
 
     def show(self):
         self._register()
@@ -375,6 +399,7 @@ class UpdateToast:
             x, y, w, h, 0, 0, win32api.GetModuleHandle(None), None)
         self._close_rect = (w - 34, 4, w - 8, 30)
         self._born = time.time()
+        _TOAST_WINDOWS[self._hwnd] = self
         win32gui.ShowWindow(self._hwnd, win32con.SW_SHOWNOACTIVATE)
         win32gui.UpdateWindow(self._hwnd)
 
@@ -392,6 +417,8 @@ class UpdateToast:
                 win32gui.DestroyWindow(self._hwnd)
         except Exception:
             pass
+        if self._hwnd:
+            _TOAST_WINDOWS.pop(self._hwnd, None)
         self._hwnd = None
         for obj in (self._font_title, self._font_body):
             try:
@@ -402,7 +429,7 @@ class UpdateToast:
         self._font_title = self._font_body = None
 
     # -- 消息 ----------------------------------------------------------
-    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+    def _handle(self, hwnd, msg, wparam, lparam):
         if msg == win32con.WM_LBUTTONUP:
             x = win32api.LOWORD(lparam)
             y = win32api.HIWORD(lparam)
@@ -473,6 +500,8 @@ class UpdateToast:
 class UpdateWindow:
     """软件更新进度窗口：可最小化、不可关闭，带加载动画。"""
 
+    _class_ready = False
+
     def __init__(self):
         self._hwnd = None
         self._bar = None
@@ -487,6 +516,8 @@ class UpdateWindow:
         self._angle = 0.0
 
     def _register(self):
+        if UpdateWindow._class_ready:
+            return
         hinst = win32api.GetModuleHandle(None)
         wc = win32gui.WNDCLASS()
         wc.hInstance = hinst
@@ -494,9 +525,13 @@ class UpdateWindow:
         wc.style = win32con.CS_HREDRAW | win32con.CS_VREDRAW
         wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
         wc.hbrBackground = win32gui.CreateSolidBrush(WHITE)
-        self._proc = self._wnd_proc
+        self._proc = _update_wnd_dispatch
         wc.lpfnWndProc = self._proc
-        win32gui.RegisterClass(wc)
+        try:
+            win32gui.RegisterClass(wc)
+        except Exception:
+            pass
+        UpdateWindow._class_ready = True
 
     def show(self):
         self._register()
@@ -568,6 +603,7 @@ class UpdateWindow:
         except Exception:
             pass
 
+        _UPDATE_WINDOWS[self._hwnd] = self
         win32gui.ShowWindow(self._hwnd, win32con.SW_SHOW)
         win32gui.UpdateWindow(self._hwnd)
 
@@ -590,6 +626,8 @@ class UpdateWindow:
                 win32gui.DestroyWindow(self._hwnd)
         except Exception:
             pass
+        if self._hwnd:
+            _UPDATE_WINDOWS.pop(self._hwnd, None)
         self._hwnd = None
         for obj in (self._font_title, self._font_detail, self._font_pct,
                     self._pen_track, self._pen_arc):
@@ -601,7 +639,7 @@ class UpdateWindow:
         self._font_title = self._font_detail = self._font_pct = None
         self._pen_track = self._pen_arc = None
 
-    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+    def _handle(self, hwnd, msg, wparam, lparam):
         if msg == win32con.WM_CLOSE:
             return 0  # 不可关闭
         elif msg == win32con.WM_CTLCOLORSTATIC:
@@ -1310,22 +1348,40 @@ class DesktopUI:
             print("[桌面] 托盘创建失败:", exc)
 
     def _show_tray_menu(self):
-        menu = win32gui.CreatePopupMenu()
-        win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "打开网页")
-        win32gui.AppendMenu(menu, win32con.MF_STRING, 3,
-                            "软件更新（查看进度）" if self._updating else "软件更新")
-        win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
-        win32gui.AppendMenu(menu, win32con.MF_STRING, 2, "退出")
-        pos = win32gui.GetCursorPos()
+        """弹出托盘菜单。菜单构造/显示失败时兜底打开网页，绝不让托盘"点了没反应"。"""
+        menu = None
+        cmd = 0
         try:
-            win32gui.SetForegroundWindow(self._hwnd)
-        except Exception:
-            pass
-        cmd = win32gui.TrackPopupMenu(
-            menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON |
-            win32con.TPM_RETURNCMD,
-            pos[0], pos[1], 0, self._hwnd, None)
-        win32gui.DestroyMenu(menu)
+            menu = win32gui.CreatePopupMenu()
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "打开网页")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 3,
+                                "软件更新（查看进度）" if self._updating else "软件更新")
+            # 分隔线：某些 pywin32 版本要求必须给字符串，给 None 会抛 TypeError
+            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 2, "退出")
+            pos = win32gui.GetCursorPos()
+            try:
+                win32gui.SetForegroundWindow(self._hwnd)
+                win32gui.PostMessage(self._hwnd, win32con.WM_NULL, 0, 0)
+            except Exception:
+                pass
+            cmd = win32gui.TrackPopupMenu(
+                menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON |
+                win32con.TPM_RETURNCMD,
+                pos[0], pos[1], 0, self._hwnd, None)
+        except Exception as exc:
+            print("[托盘] 菜单显示失败:", exc)
+            try:
+                os.startfile("http://127.0.0.1:%d" % self.port)
+            except Exception:
+                pass
+            return
+        finally:
+            if menu:
+                try:
+                    win32gui.DestroyMenu(menu)
+                except Exception:
+                    pass
         if cmd == 1:
             try:
                 os.startfile("http://127.0.0.1:%d" % self.port)
