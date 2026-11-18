@@ -883,9 +883,31 @@ def _wizard_gate():
                 return None
         from auth import is_local
         if not is_local():
-            return ("<!doctype html><meta charset=utf-8>"
-                    "<h3 style=\"font-family:微软雅黑;padding:40px\">"
-                    "请在本机电脑上完成首次设置，手机上暂不可用。</h3>", 403)
+            # 手机等其它设备：给一个会自动刷新的友好提示页，电脑那边设置完就能用
+            if p.startswith("/api/"):
+                return jsonify({"ok": False, "need_wizard": True,
+                                "error": "请先在电脑上完成首次设置"}), 428
+            cfg = get_config()
+            host = normalize_hostname(cfg.get("mdns_hostname", "")) or "这台电脑"
+            html = (
+                "<!doctype html><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>请先在电脑上完成设置</title>"
+                "<style>body{margin:0;min-height:100vh;display:flex;align-items:center;"
+                "justify-content:center;background:linear-gradient(160deg,#e0f2fe,#a7f3d0);"
+                "font-family:'Microsoft YaHei',system-ui,sans-serif;color:#0f172a}"
+                ".box{background:#fff;border-radius:20px;padding:28px 24px;max-width:440px;"
+                "box-shadow:0 18px 50px rgba(15,23,42,.18);text-align:center}"
+                "h1{font-size:20px;margin:0 0 10px}p{color:#475569;font-size:14.5px;line-height:1.8;margin:6px 0}"
+                ".t{font-size:40px;margin-bottom:6px}code{background:#f1f5f9;padding:2px 6px;border-radius:6px}</style>"
+                "<div class=box><div class=t>🖥️➡️📱</div>"
+                "<h1>请先在电脑上完成首次设置</h1>"
+                "<p>这台电脑（<b>%s</b>）还没有完成「首次设置向导」。"
+                "请在电脑上打开叫号器，走完 7 步设置后，这台手机就能直接使用了。</p>"
+                "<p>本页会<b>每 3 秒自动刷新</b>，设置完成就自动进来。</p></div>"
+                "<script>setTimeout(function(){location.reload()},3000)</script>"
+                % host)
+            return (html, 200)
         if p.startswith("/api/"):
             return jsonify({"ok": False, "need_wizard": True,
                             "error": "请先完成首次设置向导"}), 428
@@ -906,16 +928,25 @@ def page_wizard():
 def api_wizard_state():
     cfg = get_config()
     port = _running_port or cfg.get("port", 8000)
+    host = normalize_hostname(cfg.get("mdns_hostname", ""))
+    secure_enabled = bool(cfg.get("secure_enabled", True))
+    secure_port = int(cfg.get("secure_port") or 0) or 9443
     return jsonify({
         "ok": True,
         "done": wizard_done(),
-        "hostname": normalize_hostname(cfg.get("mdns_hostname", "")),
+        "hostname": host,
         "port": port,
         "computer_name": os.environ.get("COMPUTERNAME", "") or "这台电脑",
         "roster_count": len(get_roster()),
         "autostart": bool(cfg.get("autostart")),
         "update_channel": cfg.get("update_channel", "stable"),
         "update_policy": cfg.get("update_policy", "none"),
+        # 手机端激活/监控必须走 https（浏览器只在安全上下文里给 crypto.subtle）
+        "secure_enabled": secure_enabled,
+        "secure_port": secure_port,
+        "http_url": "http://%s:%d" % (host or "127.0.0.1", port),
+        "https_url": ("https://%s:%d" % (host or "127.0.0.1", secure_port)
+                      if secure_enabled else ""),
     })
 
 
@@ -1815,6 +1846,25 @@ def _main():
             print("[网页服务] 异常退出:", exc)
 
     threading.Thread(target=_serve, daemon=True, name="web-server").start()
+
+    # 首次使用（还没完成设置向导）时自动打开浏览器，省得用户找不到入口
+    def _auto_open_browser():
+        try:
+            st = load_json(STATE_PATH, {})
+            if st.get("wizard_done") or st.get("browser_auto_opened"):
+                return
+            time.sleep(2.5)
+            import webbrowser
+            url = "http://127.0.0.1:%d/" % port
+            webbrowser.open(url)
+            st["browser_auto_opened"] = True
+            st["browser_auto_opened_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            save_json(STATE_PATH, st)
+            print("[启动] 已自动打开设置向导页面:", url)
+        except Exception as exc:
+            print("[启动] 自动打开浏览器失败:", exc)
+
+    threading.Thread(target=_auto_open_browser, daemon=True, name="auto-browser").start()
 
     # 后台预热摄像头/麦克风列表，避免第一次打开监控页要等很久
     try:

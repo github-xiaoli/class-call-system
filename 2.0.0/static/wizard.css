@@ -29,7 +29,9 @@ body {
   0%,100% { transform: translateY(0) rotate(-2deg) }
   50% { transform: translateY(-14px) rotate(2deg) }
 }
-#fx { position: absolute; inset: 0; pointer-events: none; }
+#fx {
+  position: fixed; inset: 0; z-index: 9; pointer-events: none;
+}
 
 /* 7 种场景配色 */
 body[data-scene="forest"]   { background: linear-gradient(180deg,#d9fbe5 0%,#a7f3d0 55%,#4ade80 100%); }
@@ -158,6 +160,7 @@ body[data-scene="starry"] .sun { background: radial-gradient(circle,#ffffff 0%,#
 .pair-left { text-align: center; }
 #qr { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 8px; }
 .qr-url { margin-top: 8px; font-size: 13px; color: #1d4ed8; word-break: break-all; }
+.qr-hint { margin-top: 6px; font-size: 12px; color: #64748b; line-height: 1.6; text-align: left; }
 .pw-show { margin-top: 12px; background: #f0fdf4; border: 1px dashed #86efac; border-radius: 12px; padding: 12px; }
 .pw-value {
   font-family: Consolas, monospace; font-size: 22px; font-weight: 700; letter-spacing: 2px;

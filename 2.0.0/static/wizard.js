@@ -199,9 +199,24 @@ function syncRoster() {
 }
 
 /* ---------- 二维码 ---------- */
+function phoneUrl() {
+  // 手机激活/监控需要 https（浏览器只在安全上下文里提供 crypto.subtle）
+  let host = state.host || window.__defHost || "127.0.0.1";
+  if (host.indexOf(".") < 0) host += ".local";
+  const useHttps = !!window.__secure;
+  const port = useHttps ? (window.__securePort || 9443) : (window.__port || 8000);
+  return (useHttps ? "https://" : "http://") + host + ":" + port;
+}
+
 function drawQR() {
-  const url = "http://" + (state.host || "127.0.0.1") + ".local:" + (window.__port || 8000);
+  const url = phoneUrl();
   $("qr-url").textContent = url;
+  const hint = $("qr-hint");
+  if (hint) {
+    hint.textContent = window.__secure
+      ? "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用这个 https 地址（http 下浏览器不给加密能力）。"
+      : "当前没有启用 HTTPS 安全端口，手机只能叫号、不能激活；请先到「设置」里勾选「启用 HTTPS 安全端口」。";
+  }
   const cv = $("qr");
   if (typeof qrcode !== "function") return;
   try {
@@ -254,8 +269,12 @@ async function genPassword() {
 function buildSummary() {
   const host = state.host || "127.0.0.1";
   const port = window.__port || 8000;
+  const httpsUrl = window.__secure
+    ? "https://" + (host.indexOf(".") < 0 ? host + ".local" : host) + ":" + (window.__securePort || 9443)
+    : "";
   const items = [
-    "手机访问地址：<b>http://" + host + ".local:" + port + "</b>",
+    "手机激活 / 监控地址（https）：<b>" + (httpsUrl || "未启用 HTTPS，请到设置里开启") + "</b>",
+    "手机叫号地址：<b>http://" + host + ".local:" + port + "</b>",
     "学生名条：<b>" + state.roster.length + " 条</b>" + (state.roster.length ? "" : "（稍后可添加）"),
     "开机自启：<b>" + ($("opt-autostart").checked ? "已开启" : "未开启") + "</b>",
     "更新：<b>" + $("opt-channel").selectedOptions[0].textContent + " / " +
@@ -321,17 +340,21 @@ function fireworks(times) {
   const palettes = [["#f43f5e", "#facc15", "#22d3ee", "#a78bfa"], ["#34d399", "#60a5fa", "#fbbf24", "#f472b6"]];
   let n = 0;
   const timer = setInterval(() => {
-    const x = fx.width * (0.2 + Math.random() * 0.6);
-    const y = fx.height * (0.15 + Math.random() * 0.35);
+    // 只在卡片上方的天空带和下方地面带炸开，别挡住正文
+    const lower = n % 3 === 2;
+    const x = fx.width * (0.15 + Math.random() * 0.7);
+    const y = lower ? fx.height * (0.80 + Math.random() * 0.12)
+                    : fx.height * (0.06 + Math.random() * 0.12);
     burst(x, y, 46, palettes[n % 2]);
     if (++n >= 5) clearInterval(timer);
-  }, 260);
+  }, 300);
 }
 
 function confetti() {
   const palettes = [["#f472b6", "#facc15", "#34d399", "#60a5fa", "#c084fc"]];
-  for (let i = 0; i < 4; i++) {
-    burst(fx.width * (0.25 + i * 0.17), fx.height * 0.28, 40, palettes[0]);
+  // 彩纸从顶部飘落，覆盖整屏
+  for (let i = 0; i < 5; i++) {
+    burst(fx.width * (0.15 + i * 0.18), fx.height * 0.04, 40, palettes[0]);
   }
 }
 
@@ -403,6 +426,9 @@ $("btn-start").addEventListener("click", finish);
   try {
     const st = await api("/api/wizard/state");
     window.__port = st.port || 8000;
+    window.__secure = !!st.secure_enabled;
+    window.__securePort = st.secure_port || 9443;
+    window.__defHost = st.hostname || "";
     if (st.done) { location.href = "/"; return; }
     $("host-name").value = st.hostname || "";
     $("opt-autostart").checked = !!st.autostart;
