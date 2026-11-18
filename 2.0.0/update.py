@@ -229,19 +229,40 @@ def _github_api(path):
 
 
 def _load_channels():
-    """读取仓库里的 channels.json（不走 API，不会限流）。"""
+    """读取仓库里的 channels.json（不走 API，不会限流）。
+
+    4 个地址同时发请求、谁先返回用谁（单条 6 秒超时、不重试），
+    这样"检查更新"最多等 6 秒左右，不会再因为某个 CDN 卡住而等半分钟。
+    """
     now = time.time()
     if _CH_CACHE["data"] and now - _CH_CACHE["time"] < 60:
         return _CH_CACHE["data"]
-    for url in CHANNELS_JSON_URLS:
-        try:
-            data = json.loads(_http_get(url, timeout=12))
-            if isinstance(data, dict) and data:
-                _CH_CACHE["data"] = data
-                _CH_CACHE["time"] = now
-                return data
-        except Exception:
-            continue
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
+    def fetch(url):
+        return json.loads(_http_get(url, timeout=6, retries=1))
+
+    ex = ThreadPoolExecutor(max_workers=len(CHANNELS_JSON_URLS) or 1)
+    try:
+        futures = [ex.submit(fetch, u) for u in CHANNELS_JSON_URLS]
+        pending = set(futures)
+        deadline = time.time() + 6.5
+        while pending:
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            done, pending = wait(pending, timeout=left, return_when=FIRST_COMPLETED)
+            for fut in done:
+                try:
+                    data = fut.result()
+                except Exception:
+                    continue
+                if isinstance(data, dict) and data:
+                    _CH_CACHE["data"] = data
+                    _CH_CACHE["time"] = time.time()
+                    return data
+    finally:
+        ex.shutdown(wait=False)
     return None
 
 
