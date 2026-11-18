@@ -228,11 +228,22 @@ def _github_api(path):
             return None
 
 
+def _channels_key(data):
+    """用清单里最高的版本号做"新旧"比较（CDN 会用旧缓存，谁先回就用谁是错的）。"""
+    best = ()
+    for v in (data or {}).values():
+        if isinstance(v, dict) and v.get("version"):
+            k = _parse_ver(v["version"])
+            if k > best:
+                best = k
+    return best
+
+
 def _load_channels():
     """读取仓库里的 channels.json（不走 API，不会限流）。
 
-    4 个地址同时发请求、谁先返回用谁（单条 6 秒超时、不重试），
-    这样"检查更新"最多等 6 秒左右，不会再因为某个 CDN 卡住而等半分钟。
+    4 个地址同时发请求：先到的先记下，再等 1.5 秒收敛窗口，最后取**版本号最高**的那份
+    （jsdelivr 等镜像会缓存旧内容，谁快谁对是错的）。全程最多 6.5 秒。
     """
     now = time.time()
     if _CH_CACHE["data"] and now - _CH_CACHE["time"] < 60:
@@ -243,26 +254,38 @@ def _load_channels():
         return json.loads(_http_get(url, timeout=6, retries=1))
 
     ex = ThreadPoolExecutor(max_workers=len(CHANNELS_JSON_URLS) or 1)
+    best = None
+    best_key = ()
     try:
         futures = [ex.submit(fetch, u) for u in CHANNELS_JSON_URLS]
         pending = set(futures)
-        deadline = time.time() + 6.5
+        overall = time.time() + 6.5
+        settle = time.time() + 1.5
         while pending:
-            left = deadline - time.time()
+            target = settle if best is not None else overall
+            left = target - time.time()
             if left <= 0:
                 break
             done, pending = wait(pending, timeout=left, return_when=FIRST_COMPLETED)
+            if not done:
+                break
             for fut in done:
                 try:
                     data = fut.result()
                 except Exception:
                     continue
-                if isinstance(data, dict) and data:
-                    _CH_CACHE["data"] = data
-                    _CH_CACHE["time"] = time.time()
-                    return data
+                if not isinstance(data, dict) or not data:
+                    continue
+                key = _channels_key(data)
+                if best is None or key > best_key:
+                    best = data
+                    best_key = key
     finally:
         ex.shutdown(wait=False)
+    if best is not None:
+        _CH_CACHE["data"] = best
+        _CH_CACHE["time"] = time.time()
+        return best
     return None
 
 
