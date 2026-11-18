@@ -81,8 +81,9 @@ CDN_BASES = [
     "https://g.blfrp.cn/",
 ]
 
-# 测速总预算（秒）：31 条线路同时发请求，最多等 4 秒就取已返回里最快的
-SPEEDTEST_BUDGET = 4.0
+# 测速总预算（秒）：31 条线路同时发请求，最多等 3.6 秒就取已返回里最快的
+# （留 0.4 秒余量，保证从点「下载更新」到测速结束总耗时 < 4 秒）
+SPEEDTEST_BUDGET = 3.6
 
 # 全局进度状态
 _lock = threading.Lock()
@@ -339,7 +340,7 @@ def _cdn_speedtest(info_url):
     def probe(base):
         t0 = time.time()
         try:
-            data = _http_get(base + info_url, timeout=3.5, binary=True, retries=1)
+            data = _http_get(base + info_url, timeout=3.2, binary=True, retries=1)
             if data:
                 return base, (time.time() - t0) * 1000.0
         except Exception:
