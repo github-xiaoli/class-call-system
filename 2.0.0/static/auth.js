@@ -103,6 +103,24 @@ const Auth = (() => {
     return data;
   }
 
+  async function activateByToken(token) {
+    // 扫码激活：不用手输密码，凭二维码里的一次性票据直接绑定
+    const pubJwk = await generateAndStoreKeyPair();
+    const res = await fetch("/api/auth/activate_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token, public_key: pubJwk }),
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
+    if (!res.ok || data.ok === false) {
+      await idbDel("privKey");
+      throw new Error(data.error || "激活失败");
+    }
+    localStorage.setItem(DEVICE_KEY, data.device_id);
+    _token = null;
+    return data;
+  }
+
   async function sign(challengeB64url) {
     requireSubtle();
     const privKey = await idbGet("privKey");
@@ -216,7 +234,7 @@ const Auth = (() => {
   }
 
   return {
-    me, activate, deactivate, ensureToken, urlWithToken, fetchAuthed,
+    me, activate, activateByToken, deactivate, ensureToken, urlWithToken, fetchAuthed,
     hasPrivateKey, requireSubtle,
   };
 })();

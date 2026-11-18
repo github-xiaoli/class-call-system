@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>激活这台设备 · 班级叫号器</title>
+<link rel="stylesheet" href="/static/style.css?v=20261119a">
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: linear-gradient(160deg, #e0f2fe 0%, #a7f3d0 60%, #bbf7d0 100%);
+         font-family: "Microsoft YaHei", system-ui, sans-serif; color: #0f172a; }
+  .card { background: #fff; border-radius: 22px; box-shadow: 0 22px 60px rgba(15,23,42,.2);
+          padding: 30px 26px 26px; width: min(420px, 92vw); text-align: center; }
+  .spin { width: 52px; height: 52px; margin: 4px auto 16px; border: 5px solid #e2e8f0;
+          border-top-color: #2563eb; border-radius: 50%; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .ok { font-size: 54px; margin-bottom: 6px; }
+  .err { font-size: 54px; margin-bottom: 6px; }
+  h1 { font-size: 20px; margin: 0 0 10px; }
+  p { color: #475569; font-size: 14.5px; line-height: 1.8; margin: 6px 0; }
+  .btn { display: inline-block; margin-top: 16px; background: #2563eb; color: #fff;
+         text-decoration: none; padding: 11px 24px; border-radius: 12px; font-size: 15px; }
+  .tip { margin-top: 14px; font-size: 12.5px; color: #94a3b8; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="box-loading">
+    <div class="spin"></div>
+    <h1>正在激活这台设备…</h1>
+    <p>请稍候，马上就好</p>
+  </div>
+  <div id="box-ok" class="hidden">
+    <div class="ok">✅</div>
+    <h1>激活成功</h1>
+    <p>这台手机已经和电脑绑定，正在进入…</p>
+    <a class="btn" href="/">立即进入</a>
+  </div>
+  <div id="box-err" class="hidden">
+    <div class="err">⚠️</div>
+    <h1>激活失败</h1>
+    <p id="err-text">—</p>
+    <a class="btn" href="/">仍然打开首页</a>
+    <div class="tip">二维码是一次性的、几分钟内有效；过期后请在电脑上重新生成。</div>
+  </div>
+</div>
+<script src="/static/auth.js?v=20261119a"></script>
+<script>
+(function () {
+  const qs = new URLSearchParams(location.search);
+  const token = qs.get("t") || "";
+  const errText = document.getElementById("err-text");
+  function fail(msg) {
+    document.getElementById("box-loading").classList.add("hidden");
+    document.getElementById("box-err").classList.remove("hidden");
+    errText.textContent = msg;
+  }
+  function ok() {
+    document.getElementById("box-loading").classList.add("hidden");
+    document.getElementById("box-ok").classList.remove("hidden");
+    setTimeout(() => { location.href = "/"; }, 900);
+  }
+  (async function () {
+    if (!token) { fail("这个链接里没有激活票据，请重新扫描电脑上的二维码。"); return; }
+    if (!window.isSecureContext || !window.crypto || !crypto.subtle) {
+      fail("当前不是安全连接（https），浏览器不提供加密能力，无法激活。请用二维码里的 https 地址打开。");
+      return;
+    }
+    try {
+      await Auth.activateByToken(token);
+      ok();
+    } catch (e) {
+      fail(e && e.message ? e.message : "激活失败，请重试");
+    }
+  })();
+})();
+</script>
+</body>
+</html>

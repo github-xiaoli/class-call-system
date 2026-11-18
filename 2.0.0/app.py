@@ -861,7 +861,8 @@ def page_update():
 # 首次使用向导：没设置完之前，所有页面都重定向到 /wizard；设置完就再也进不去
 # ---------------------------------------------------------------------------
 WIZARD_EXEMPT = ("/static/", "/api/wizard", "/wizard", "/favicon.ico",
-                 "/api/auth/create", "/api/auth/passwords", "/api/health")
+                 "/api/auth/create", "/api/auth/passwords", "/api/auth/me", "/api/health",
+                 "/activate", "/api/auth/activate_token", "/api/auth/qr_create")
 
 
 def wizard_done():
@@ -922,6 +923,12 @@ def page_wizard():
     if wizard_done():
         return redirect("/")            # 设置完就不允许再回到向导
     return render_template("wizard.html")
+
+
+@app.route("/activate")
+def page_activate():
+    """手机扫码打开这个页面，自动完成设备激活（不需要手输密码）。"""
+    return render_template("activate.html")
 
 
 @app.route("/api/wizard/state")

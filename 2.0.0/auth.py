@@ -370,6 +370,102 @@ def api_auth_activate():
                     "valid_until": now + valid_days * 86400})
 
 
+# ---------------------------------------------------------------------------
+# 扫码激活：电脑生成一次性票据 -> 二维码 -> 手机扫开 /activate 自动绑定
+# ---------------------------------------------------------------------------
+def _qr_items(auth):
+    return [p for p in auth.get("passwords", [])
+            if p.get("qr_token") and not p.get("used") and not p.get("revoked")]
+
+
+@auth_bp.route("/api/auth/qr_create", methods=["POST"])
+def api_auth_qr_create():
+    """本机生成一张"扫码激活票据"，返回 token（放进二维码）和备用配对码。"""
+    if not is_local():
+        return jsonify({"ok": False, "error": "仅本机可以生成配对二维码"}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        minutes = int(data.get("minutes", 30))
+    except Exception:
+        minutes = 30
+    minutes = max(5, min(minutes, 24 * 60))
+    try:
+        valid_days = int(data.get("valid_days", 365))
+    except Exception:
+        valid_days = 365
+    valid_days = max(1, min(valid_days, 3650))
+
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code = "".join(secrets.choice(alphabet) for _ in range(8))
+    token = secrets.token_urlsafe(24)
+    now = time.time()
+    auth = load_auth()
+    # 顺手清掉过期未用的旧票据，避免越积越多
+    auth["passwords"] = [p for p in auth.get("passwords", [])
+                         if not (p.get("qr_token") and not p.get("used")
+                                 and float(p.get("qr_until", 0) or 0) < now)]
+    auth.setdefault("passwords", []).append({
+        "id": uuid.uuid4().hex,
+        "hash": _sha256_text(code),
+        "name": str(data.get("name", "") or "手机扫码配对"),
+        "note": "扫码自动激活",
+        "created_at": now,
+        "activate_until": now + minutes * 60,
+        "valid_days": valid_days,
+        "used": False,
+        "device_id": None,
+        "revoked": False,
+        "qr_token": token,
+        "qr_until": now + minutes * 60,
+        "qr_code": code,
+    })
+    save_auth(auth)
+    return jsonify({"ok": True, "token": token, "code": code,
+                    "expires_in": minutes * 60, "valid_days": valid_days})
+
+
+@auth_bp.route("/api/auth/activate_token", methods=["POST"])
+def api_auth_activate_token():
+    """手机扫码后自动调用：拿 token + 浏览器公钥，直接绑定这台设备。"""
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("token", "")).strip()
+    public_key = data.get("public_key")
+    if not token or not isinstance(public_key, dict):
+        return jsonify({"ok": False, "error": "缺少激活票据或公钥"}), 400
+    now = time.time()
+    auth = load_auth()
+    target = None
+    for p in _qr_items(auth):
+        if hmac.compare_digest(str(p.get("qr_token", "")), token):
+            target = p
+            break
+    if target is None:
+        return jsonify({"ok": False,
+                        "error": "二维码已失效或已被使用，请在电脑上重新生成"}), 401
+    if float(target.get("qr_until", 0) or 0) <= now:
+        return jsonify({"ok": False, "error": "二维码已过期，请在电脑上重新生成"}), 401
+    try:
+        _jwk_to_public_key(public_key)
+    except Exception:
+        return jsonify({"ok": False, "error": "公钥格式无效"}), 400
+
+    device_id = uuid.uuid4().hex
+    valid_days = max(1, int(target.get("valid_days", 365) or 365))
+    auth.setdefault("devices", {})[device_id] = {
+        "jwk": public_key,
+        "created_at": now,
+        "valid_until": now + valid_days * 86400,
+        "revoked": False,
+        "name": target.get("name", ""),
+    }
+    target["used"] = True
+    target["used_at"] = now
+    target["device_id"] = device_id
+    save_auth(auth)
+    return jsonify({"ok": True, "device_id": device_id,
+                    "valid_until": now + valid_days * 86400})
+
+
 @auth_bp.route("/api/auth/challenge", methods=["POST"])
 def api_auth_challenge():
     data = request.get_json(silent=True) or {}

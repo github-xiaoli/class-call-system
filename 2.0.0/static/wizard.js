@@ -85,7 +85,7 @@ function go(step) {
   if (step === 0) fireworks(1600);
   if (step === totalSteps - 1) { buildSummary(); confetti(); }
   if (step === 2) $("host-name").focus();
-  if (step === 5) drawQR();
+  if (step === 5) { if (state.pairToken) drawQR(); else makePairQR(); }
   refreshGate();
 }
 
@@ -209,12 +209,15 @@ function phoneUrl() {
 }
 
 function drawQR() {
-  const url = phoneUrl();
-  $("qr-url").textContent = url;
+  const base = phoneUrl();                    // https://host.local:9443
+  const url = state.pairToken ? (base.replace(/\/+$/, "") + "/activate?t=" + encodeURIComponent(state.pairToken)) : base;
+  $("qr-url").textContent = state.pairToken
+    ? "扫码即自动激活（30 分钟内有效）"
+    : url;
   const hint = $("qr-hint");
   if (hint) {
     hint.textContent = window.__secure
-      ? "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用这个 https 地址（http 下浏览器不给加密能力）。"
+      ? "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用 https（http 下浏览器不给加密能力）。"
       : "当前没有启用 HTTPS 安全端口，手机只能叫号、不能激活；请先到「设置」里勾选「启用 HTTPS 安全端口」。";
   }
   const cv = $("qr");
@@ -239,29 +242,25 @@ function drawQR() {
   } catch (e) { /* 忽略：二维码失败不影响流程 */ }
 }
 
-/* ---------- 配对密码 ---------- */
-function randPassword() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "";
-  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s.slice(0, 4) + "-" + s.slice(4);
-}
-
-async function genPassword() {
-  const pw = randPassword();
+/* ---------- 扫码配对（扫一下就自动激活） ---------- */
+async function makePairQR() {
+  const box = $("pw-value");
   try {
-    await api("/api/auth/create", {
+    const d = await api("/api/auth/qr_create", {
       method: "POST",
-      body: JSON.stringify({
-        password: pw, name: "手机配对", note: "首次设置向导创建",
-        activate_minutes: 1440, valid_days: 365,
-      }),
+      body: JSON.stringify({ minutes: 30, valid_days: 365, name: "手机扫码配对" }),
     });
-    $("pw-value").textContent = pw;
+    state.pairToken = d.token;
+    window.__pairToken = d.token;   // 方便调试/自动化测试读取
+    state.pairing = d.code;      // 备用配对码
+    state.pairExpires = Date.now() + (d.expires_in || 1800) * 1000;
+    if (box) box.textContent = d.code;
     $("pw-show").classList.remove("hidden");
-    state.pairing = pw;
+    drawQR();
+    toast("二维码已生成，30 分钟内有效");
   } catch (e) {
-    toast("生成失败：" + e.message);
+    if (box) box.textContent = "生成失败";
+    toast("生成二维码失败：" + e.message);
   }
 }
 
@@ -279,7 +278,10 @@ function buildSummary() {
     "开机自启：<b>" + ($("opt-autostart").checked ? "已开启" : "未开启") + "</b>",
     "更新：<b>" + $("opt-channel").selectedOptions[0].textContent + " / " +
       $("opt-policy").selectedOptions[0].textContent + "</b>",
-    "手机配对密码：<b>" + (state.pairing || "未生成（可在密码管理里创建）") + "</b>",
+    "手机扫码激活：<b>" + (state.pairToken
+      ? "二维码已生成（30 分钟内有效，扫码即自动激活）"
+      : "未生成，可稍后在「🔐 密码管理」里创建") + "</b>",
+    "备用配对码：<b>" + (state.pairing || "-") + "</b>",
   ];
   $("summary").innerHTML = items.map((t) => "<li>" + t + "</li>").join("");
 }
@@ -410,7 +412,7 @@ $("btn-sample").addEventListener("click", () => {
   $("roster-text").value = "1,张子墨\n2,王欣然\n3,李嘉怡\n4,赵晨曦\n5,陈思远\n6,刘雨桐";
   syncRoster();
 });
-$("btn-genpw").addEventListener("click", genPassword);
+$("btn-genpw").addEventListener("click", makePairQR);
 $("btn-copy").addEventListener("click", async () => {
   const t = $("pw-value").textContent;
   try {
