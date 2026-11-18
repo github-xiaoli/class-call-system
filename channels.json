@@ -1,6 +1,6 @@
 {
   "stable": {
-    "version": "2.0.20",
+    "version": "2.0.21",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -161,11 +161,11 @@
       ]
     ],
     "channel": "stable",
-    "notes": "- 【正式版】2.0.20\n- 修复：首次使用向导第 3 步改完设备名后，手机上的 http://新名字.local 立刻可用，但 https（监控 / 文件 / 更新）要重启一次程序才生效 —— 现在向导会明确提示，并提供「🔄 现在重启」按钮\n- 修复：自签证书以前只写电脑名，改了主机名后手机访问 https 会一直提示「证书不安全」；现在证书会自动按新名字重签（重启后生效）\n- 更新：「设置」里改主机名后会提示「http 立刻可用、https 需重启一次」\n- 沿用 2.0.19 的其余功能（设置向导 7 步、NSIS 向导式安装包、OTA 智能环境更新等）",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.20/classcaller-2.0.20.zip",
-    "zip_asset": "classcaller-2.0.20.zip",
-    "tag": "v2.0.20",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.20/release-info.json"
+    "notes": "- 【正式版】2.0.21\n- 修复：设置向导第 3 步填的设备名以前要到最后一步才保存，mDNS 根本没注册这个新名字，手机扫第 6 步的二维码会解析不到 —— 现在点「下一步」就立刻保存并切换 mDNS，二维码里的地址马上可用\n- 修复：改过设备名后，完成页会提示「https 需要重启一次才生效」并提供「🔄 现在重启」按钮\n- 修复：自签证书以前只写电脑名，改了主机名后手机访问 https 会一直提示「证书不安全」；现在证书会自动按新名字重签（重启后生效）\n- 更新：「设置」里改主机名后会提示「http 立刻可用、https 需重启一次」\n- 沿用 2.0.20 的其余功能（设置向导 7 步、NSIS 向导式安装包、OTA 智能环境更新等）",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/classcaller-2.0.21.zip",
+    "zip_asset": "classcaller-2.0.21.zip",
+    "tag": "v2.0.21",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/release-info.json"
   },
   "beta": {
     "version": "2.0.2",
@@ -183,7 +183,7 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.2/release-info.json"
   },
   "dev": {
-    "version": "2.0.20",
+    "version": "2.0.21",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -344,10 +344,10 @@
       ]
     ],
     "channel": "dev",
-    "notes": "- 【正式版】2.0.20\n- 修复：首次使用向导第 3 步改完设备名后，手机上的 http://新名字.local 立刻可用，但 https（监控 / 文件 / 更新）要重启一次程序才生效 —— 现在向导会明确提示，并提供「🔄 现在重启」按钮\n- 修复：自签证书以前只写电脑名，改了主机名后手机访问 https 会一直提示「证书不安全」；现在证书会自动按新名字重签（重启后生效）\n- 更新：「设置」里改主机名后会提示「http 立刻可用、https 需重启一次」\n- 沿用 2.0.19 的其余功能（设置向导 7 步、NSIS 向导式安装包、OTA 智能环境更新等）",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.20/classcaller-2.0.20.zip",
-    "zip_asset": "classcaller-2.0.20.zip",
-    "tag": "v2.0.20",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.20/release-info.json"
+    "notes": "- 【正式版】2.0.21\n- 修复：设置向导第 3 步填的设备名以前要到最后一步才保存，mDNS 根本没注册这个新名字，手机扫第 6 步的二维码会解析不到 —— 现在点「下一步」就立刻保存并切换 mDNS，二维码里的地址马上可用\n- 修复：改过设备名后，完成页会提示「https 需要重启一次才生效」并提供「🔄 现在重启」按钮\n- 修复：自签证书以前只写电脑名，改了主机名后手机访问 https 会一直提示「证书不安全」；现在证书会自动按新名字重签（重启后生效）\n- 更新：「设置」里改主机名后会提示「http 立刻可用、https 需重启一次」\n- 沿用 2.0.20 的其余功能（设置向导 7 步、NSIS 向导式安装包、OTA 智能环境更新等）",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/classcaller-2.0.21.zip",
+    "zip_asset": "classcaller-2.0.21.zip",
+    "tag": "v2.0.21",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/release-info.json"
   }
 }
