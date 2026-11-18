@@ -53,8 +53,13 @@ async function loadConfig() {
 }
 
 async function checkUpdate() {
+  if (uiBusy) { toast("正在处理中，请稍候…"); return; }
+  const btn = $("btn-check");
+  const oldText = btn ? btn.textContent : "";
+  setBusy(true);
   try {
     $("latest-info").textContent = "正在检查更新…";
+    if (btn) btn.textContent = "⏳ 检查中…";
     const d = await api("/api/update/check");
     if (!d.latest) {
       latestInfo = null;
@@ -72,6 +77,10 @@ async function checkUpdate() {
     $("btn-update").classList.remove("hidden");
     renderNotes(d.latest.notes);
   } catch (e) { toast("检查失败：" + e.message); }
+  finally {
+    if (btn) btn.textContent = oldText || "🔍 检查更新";
+    setBusy(false);
+  }
 }
 
 function renderNotes(notes) {
