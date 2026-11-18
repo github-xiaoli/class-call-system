@@ -26,7 +26,7 @@ import time
 import urllib.request
 import uuid
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, redirect
 from flask_sock import Sock
 
 # ---------------------------------------------------------------------------
@@ -855,6 +855,156 @@ def page_password():
 @app.route("/update")
 def page_update():
     return render_template("update.html")
+
+
+# ---------------------------------------------------------------------------
+# 首次使用向导：没设置完之前，所有页面都重定向到 /wizard；设置完就再也进不去
+# ---------------------------------------------------------------------------
+WIZARD_EXEMPT = ("/static/", "/api/wizard", "/wizard", "/favicon.ico",
+                 "/api/auth/create", "/api/auth/passwords")
+
+
+def wizard_done():
+    """是否已完成首次设置（看 data/state.json 里的 wizard_done 标记）。"""
+    try:
+        return bool(load_json(STATE_PATH, {}).get("wizard_done"))
+    except Exception:
+        return True          # 读不出来就不要把人锁在向导里
+
+
+@app.before_request
+def _wizard_gate():
+    try:
+        p = request.path or "/"
+        if wizard_done():
+            return None
+        for pre in WIZARD_EXEMPT:
+            if p.startswith(pre):
+                return None
+        from auth import is_local
+        if not is_local():
+            return ("<!doctype html><meta charset=utf-8>"
+                    "<h3 style=\"font-family:微软雅黑;padding:40px\">"
+                    "请在本机电脑上完成首次设置，手机上暂不可用。</h3>", 403)
+        if p.startswith("/api/"):
+            return jsonify({"ok": False, "need_wizard": True,
+                            "error": "请先完成首次设置向导"}), 428
+        return redirect("/wizard")
+    except Exception as exc:
+        print("[向导] 拦截失败:", exc)
+        return None
+
+
+@app.route("/wizard")
+def page_wizard():
+    if wizard_done():
+        return redirect("/")            # 设置完就不允许再回到向导
+    return render_template("wizard.html")
+
+
+@app.route("/api/wizard/state")
+def api_wizard_state():
+    cfg = get_config()
+    port = _running_port or cfg.get("port", 8000)
+    return jsonify({
+        "ok": True,
+        "done": wizard_done(),
+        "hostname": normalize_hostname(cfg.get("mdns_hostname", "")),
+        "port": port,
+        "computer_name": os.environ.get("COMPUTERNAME", "") or "这台电脑",
+        "roster_count": len(get_roster()),
+        "autostart": bool(cfg.get("autostart")),
+        "update_channel": cfg.get("update_channel", "stable"),
+        "update_policy": cfg.get("update_policy", "none"),
+    })
+
+
+@app.route("/api/wizard/license")
+def api_wizard_license():
+    """给向导返回两份文本：中文全文译文 + GNU 英文原文（两个独立文件）。"""
+    out = {"ok": True, "zh": "", "en": "", "legal": True}
+    for key, names in (("zh", ("LICENSE-中文全文译文.txt", "LICENSE-中文参考译文.txt")),
+                       ("en", ("LICENSE", "COPYING"))):
+        for name in names:
+            for base in (BASE_DIR, ROOT_DIR):
+                p = os.path.join(base, name)
+                if os.path.isfile(p):
+                    try:
+                        with open(p, "r", encoding="utf-8", errors="replace") as f:
+                            out[key] = f.read()
+                    except Exception:
+                        pass
+                    break
+            if out[key]:
+                break
+    return jsonify(out)
+
+
+@app.route("/api/wizard/finish", methods=["POST"])
+def api_wizard_finish():
+    from auth import is_local
+    if not is_local():
+        return jsonify({"ok": False, "error": "只能在本机完成首次设置"}), 403
+    data = request.get_json(silent=True) or {}
+    cfg = get_config()
+    need_mdns = False
+
+    host = normalize_hostname(str(data.get("mdns_hostname", "") or ""))
+    if host and host != normalize_hostname(cfg.get("mdns_hostname", "")):
+        cfg["mdns_hostname"] = host
+        need_mdns = True
+    if data.get("mdns_enabled") and not cfg.get("mdns_enabled"):
+        cfg["mdns_enabled"] = True
+        need_mdns = True
+
+    if "autostart" in data:
+        want = bool(data.get("autostart"))
+        if want != bool(cfg.get("autostart")):
+            cfg["autostart"] = want
+            try:
+                apply_autostart(want)
+            except Exception as exc:
+                print("[向导] 设置开机自启失败:", exc)
+
+    ch = str(data.get("update_channel", "") or "")
+    if ch in ("stable", "beta", "dev"):
+        cfg["update_channel"] = ch
+    pol = str(data.get("update_policy", "") or "")
+    if pol in ("none", "check", "download", "install"):
+        cfg["update_policy"] = pol
+
+    roster = data.get("roster") or []
+    if isinstance(roster, list) and roster:
+        clean = []
+        for it in roster[:5000]:
+            if not isinstance(it, dict):
+                continue
+            num = str(it.get("number", "")).strip()
+            nm = str(it.get("name", "")).strip()
+            if not num and not nm:
+                continue
+            clean.append({"number": num, "name": nm})
+        if clean:
+            save_roster(clean)
+
+    save_config(cfg)
+    if need_mdns:
+        try:
+            register_mdns(get_config())     # 立即生效，不用重启
+        except Exception as exc:
+            print("[向导] 应用主机名失败:", exc)
+
+    st = load_json(STATE_PATH, {"call_count": 0})
+    st["wizard_done"] = True
+    st["wizard_done_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_json(STATE_PATH, st)
+
+    cfg2 = get_config()
+    port = _running_port or cfg2.get("port", 8000)
+    host2 = normalize_hostname(cfg2.get("mdns_hostname", ""))
+    return jsonify({"ok": True, "hostname": host2, "port": port,
+                    "http_url": "http://%s.local:%d" % (host2, port),
+                    "secure_port": cfg2.get("secure_port", 0)})
 
 
 # ---------------------------------------------------------------------------

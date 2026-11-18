@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>班级叫号器 · 首次设置</title>
+<link rel="stylesheet" href="/static/style.css?v=20261118c">
+<link rel="stylesheet" href="/static/wizard.css?v=20261118c">
+</head>
+<body data-scene="forest">
+<div class="scene" aria-hidden="true">
+  <div class="sun"></div>
+  <div class="layer l1"></div>
+  <div class="layer l2"></div>
+  <div class="layer l3"></div>
+  <div class="deco" id="deco"></div>
+  <canvas id="fx"></canvas>
+</div>
+
+<div class="wiz">
+  <header class="wiz-head">
+    <div class="wiz-brand"><img src="/static/icon.png" alt=""><span>班级叫号器</span>
+      <em>首次设置</em></div>
+    <div class="dots" id="dots"></div>
+  </header>
+
+  <div class="wiz-body">
+    <!-- 0 欢迎 -->
+    <section class="step" data-step="0">
+      <h1>欢迎使用班级叫号器</h1>
+      <p class="lead">这台电脑将变成教室的"叫号台"：随机点名、语音播报、手机遥控，都在这里设置。</p>
+      <div class="cards">
+        <div class="card"><b>🖥</b><span>装好即用</span><small>本机浏览器打开就能操作</small></div>
+        <div class="card"><b>📱</b><span>手机可控</span><small>同一 Wi-Fi 扫二维码即可</small></div>
+        <div class="card"><b>🔄</b><span>自动更新</span><small>只下增量代码包</small></div>
+      </div>
+      <p class="hint">下面大约需要 1 分钟，设置完成后可以随时在「⚙️ 设置」里修改。</p>
+    </section>
+
+    <!-- 1 许可证 -->
+    <section class="step" data-step="1">
+      <h1>先读一下许可证</h1>
+      <p class="lead">本软件以 <b>GNU 通用公共许可证第 3 版（或更高版本）</b> 开源发布。请把下面的内容读完（划到底部并停留 10 秒）再同意。</p>
+      <div class="lic-legal">⚠️ 这是一份法律性资料（GNU General Public License v3），具有法律效力，请认真阅读后再点"同意"</div>
+      <div class="lic-tabs">
+        <button class="tab active" data-lang="zh">中文译文</button>
+        <button class="tab" data-lang="en">English (原文)</button>
+        <span class="lic-note" id="lic-note">中文译文仅供参考，具法律效力的是英文原文</span>
+      </div>
+      <pre class="lic-box" id="lic-box">正在加载许可证正文…</pre>
+      <div class="lic-foot">
+        <span class="lic-progress" id="lic-progress">请向下滚动阅读</span>
+        <label class="lic-agree"><input type="checkbox" id="lic-agree" disabled> 我已阅读并同意上述许可证条款</label>
+      </div>
+    </section>
+
+    <!-- 2 主机名 -->
+    <section class="step" data-step="2">
+      <h1>给这台电脑起个名字</h1>
+      <p class="lead">手机、平板上打开 <b>http://名字.local:端口</b> 就能用，不用记 IP 地址。</p>
+      <label class="field">
+        <span>主机名（只能用字母、数字和连字符）</span>
+        <input id="host-name" maxlength="24" placeholder="例如 classroom 或 class1" autocomplete="off">
+      </label>
+      <p class="preview">手机访问地址：<b id="host-preview">…</b></p>
+      <p class="hint">默认用电脑名；改完保存后立即生效，无需重启。</p>
+    </section>
+
+    <!-- 3 名条 -->
+    <section class="step" data-step="3">
+      <h1>添加学生名条</h1>
+      <p class="lead">每行一个学生：<b>学号,姓名</b>（也可以用空格或制表符分隔）。</p>
+      <div class="roster-tools">
+        <input type="file" id="roster-file" accept=".csv,.txt" hidden>
+        <button class="btn ghost" id="btn-pick-file">📄 从 CSV 文件导入</button>
+        <button class="btn ghost" id="btn-sample">✨ 填入示例名条</button>
+        <span class="hint" id="roster-count">当前 0 条</span>
+      </div>
+      <textarea id="roster-text" rows="8" placeholder="1,张子墨&#10;2,王欣然&#10;3,李嘉怡"></textarea>
+      <p class="hint" id="roster-hint">不想现在填也可以，之后在「👥 名条管理」里随时添加。</p>
+    </section>
+
+    <!-- 4 启动与更新 -->
+    <section class="step" data-step="4">
+      <h1>启动方式与更新策略</h1>
+      <label class="field checkbox"><input type="checkbox" id="opt-autostart" checked>
+        <span>开机自动启动（在托盘里待命，不弹黑窗）</span></label>
+      <div class="two-col">
+        <label class="field"><span>更新通道</span>
+          <select id="opt-channel">
+            <option value="stable">稳定版（只收正式发布）</option>
+            <option value="beta">内测版（正式 + 内测）</option>
+            <option value="dev">开发版（全部版本）</option>
+          </select></label>
+        <label class="field"><span>更新策略</span>
+          <select id="opt-policy">
+            <option value="none">不自动检查</option>
+            <option value="check" selected>启动时检查，有新版再问我</option>
+            <option value="download">自动下载但不安装</option>
+            <option value="install">自动下载并安装</option>
+          </select></label>
+      </div>
+      <p class="hint">更新只下载增量代码包（约 0.14 MB）；运行环境缺依赖时才会额外下载。</p>
+    </section>
+
+    <!-- 5 配对手机 -->
+    <section class="step" data-step="5">
+      <h1>配对一台手机（可选）</h1>
+      <p class="lead">手机上扫码打开本机页面；要用「监控 / 远控 / 文件」等敏感功能，还需要一次性配对密码。</p>
+      <div class="pair">
+        <div class="pair-left">
+          <canvas id="qr" width="200" height="200"></canvas>
+          <div class="qr-url" id="qr-url">…</div>
+        </div>
+        <div class="pair-right">
+          <button class="btn primary" id="btn-genpw">🔑 生成配对密码</button>
+          <div class="pw-show hidden" id="pw-show">
+            <div class="pw-value" id="pw-value">—</div>
+            <div class="hint">在手机上点「🔑 激活」输入这串密码，有效期 24 小时，用完即作废。</div>
+            <button class="btn ghost small" id="btn-copy">复制密码</button>
+          </div>
+          <p class="hint">也可以稍后在电脑的「🔐 密码管理」里创建。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 完成 -->
+    <section class="step" data-step="6">
+      <h1>设置完成 🎉</h1>
+      <p class="lead">一切就绪，现在就可以开始叫号了。</p>
+      <ul class="summary" id="summary"></ul>
+      <button class="btn primary big" id="btn-start">🚀 立即使用</button>
+    </section>
+  </div>
+
+  <footer class="wiz-foot">
+    <button class="btn ghost" id="btn-prev">上一步</button>
+    <span class="step-label" id="step-label">第 1 / 7 步</span>
+    <button class="btn primary" id="btn-next">下一步 →</button>
+  </footer>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/qrcode.js?v=20261118c"></script>
+<script src="/static/wizard.js?v=20261118c"></script>
+</body>
+</html>
