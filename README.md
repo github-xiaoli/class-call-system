@@ -5,12 +5,12 @@
 ## 下载与安装
 
 - **安装版（推荐）**：[Releases](https://github.com/github-xiaoli/class-call-system/releases/latest) 里下载
-  `ClassCaller-Setup-v2.0.19.exe`（约 60 MB），双击运行。安装向导 5 步：
+  `ClassCaller-Setup-v2.0.20.exe`（约 60 MB），双击运行。安装向导 5 步：
   欢迎 → 许可协议（GNU GPL v3 中文全文）→ 安装位置（默认 `C:\Program Files\班级叫号器`）→ 安装 → 完成。
   装完桌面和开始菜单都有快捷方式，之后可在「控制面板 → 卸载程序」里卸载（卸载时可选保留 `data` 数据）。
-- **图文说明书**：同一 release 里的 `ClassCaller-Manual-v2.0.19.pdf`，仓库内也有
+- **图文说明书**：同一 release 里的 `ClassCaller-Manual-v2.0.20.pdf`，仓库内也有
   [`使用说明-图文版.pdf`](使用说明-图文版.pdf) / [`.html`](使用说明-图文版.html)，纯文本版见 [`使用说明.txt`](使用说明.txt)。
-- **绿色版**：把 `classcaller-2.0.19.zip` 解压到已有安装目录即可（它是自动更新用的增量代码包），
+- **绿色版**：把 `classcaller-2.0.20.zip` 解压到已有安装目录即可（它是自动更新用的增量代码包），
   全新的手工部署请参看 `build_tools/`。
 
 安装包自带 Python 3.13 运行环境，目标机不需要另外装 Python。安装包支持往同一目录重复安装
