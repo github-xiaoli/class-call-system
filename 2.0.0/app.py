@@ -861,7 +861,7 @@ def page_update():
 # 首次使用向导：没设置完之前，所有页面都重定向到 /wizard；设置完就再也进不去
 # ---------------------------------------------------------------------------
 WIZARD_EXEMPT = ("/static/", "/api/wizard", "/wizard", "/favicon.ico",
-                 "/api/auth/create", "/api/auth/passwords")
+                 "/api/auth/create", "/api/auth/passwords", "/api/health")
 
 
 def wizard_done():
