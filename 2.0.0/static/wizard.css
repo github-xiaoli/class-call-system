@@ -192,3 +192,13 @@ body[data-scene="starry"] .sun { background: radial-gradient(circle,#ffffff 0%,#
   .cards, .two-col, .pair { grid-template-columns: 1fr; }
   .lic-note { display: none; }
 }
+
+/* 完成页：改过设备名时的重启提示 */
+.hidden { display: none !important; }
+.restart-tip {
+  margin: 2px 0 16px; padding: 14px 16px; border-radius: 12px;
+  background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+  font-size: 13.5px; line-height: 1.75;
+}
+.restart-tip b { color: #c2410c; }
+.restart-tip .btn { margin-top: 10px; }

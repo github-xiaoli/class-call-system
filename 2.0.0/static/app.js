@@ -366,6 +366,7 @@ function updatePhrasePreview() {
 
 async function saveSettings() {
   const oldPort = state.config.port;
+  const oldHost = String(state.config.mdns_hostname || "").toLowerCase();
   const cfg = {
     phrase: $("set-phrase").value.trim(),
     play_count: parseInt($("set-play-count").value, 10) || 1,
@@ -386,7 +387,11 @@ async function saveSettings() {
     await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
     state.config = { ...state.config, ...cfg };
     await loadStatus();
-    toast("设置已保存" + (cfg.port !== oldPort ? "（端口需重启生效）" : ""));
+    const hostChanged = String(cfg.mdns_hostname || "").toLowerCase() !== oldHost;
+    const tips = [];
+    if (cfg.port !== oldPort) tips.push("端口需重启生效");
+    if (hostChanged) tips.push("主机名已改：http 立刻可用，https 需重启一次生效");
+    toast("设置已保存" + (tips.length ? "（" + tips.join("；") + "）" : ""));
   } catch (e) {
     if (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message)) {
       openModal("modal-activate");

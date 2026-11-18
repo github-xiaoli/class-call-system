@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>班级叫号器 · 首次设置</title>
 <link rel="stylesheet" href="/static/style.css?v=20261118c">
-<link rel="stylesheet" href="/static/wizard.css?v=20261118c">
+<link rel="stylesheet" href="/static/wizard.css?v=20261119c">
 </head>
 <body data-scene="forest">
 <div class="scene" aria-hidden="true">
@@ -65,7 +65,9 @@
         <input id="host-name" maxlength="24" placeholder="例如 classroom 或 class1" autocomplete="off">
       </label>
       <p class="preview">手机访问地址：<b id="host-preview">…</b></p>
-      <p class="hint">默认用电脑名；改完保存后立即生效，无需重启。</p>
+      <p class="hint">默认用电脑名。保存后手机用 <b>http://名字.local</b> 马上就能打开；
+        但 <b>https://名字.local</b>（手机里的监控、文件、更新）要<b>重启一次程序</b>才会换用新名字的证书，
+        完成页会给你一个「🔄 现在重启」按钮。</p>
     </section>
 
     <!-- 3 名条 -->
@@ -133,6 +135,11 @@
       <h1>设置完成 🎉</h1>
       <p class="lead">一切就绪，现在就可以开始叫号了。</p>
       <ul class="summary" id="summary"></ul>
+      <div class="restart-tip hidden" id="restart-tip">
+        <b>设备名改过了。</b>手机用 <b>http://名字.local</b> 已经能用；
+        <b>https://名字.local</b>（监控 / 文件 / 更新）需要重启一次程序才会用上新名字的证书。
+        <button class="btn ghost" id="btn-restart">🔄 现在重启</button>
+      </div>
       <button class="btn primary big" id="btn-start">🚀 立即使用</button>
     </section>
   </div>
@@ -146,6 +153,6 @@
 
 <div id="toast" class="toast hidden"></div>
 <script src="/static/qrcode.js?v=20261118c"></script>
-<script src="/static/wizard.js?v=20261118c"></script>
+<script src="/static/wizard.js?v=20261119c"></script>
 </body>
 </html>

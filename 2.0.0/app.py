@@ -778,8 +778,38 @@ def _restore_net_service(name):
         _net_service("start", name)
 
 
-def ensure_ssl_context():
-    """生成/加载自签名证书，供 HTTPS 安全端口使用（开源库 cryptography）。"""
+def _cert_desired_names():
+    """证书里应该包含的名字：电脑名 + 设置的主机名（含 .local 形式）。"""
+    names = {"localhost", socket.gethostname().lower()}
+    names.add(socket.gethostname().lower() + ".local")
+    try:
+        host = normalize_hostname(get_config().get("mdns_hostname", "") or "")
+    except Exception:
+        host = ""
+    if host:
+        names.add(host)
+        names.add(host + ".local")
+    return sorted(n for n in names if n)
+
+
+def _cert_covers(cert_path, names):
+    """现有证书的 SAN 是否已经包含全部名字。"""
+    try:
+        from cryptography import x509
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        try:
+            ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        except x509.ExtensionNotFound:
+            return False
+        have = {str(n).lower() for n in ext.value.get_values_for_type(x509.DNSName)}
+        return all(n.lower() in have for n in names)
+    except Exception:
+        return False
+
+
+def _write_self_signed_cert(cert_path, key_path, names):
+    """按给定名字重签自签名证书。"""
     import datetime as _dt
     import ipaddress as _ip
     from cryptography import x509
@@ -787,38 +817,65 @@ def ensure_ssl_context():
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    sans = [x509.DNSName(n) for n in names]
+    sans.append(x509.IPAddress(_ip.ip_address("127.0.0.1")))
+    for ip in get_lan_ips():
+        try:
+            sans.append(x509.IPAddress(_ip.ip_address(ip)))
+        except Exception:
+            pass
+    cn = names[0] if names else socket.gethostname().lower()
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = _dt.datetime.now(_dt.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - _dt.timedelta(days=1))
+            .not_valid_after(now + _dt.timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+            .sign(key, hashes.SHA256()))
+    with open(key_path, "wb") as f:
+        f.write(key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption()))
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+
+def refresh_cert_if_needed():
+    """主机名变了就重签证书。返回 True 表示证书已更新（HTTPS 要重启才会用上）。"""
     cert_path = os.path.join(DATA_DIR, "ssl.crt")
     key_path = os.path.join(DATA_DIR, "ssl.key")
+    names = _cert_desired_names()
+    if os.path.isfile(cert_path) and os.path.isfile(key_path) and _cert_covers(cert_path, names):
+        return False
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        _write_self_signed_cert(cert_path, key_path, names)
+        print("[HTTPS] 已按新主机名重签证书：%s（重启后 https 用新名字）" % ", ".join(names))
+        return True
+    except Exception as exc:
+        print("[HTTPS] 重签证书失败:", exc)
+        return False
+
+
+def ensure_ssl_context():
+    """生成/加载自签名证书，供 HTTPS 安全端口使用（开源库 cryptography）。"""
+    cert_path = os.path.join(DATA_DIR, "ssl.crt")
+    key_path = os.path.join(DATA_DIR, "ssl.key")
+    names = _cert_desired_names()
     if not (os.path.isfile(cert_path) and os.path.isfile(key_path)):
-        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        hostname = normalize_hostname("")
-        sans = [x509.DNSName("localhost"),
-                x509.DNSName(hostname),
-                x509.DNSName(hostname + ".local"),
-                x509.IPAddress(_ip.ip_address("127.0.0.1"))]
-        for ip in get_lan_ips():
-            try:
-                sans.append(x509.IPAddress(_ip.ip_address(ip)))
-            except Exception:
-                pass
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
-        now = _dt.datetime.now(_dt.timezone.utc)
-        cert = (x509.CertificateBuilder()
-                .subject_name(name)
-                .issuer_name(name)
-                .public_key(key.public_key())
-                .serial_number(x509.random_serial_number())
-                .not_valid_before(now - _dt.timedelta(days=1))
-                .not_valid_after(now + _dt.timedelta(days=3650))
-                .add_extension(x509.SubjectAlternativeName(sans), critical=False)
-                .sign(key, hashes.SHA256()))
-        with open(key_path, "wb") as f:
-            f.write(key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.TraditionalOpenSSL,
-                serialization.NoEncryption()))
-        with open(cert_path, "wb") as f:
-            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        _write_self_signed_cert(cert_path, key_path, names)
+    elif not _cert_covers(cert_path, names):
+        # 旧证书里没有当前主机名（比如设置里改过名字），补签一份
+        try:
+            _write_self_signed_cert(cert_path, key_path, names)
+        except Exception as exc:
+            print("[HTTPS] 补签证书失败（继续用旧证书）:", exc)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert_path, key_path)
     return ctx
@@ -986,11 +1043,13 @@ def api_wizard_finish():
     data = request.get_json(silent=True) or {}
     cfg = get_config()
     need_mdns = False
+    host_changed = False
 
     host = normalize_hostname(str(data.get("mdns_hostname", "") or ""))
     if host and host != normalize_hostname(cfg.get("mdns_hostname", "")):
         cfg["mdns_hostname"] = host
         need_mdns = True
+        host_changed = True
     if data.get("mdns_enabled") and not cfg.get("mdns_enabled"):
         cfg["mdns_enabled"] = True
         need_mdns = True
@@ -1026,11 +1085,13 @@ def api_wizard_finish():
             save_roster(clean)
 
     save_config(cfg)
+    cert_updated = False
     if need_mdns:
         try:
-            register_mdns(get_config())     # 立即生效，不用重启
+            register_mdns(get_config())     # mDNS 名字立即生效（http://新名字.local 马上能用）
         except Exception as exc:
             print("[向导] 应用主机名失败:", exc)
+        cert_updated = refresh_cert_if_needed()   # 证书补上新名字，https 要重启才用上
 
     st = load_json(STATE_PATH, {"call_count": 0})
     st["wizard_done"] = True
@@ -1042,7 +1103,11 @@ def api_wizard_finish():
     host2 = normalize_hostname(cfg2.get("mdns_hostname", ""))
     return jsonify({"ok": True, "hostname": host2, "port": port,
                     "http_url": "http://%s.local:%d" % (host2, port),
-                    "secure_port": cfg2.get("secure_port", 0)})
+                    "secure_port": cfg2.get("secure_port", 0),
+                    "host_changed": bool(host_changed),
+                    "cert_updated": bool(cert_updated),
+                    # 名字改了：手机上的 http 立刻可用，https（监控/文件/更新）要重启一次
+                    "restart_needed": bool(host_changed)})
 
 
 # ---------------------------------------------------------------------------
@@ -1094,6 +1159,7 @@ def api_settings():
                         "interfaces": get_network_interfaces()})
     data = request.get_json(silent=True) or {}
     cfg = get_config()
+    old_host = normalize_hostname(cfg.get("mdns_hostname", ""))
     changed = False
     if "port" in data:
         try:
@@ -1146,10 +1212,17 @@ def api_settings():
     if "secure_port_force" in data:
         cfg["secure_port_force"] = bool(data["secure_port_force"])
     save_config(cfg)
+    host_changed = normalize_hostname(cfg.get("mdns_hostname", "")) != old_host
     if changed:
-        register_mdns(cfg)  # 主机名 / 开关变化立即重新注册
-    return jsonify({"ok": True, "config": cfg,
-                    "note": "端口修改后需重启软件生效"})
+        register_mdns(cfg)  # 主机名 / 开关变化立即重新注册（http 立即生效）
+    if host_changed:
+        refresh_cert_if_needed()   # 证书补上新名字，https 需重启才用得上
+    notes = ["端口修改后需重启软件生效"]
+    if host_changed:
+        notes.insert(0, "主机名已修改：手机上的 http://新名字.local 立刻可用，"
+                        "https（监控 / 文件 / 更新）需要重启软件一次才会换用新名字的证书")
+    return jsonify({"ok": True, "config": cfg, "host_changed": host_changed,
+                    "note": "；".join(notes)})
 
 
 def _restart_app(version=None):
@@ -1717,6 +1790,12 @@ def run_startup_checks(cfg, hostname, port, secure_port, progress=None):
 
     step("数据目录")
     try:
+        # data 目录可能被误删（比如卸载后又从快捷方式启动）：先尝试自愈创建
+        for d in (DATA_DIR, SOUNDS_DIR, UPLOAD_DIR):
+            try:
+                os.makedirs(d, exist_ok=True)
+            except Exception:
+                pass
         probe = os.path.join(DATA_DIR, ".wtest")
         with open(probe, "w", encoding="utf-8") as f:
             f.write("1")
@@ -1726,7 +1805,9 @@ def run_startup_checks(cfg, hostname, port, secure_port, progress=None):
     except Exception as exc:
         checks.append({"level": "error", "name": "数据目录",
                        "detail": "数据目录不可写: %s" % exc,
-                       "solution": "确认 data 目录存在、未被占用，且磁盘有写入权限。"})
+                       "solution": "确认 %s 存在、未被占用；若程序装在 C:\\Program Files 下，"
+                                   "请用管理员身份运行一次（安装程序已自动授权），"
+                                   "或把整个程序目录搬到 D 盘等可写位置。" % DATA_DIR})
 
     step("名条数据")
     try:

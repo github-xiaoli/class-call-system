@@ -175,6 +175,7 @@ function syncHost() {
   const ok = /^[a-z0-9]([a-z0-9-]{0,22})$/.test(v);
   $("host-preview").textContent = ok ? ("http://" + v + ".local:" + (window.__port || 8000)) : "（名称无效）";
   state.host = ok ? v : "";
+  state.hostChanged = !!state.host && !!window.__defHost && state.host !== window.__defHost;
   refreshGate();
 }
 
@@ -216,9 +217,13 @@ function drawQR() {
     : url;
   const hint = $("qr-hint");
   if (hint) {
-    hint.textContent = window.__secure
-      ? "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用 https（http 下浏览器不给加密能力）。"
-      : "当前没有启用 HTTPS 安全端口，手机只能叫号、不能激活；请先到「设置」里勾选「启用 HTTPS 安全端口」。";
+    if (window.__secure) {
+      hint.textContent = state.hostChanged
+        ? "刚改过设备名：手机第一次打开会提示「证书不安全」，点「高级 → 继续访问」即可；点完成页的「🔄 现在重启」后，新名字的证书才会自动生效。"
+        : "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用 https（http 下浏览器不给加密能力）。";
+    } else {
+      hint.textContent = "当前没有启用 HTTPS 安全端口，手机只能叫号、不能激活；请先到「设置」里勾选「启用 HTTPS 安全端口」。";
+    }
   }
   const cv = $("qr");
   if (typeof qrcode !== "function") return;
@@ -283,6 +288,10 @@ function buildSummary() {
       : "未生成，可稍后在「🔐 密码管理」里创建") + "</b>",
     "备用配对码：<b>" + (state.pairing || "-") + "</b>",
   ];
+  if (state.hostChanged) {
+    items.push("设备名：<b>" + host + ".local</b> —— 手机上 http 立刻可用；"
+      + "https（监控 / 文件 / 更新）要点下面的「🔄 现在重启」才会换用新名字的证书");
+  }
   $("summary").innerHTML = items.map((t) => "<li>" + t + "</li>").join("");
 }
 
@@ -302,12 +311,37 @@ async function finish() {
         roster: state.roster,
       }),
     });
+    // 改过设备名：mDNS 名字立刻生效，但 https 证书要重启才换上
+    if (d && d.restart_needed) {
+      btn.disabled = false;
+      btn.textContent = "✅ 先这样，进入使用";
+      const tip = $("restart-tip");
+      if (tip) tip.classList.remove("hidden");
+      const rb = $("btn-restart");
+      if (rb) rb.onclick = doRestart;
+      toast("设备名已保存：http 立刻可用，https 需要重启一次");
+      return;
+    }
     btn.textContent = "✅ 正在进入…";
     setTimeout(() => { location.href = "/"; }, 500);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "🚀 立即使用";
     toast("保存失败：" + e.message);
+  }
+}
+
+async function doRestart() {
+  if (!confirm("现在重启「班级叫号器」吗？\n\n网页会断开几秒，重启后刷新一下就好。")) return;
+  const rb = $("btn-restart");
+  if (rb) { rb.disabled = true; rb.textContent = "正在重启…"; }
+  try {
+    await api("/api/restart", { method: "POST", body: "{}" });
+    toast("正在重启，5 秒后自动刷新…");
+    setTimeout(() => { location.href = "/"; }, 6000);
+  } catch (e) {
+    if (rb) { rb.disabled = false; rb.textContent = "🔄 现在重启"; }
+    toast("重启失败：" + e.message + "（可以手动关掉软件再打开）");
   }
 }
 
