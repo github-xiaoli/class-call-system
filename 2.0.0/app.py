@@ -1014,6 +1014,48 @@ def api_wizard_state():
     })
 
 
+@app.route("/api/wizard/hostname", methods=["POST"])
+def api_wizard_hostname():
+    """向导第 3 步：设备名一填就保存并重新注册 mDNS（不用等到最后一步）。"""
+    from auth import is_local
+    if not is_local():
+        return jsonify({"ok": False, "error": "只能在本机修改设备名"}), 403
+    data = request.get_json(silent=True) or {}
+    raw = str(data.get("mdns_hostname", "") or "").strip().lower()
+    # 只允许字母、数字、连字符，且不能以连字符开头
+    raw = "".join(ch for ch in raw if ch in "abcdefghijklmnopqrstuvwxyz0123456789-")
+    raw = raw.strip("-")
+    if not raw:
+        return jsonify({"ok": False, "error": "设备名不能为空"}), 400
+    if len(raw) > 24:
+        raw = raw[:24]
+
+    cfg = get_config()
+    old_host = normalize_hostname(cfg.get("mdns_hostname", ""))
+    changed = raw != old_host
+    if changed:
+        cfg["mdns_hostname"] = raw
+        cfg["mdns_enabled"] = True
+        save_config(cfg)
+        try:
+            register_mdns(get_config())     # mDNS 立刻换成新名字
+        except Exception as exc:
+            print("[向导] 应用主机名失败:", exc)
+        refresh_cert_if_needed()            # 证书按新名字补签（https 要重启才用上）
+        # 记下"改过名字"，供 /api/wizard/finish 判断要不要提示重启
+        # （放在 config 里：state.json 会被后台线程读写，不可靠）
+        try:
+            cfg2 = get_config()
+            cfg2["wizard_renamed_host"] = True
+            save_config(cfg2)
+        except Exception as exc:
+            print("[向导] 记录改名状态失败:", exc)
+    port = _running_port or cfg.get("port", 8000)
+    return jsonify({"ok": True, "hostname": raw, "changed": changed,
+                    "http_url": "http://%s.local:%d" % (raw, port),
+                    "restart_needed": changed})
+
+
 @app.route("/api/wizard/license")
 def api_wizard_license():
     """给向导返回两份文本：中文全文译文 + GNU 英文原文（两个独立文件）。"""
@@ -1043,13 +1085,19 @@ def api_wizard_finish():
     data = request.get_json(silent=True) or {}
     cfg = get_config()
     need_mdns = False
-    host_changed = False
+    # 第 3 步可能已经保存过名字了，所以看"向导过程中是否改过名字"的标记，
+    # 而不是拿当前 config 比（那会永远相等）
+    if cfg.get("wizard_renamed_host"):
+        host_changed = True
+    else:
+        orig_host = normalize_hostname(cfg.get("mdns_hostname", ""))
+        host = normalize_hostname(str(data.get("mdns_hostname", "") or ""))
+        host_changed = bool(host and host != orig_host)
 
     host = normalize_hostname(str(data.get("mdns_hostname", "") or ""))
     if host and host != normalize_hostname(cfg.get("mdns_hostname", "")):
         cfg["mdns_hostname"] = host
         need_mdns = True
-        host_changed = True
     if data.get("mdns_enabled") and not cfg.get("mdns_enabled"):
         cfg["mdns_enabled"] = True
         need_mdns = True
@@ -1097,6 +1145,12 @@ def api_wizard_finish():
     st["wizard_done"] = True
     st["wizard_done_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     save_json(STATE_PATH, st)
+    try:
+        cfg3 = get_config()
+        cfg3.pop("wizard_renamed_host", None)
+        save_config(cfg3)
+    except Exception:
+        pass
 
     cfg2 = get_config()
     port = _running_port or cfg2.get("port", 8000)

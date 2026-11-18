@@ -17,6 +17,9 @@ const state = {
   lic: { zh: { bottom: false, t0: 0 }, en: { bottom: false, t0: 0 } },
   lang: "zh",
   host: "",
+  hostChanged: false,   // 输入框里的名字与初始值不同
+  hostRenamed: false,   // 本次向导里真的改过名字（保存过）
+  restartNeeded: false, // 改过名字 → https 需重启一次
   roster: [],
   pairing: null,
   licTimer: null,
@@ -179,6 +182,29 @@ function syncHost() {
   refreshGate();
 }
 
+/* 离开设备名那一步时，立刻把名字存下来并重新注册 mDNS（不等最后一步） */
+async function saveHostnameNow() {
+  if (!state.host) return false;
+  try {
+    const d = await api("/api/wizard/hostname", {
+      method: "POST",
+      body: JSON.stringify({ mdns_hostname: state.host }),
+    });
+    if (d && d.changed) {
+      // 本次向导里确实改过名字：记住这个事实（名字保存后两者就相等了，不能靠比较判断）
+      state.hostRenamed = true;
+      state.hostChanged = true;
+      state.restartNeeded = true;
+      window.__defHost = d.hostname || window.__defHost;
+      toast("设备名已保存，mDNS 已切换为 " + d.hostname + ".local");
+    }
+    return true;
+  } catch (e) {
+    toast("设备名保存失败：" + e.message);
+    return false;
+  }
+}
+
 /* ---------- 名条 ---------- */
 function parseRoster(text) {
   const out = [];
@@ -218,7 +244,7 @@ function drawQR() {
   const hint = $("qr-hint");
   if (hint) {
     if (window.__secure) {
-      hint.textContent = state.hostChanged
+      hint.textContent = (state.hostRenamed || state.hostChanged)
         ? "刚改过设备名：手机第一次打开会提示「证书不安全」，点「高级 → 继续访问」即可；点完成页的「🔄 现在重启」后，新名字的证书才会自动生效。"
         : "手机上首次打开会提示「证书不安全」，点「高级 → 继续访问」即可；激活必须用 https（http 下浏览器不给加密能力）。";
     } else {
@@ -288,7 +314,7 @@ function buildSummary() {
       : "未生成，可稍后在「🔐 密码管理」里创建") + "</b>",
     "备用配对码：<b>" + (state.pairing || "-") + "</b>",
   ];
-  if (state.hostChanged) {
+  if (state.hostRenamed || state.hostChanged) {
     items.push("设备名：<b>" + host + ".local</b> —— 手机上 http 立刻可用；"
       + "https（监控 / 文件 / 更新）要点下面的「🔄 现在重启」才会换用新名字的证书");
   }
@@ -421,7 +447,20 @@ function loopFx() {
 }
 
 /* ---------- 事件 ---------- */
-$("btn-next").addEventListener("click", () => { if (canNext()) go(state.step + 1); });
+$("btn-next").addEventListener("click", async () => {
+  if (!canNext()) return;
+  // 第 3 步（设备名）：先落库并重新注册 mDNS，再进入下一步
+  if (state.step === 2) {
+    const btn = $("btn-next");
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = "保存中…";
+    await saveHostnameNow();
+    btn.textContent = old;
+    btn.disabled = false;
+  }
+  go(state.step + 1);
+});
 $("btn-prev").addEventListener("click", () => go(state.step - 1));
 $("lic-box").addEventListener("scroll", onLicScroll);
 document.querySelectorAll(".lic-tabs .tab").forEach((b) =>
