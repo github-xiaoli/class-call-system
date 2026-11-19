@@ -336,7 +336,7 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.29-beta/release-info.json"
   },
   "dev": {
-    "version": "2.0.21",
+    "version": "2.0.29",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -497,10 +497,10 @@
       ]
     ],
     "channel": "dev",
-    "notes": "- 【正式版】2.0.21\n- 修复：设置向导第 3 步填的设备名以前要到最后一步才保存，mDNS 根本没注册这个新名字，手机扫第 6 步的二维码会解析不到 —— 现在点「下一步」就立刻保存并切换 mDNS，二维码里的地址马上可用\n- 修复：改过设备名后，完成页会提示「https 需要重启一次才生效」并提供「🔄 现在重启」按钮\n- 修复：自签证书以前只写电脑名，改了主机名后手机访问 https 会一直提示「证书不安全」；现在证书会自动按新名字重签（重启后生效）\n- 更新：「设置」里改主机名后会提示「http 立刻可用、https 需重启一次」\n- 沿用 2.0.20 的其余功能（设置向导 7 步、NSIS 向导式安装包、OTA 智能环境更新等）",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/classcaller-2.0.21.zip",
-    "zip_asset": "classcaller-2.0.21.zip",
-    "tag": "v2.0.21",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/release-info.json"
+    "notes": "- 【内测版】2.0.29\n- 远控触摸：改用 Windows 多点触摸 API（InitializeTouchInjection + InjectTouchInput）\n  · 修复把 ptHimetricLocation 填错导致注入一律返回 87（\"完全点不动\"的根因）\n  · 触点状态机：每连接独立、down 前补 up、87 自动恢复、断线强制抬起、失败自动降级鼠标\n  · pointerId 自动避让（1~10 里挑空闲号，避开系统已占用）\n  · 新增「批量帧」下发：部分机器只接受一次调用下发全部触点（顺序发第二个会 87），现已自动切换\n- 远控手势：双指捏合 = Ctrl+滚轮（缩放）、双指上下滑 = 滚轮（滚动），任何程序都生效\n- 设置新增「手机触控方式」（自动/只用触摸/只用鼠标）与「双指手势」（缩放滚动/真实触摸）\n- 新增触摸自检接口 /api/remote/touch_selftest（逐 id 探测 + 顺序/批量对比）\n- 远控画面：客户端丢帧保护 + 服务端自适应降帧降质，修复\"每隔几秒卡一下\"\n- 监控画质：流畅 480p / 标准 720p / 高清 1080p（默认 720p，JPEG 质量可调）\n- 麦克风：按设备真实能力枚举采样率×声道（修复 4 声道麦克风阵列打不开）\n- 对讲：hello 帧协商采样率、下行兼容 Blob、播放排程钳制（修复几十秒延迟）、上行 40ms 分片\n- 扫码配对：向导之外也能用，支持自定义名称/备注；新增手机 /pair 页面可手动输配对码（向导期间同样可用）\n- 设置向导：记住步骤（刷新回到原步骤）、每步都保存配置、未完成时每次启动都弹向导；新增第 7 步「叫号声音」\n- 主页新增 ⛶ 全屏模式：小键盘/备注/叫号/消息一屏显示，无需滚动\n- 修复：设置里的端口框以前没被读取（改不动）；新增端口可用性校验 + 启动时端口被占自动换端口\n- 修复：密码页二维码曾指向 127.0.0.1（读错字段名），现指向 https://设备名.local:安全端口/pair\n- 修复：自签证书有效期 3650 天 → 365 天并补 serverAuth 等扩展（iPhone 打不开 9443 的原因）\n- 修复：mDNS 按网卡分别注册（不再广播虚拟网卡地址），重复注册改为幂等",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.29-beta/classcaller-2.0.29.zip",
+    "zip_asset": "classcaller-2.0.29.zip",
+    "tag": "v2.0.29-beta",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.29-beta/release-info.json"
   }
 }
