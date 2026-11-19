@@ -42,7 +42,8 @@ from auth import auth_bp, check_access, ensure_auth_secret, is_local
 from fsapi import fs_bp
 from monitor import (monitor_bp, monitor_shutdown, set_config_getter,
                      ws_monitor_audio, ws_monitor_camera, ws_monitor_intercom)
-from remote import remote_bp, remote_shutdown, set_desktop, ws_remote
+from remote import (remote_bp, remote_shutdown, set_desktop, ws_remote,
+                    set_config_getter as remote_set_config_getter)
 import update as update_mod
 
 ROOT_DIR = os.path.dirname(BASE_DIR)   # 版本目录的上一级（程序根目录，含 data/ 与 version.json）
@@ -74,6 +75,10 @@ DEFAULT_CONFIG = {
     "autostart": False,             # 开机自启
     "require_admin": True,          # 启动时自动申请管理员（自启用计划任务，登录不再弹 UAC）
     "secure_enabled": True,         # 是否启用 HTTPS 安全端口（手机端激活/敏感功能用）
+    "monitor_quality": "standard",   # 监控画质：smooth(480p) / standard(720p) / hd(1080p)
+    "remote_touch_mode": "auto",      # 手机触控：auto(触摸优先,失败降级鼠标) / touch / mouse
+    "remote_gesture_mode": "zoom_scroll",  # 双指手势：zoom_scroll(缩放+滚动) / touch(真实触摸)
+    "monitor_jpeg_quality": 0,       # 0=用预设；30~95 可直接指定 JPEG 质量
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
     "secure_port_force": False,     # 目标端口被系统保留时，是否临时停止 WinNAT 抢占该端口（需管理员）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
@@ -87,10 +92,22 @@ except Exception:
     HAS_WINSOUND = False
 
 try:
-    from zeroconf import ServiceInfo, Zeroconf
+    from zeroconf import ServiceInfo, Zeroconf, NonUniqueNameException
     HAS_ZEROCONF = True
 except Exception:
     HAS_ZEROCONF = False
+
+# 控制台/日志编码统一成 UTF-8（Windows 默认 GBK 时，print 中文或 emoji 会抛
+# UnicodeEncodeError，把后台线程带崩）
+try:
+    import sys as _sys
+    for _stream in (_sys.stdout, _sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+except Exception:
+    pass
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB，支持文件传输上传
@@ -125,7 +142,7 @@ CALLS_LOCK = threading.Lock()
 MDNS_LOCK = threading.Lock()
 
 _mdns_zc = None      # 当前 Zeroconf 实例
-_mdns_info = None    # 当前 ServiceInfo
+_mdns_infos = []     # 当前已注册的 ServiceInfo 列表（每块网卡一个）
 _running_port = None  # 实际监听端口，启动后写入
 _running_secure_port = None  # 实际 HTTPS 监听端口，启动后写入
 _desktop = None       # DesktopUI 实例，main() 中赋值
@@ -623,8 +640,11 @@ def get_network_interfaces():
                 continue
             by_name.setdefault(name, []).append(ip)
         for name in sorted(by_name.keys()):
-            interfaces.append({"id": name, "name": name,
-                               "ips": sorted(by_name[name])})
+            virtual = _looks_virtual_iface(name)
+            interfaces.append({"id": name,
+                               "name": name + ("（虚拟网卡）" if virtual else ""),
+                               "ips": sorted(by_name[name]),
+                               "virtual": virtual})
     except Exception as exc:
         print("[网卡] 枚举网卡失败:", exc)
     if not interfaces:
@@ -635,17 +655,79 @@ def get_network_interfaces():
 
 
 def get_mdns_ips(cfg):
-    """按 mdns_interface 配置返回 mDNS 应广播的 IP 列表。"""
-    all_ips = get_lan_ips()
-    iface = str(cfg.get("mdns_interface", "") or "").strip()
-    if not iface or iface == "auto":
-        return all_ips
-    for it in get_network_interfaces():
-        if it.get("id") == iface or it.get("name") == iface:
-            ips = [ip for ip in it.get("ips", []) if ip not in ("127.0.0.1",)]
-            if ips:
-                return ips
-    return all_ips
+    """按 mdns_interface 配置返回 mDNS 应广播的 IP 列表（所有目标网卡合并、去重）。"""
+    out = []
+    for g in get_mdns_targets(cfg):
+        for ip in g.get("ips", []):
+            if ip not in out:
+                out.append(ip)
+    if out:
+        return out
+    return get_lan_ips()
+
+
+# 判断网卡是不是"虚拟/隧道"类型：这些网卡的 IP 广播出去手机也连不上，
+# 自动模式下把它们排到后面、优先只广播真实网卡
+_VIRTUAL_IFACE_HINTS = ("vethernet", "hyper-v", "vmware", "virtualbox", "virtual",
+                        "loopback", "npcap", "docker", "wsl", "bluetooth", "teredo",
+                        "6to4", "isatap", "tap", "tun", "vpn", "zerotier", "tailscale",
+                        "sangfor", "easyconnect", "clash", "vmnet")
+
+
+def _looks_virtual_iface(name):
+    low = (name or "").strip().lower()
+    if not low:
+        return False
+    return any(h in low for h in _VIRTUAL_IFACE_HINTS)
+
+
+def _mdns_ip_ok(ip):
+    """mDNS 广播时该 IP 有没有意义。"""
+    ip = str(ip or "").strip()
+    if not ip:
+        return False
+    if ip.startswith("127.") or ip.startswith("169.254.") or ip == "0.0.0.0":
+        return False
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(p) <= 255 for p in parts)
+    except Exception:
+        return False
+
+
+def get_mdns_targets(cfg):
+    """按网卡分组返回 mDNS 要广播的地址：[{name, ips, virtual}]。
+
+    每块网卡单独注册一个 mDNS 服务实例，各自只带自己那张网卡的 IP，
+    避免"一个应答里塞进 WSL/Hyper-V 虚拟网卡地址"导致手机解析到连不上的地址。
+    """
+    wanted = str(cfg.get("mdns_interface", "") or "").strip()
+    groups = []
+    try:
+        for it in get_network_interfaces():
+            alias = str(it.get("id") or it.get("name") or "").strip()
+            ips = [ip for ip in it.get("ips", []) if _mdns_ip_ok(ip)]
+            if not ips:
+                continue
+            virtual = bool(it.get("virtual")) or _looks_virtual_iface(alias)
+            groups.append({"id": alias, "name": alias, "ips": ips, "virtual": virtual})
+    except Exception as exc:
+        print("[网卡] 分组失败:", exc)
+
+    if wanted and wanted not in ("auto", "自动"):
+        picked = [g for g in groups if g["id"] == wanted or g["name"] == wanted]
+        if picked:
+            return picked
+
+    real = [g for g in groups if not g["virtual"]]
+    if real:
+        return real
+    if groups:
+        return groups
+    ips = [ip for ip in get_lan_ips() if _mdns_ip_ok(ip)]
+    return [{"name": "自动", "ips": ips, "virtual": False}] if ips else []
 
 
 def normalize_hostname(name):
@@ -656,57 +738,119 @@ def normalize_hostname(name):
 
 
 def register_mdns(cfg):
-    """按当前配置注册（或重新注册）mDNS 服务（HTTP + HTTPS）。"""
-    global _mdns_zc, _mdns_info
+    """按当前配置注册（或更新）mDNS 服务。
+
+    每块网卡一个实例，只带该网卡的 IP（HTTP + HTTPS 各一条）。
+    重复调用时：状态没变就直接返回；变了就 update_service / 定向重注册，
+    避免 "注销后立刻注册同名服务" 被 mDNS 自身缓存挡住（NonUniqueNameException）。
+    """
+    global _mdns_zc, _mdns_infos
     if not HAS_ZEROCONF:
         return False
     with MDNS_LOCK:
         try:
-            if _mdns_zc is not None:
-                try:
-                    _mdns_zc.close()
-                except Exception:
-                    pass
-                _mdns_zc = None
-                _mdns_info = None
             if not cfg.get("mdns_enabled"):
+                for info in _mdns_infos:
+                    try:
+                        _mdns_zc.unregister_service(info)
+                    except Exception:
+                        pass
+                _mdns_infos = []
                 return False
+
             hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
             port = int(_running_port or cfg.get("port", 8000))
-            ips = get_mdns_ips(cfg)
-            addresses = [socket.inet_aton(ip) for ip in ips]
-            if not addresses:
-                addresses = [socket.inet_aton("127.0.0.1")]
-            zc = Zeroconf()
-            info = ServiceInfo(
-                "_http._tcp.local.",
-                "班级叫号器._http._tcp.local.",
-                addresses=addresses,
-                port=port,
-                properties={b"path": b"/"},
-                server=("%s.local." % hostname),
-            )
-            zc.register_service(info)
-            _mdns_zc = zc
-            _mdns_info = info
-            print("[mDNS] 已注册 http://%s.local:%d  (IP: %s)" % (hostname, port, ", ".join(ips)))
-            # HTTPS 安全端口（手机端激活/敏感功能）
-            if cfg.get("secure_enabled", True):
-                try:
-                    secure_port = int(_running_secure_port or cfg.get("secure_port", 9443))
-                    info2 = ServiceInfo(
-                        "_https._tcp.local.",
-                        "班级叫号器-安全._https._tcp.local.",
-                        addresses=addresses,
-                        port=secure_port,
-                        properties={b"path": b"/"},
-                        server=("%s.local." % hostname),
-                    )
-                    zc.register_service(info2)
-                    print("[mDNS] 已注册 https://%s.local:%d" % (hostname, secure_port))
-                except Exception as exc:
-                    print("[mDNS] HTTPS 服务注册失败:", exc)
-            return True
+            secure_port = int(_running_secure_port or cfg.get("secure_port", 9443))
+            secure_on = bool(cfg.get("secure_enabled", True))
+            targets = get_mdns_targets(cfg)
+            if not targets:
+                print("[mDNS] 没有可广播的局域网地址，跳过注册")
+                return False
+
+            if _mdns_zc is None:
+                _mdns_zc = Zeroconf()
+            zc = _mdns_zc
+
+            # ---- 计算期望的服务表：name -> (addresses, port)
+            wanted = {}
+            multi = len(targets) > 1
+            for g in targets:
+                addrs = []
+                for ip in g["ips"]:
+                    try:
+                        addrs.append(socket.inet_aton(ip))
+                    except Exception:
+                        pass
+                if not addrs:
+                    continue
+                tag = (" (%s)" % g["name"]) if (multi and g.get("name")) else ""
+                wanted["班级叫号器%s._http._tcp.local." % tag] = ("_http._tcp.local.", addrs, port,
+                                                                  g.get("name") or "-", g["ips"])
+                if secure_on:
+                    wanted["班级叫号器%s-安全._https._tcp.local." % tag] = (
+                        "_https._tcp.local.", addrs, secure_port, g.get("name") or "-", g["ips"])
+            if not wanted:
+                return False
+
+            # ---- 状态完全没变就不动（最常见：向导里连续保存两次）
+            state_key = (hostname, secure_on, secure_port, tuple(
+                sorted((n, p, tuple(a)) for n, (_t, a, p, _g, _i) in wanted.items())))
+            if _mdns_infos and getattr(register_mdns, "_key", None) == state_key:
+                return True
+
+            # ---- 注销不再需要的
+            keep = []
+            for info in list(_mdns_infos):
+                if info.name not in wanted:
+                    try:
+                        zc.unregister_service(info)
+                    except Exception:
+                        pass
+                else:
+                    keep.append(info)
+
+            # ---- 更新/注册
+            new_infos = []
+            for name, (stype, addrs, sport, iface_name, ips) in wanted.items():
+                existing = next((x for x in keep if x.name == name), None)
+                if existing is not None:
+                    # 同名：只更新地址/端口，不重新注册
+                    try:
+                        zc.update_service(ServiceInfo(
+                            stype, name, addresses=addrs, port=sport,
+                            properties={b"path": b"/"}, server=("%s.local." % hostname)))
+                        new_infos.append(existing)
+                        print("[mDNS] 已更新 %s  网卡=%s  IP=%s" % (name, iface_name, ", ".join(ips)))
+                        continue
+                    except Exception as exc:
+                        print("[mDNS] 更新 %s 失败，改为重注册: %r" % (name, exc))
+                info = ServiceInfo(stype, name, addresses=addrs, port=sport,
+                                   properties={b"path": b"/"}, server=("%s.local." % hostname))
+                ok = False
+                for attempt in (1, 2):
+                    try:
+                        zc.register_service(info)
+                        ok = True
+                        break
+                    except Exception as exc:
+                        kind = type(exc).__name__
+                        if attempt == 1 and "NonUniqueName" in kind:
+                            # 自己的旧缓存还没过期：稍等再试一次
+                            try:
+                                zc.unregister_service(info)
+                            except Exception:
+                                pass
+                            time.sleep(0.3)
+                            continue
+                        print("[mDNS] 注册 %s 失败（%s）: %r" % (name, iface_name, exc))
+                        break
+                if ok:
+                    new_infos.append(info)
+                    print("[mDNS] 已注册 %s  网卡=%s  IP=%s" % (name, iface_name, ", ".join(ips)))
+
+            _mdns_infos = new_infos
+            register_mdns._key = state_key
+            return bool(new_infos)
         except Exception as exc:
             print("[mDNS] 注册失败（不影响叫号功能）:", exc)
             return False
@@ -808,6 +952,38 @@ def _cert_covers(cert_path, names):
         return False
 
 
+def _cert_needs_renew(cert_path):
+    """iOS 兼容性体检：有效期过长 / 缺 serverAuth / 缺 SAN 都算不合格。"""
+    try:
+        from cryptography import x509
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        try:
+            span = (cert.not_valid_after_utc - cert.not_valid_before_utc).days
+        except Exception:
+            span = (cert.not_valid_after - cert.not_valid_before).days
+        if span > 825:
+            print("[HTTPS] 现有证书有效期 %d 天，超过 iOS 允许的 825 天，重新签发" % span)
+            return True
+        try:
+            eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+            if x509.oid.ExtendedKeyUsageOID.SERVER_AUTH not in eku:
+                print("[HTTPS] 现有证书缺少 serverAuth 用途，重新签发")
+                return True
+        except x509.ExtensionNotFound:
+            print("[HTTPS] 现有证书缺少 ExtendedKeyUsage，重新签发")
+            return True
+        try:
+            cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        except x509.ExtensionNotFound:
+            print("[HTTPS] 现有证书缺少 SAN，重新签发")
+            return True
+        return False
+    except Exception as exc:
+        print("[HTTPS] 证书检查失败，按需重签:", exc)
+        return True
+
+
 def _write_self_signed_cert(cert_path, key_path, names):
     """按给定名字重签自签名证书。"""
     import datetime as _dt
@@ -815,7 +991,7 @@ def _write_self_signed_cert(cert_path, key_path, names):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     sans = [x509.DNSName(n) for n in names]
@@ -828,14 +1004,24 @@ def _write_self_signed_cert(cert_path, key_path, names):
     cn = names[0] if names else socket.gethostname().lower()
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
     now = _dt.datetime.now(_dt.timezone.utc)
+    # 有效期必须 ≤825 天：iOS/iPadOS 与新版 macOS 会直接拒绝长期证书，
+    # 表现就是 iPhone 上"Safari 打不开、服务器已停止响应"。
     cert = (x509.CertificateBuilder()
             .subject_name(subject)
             .issuer_name(subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - _dt.timedelta(days=1))
-            .not_valid_after(now + _dt.timedelta(days=3650))
+            .not_valid_after(now + _dt.timedelta(days=365))
             .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, content_commitment=False,
+                key_encipherment=True, data_encipherment=False,
+                key_agreement=False, key_cert_sign=False, crl_sign=False,
+                encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+                           critical=False)
             .sign(key, hashes.SHA256()))
     with open(key_path, "wb") as f:
         f.write(key.private_bytes(
@@ -868,6 +1054,14 @@ def ensure_ssl_context():
     cert_path = os.path.join(DATA_DIR, "ssl.crt")
     key_path = os.path.join(DATA_DIR, "ssl.key")
     names = _cert_desired_names()
+    # iOS/iPadOS 会拒绝有效期过长的证书（>825 天），旧版本签的 10 年证书在
+    # iPhone 上表现就是"Safari 打不开 / 服务器已停止响应"，这里体检并重签。
+    if os.path.isfile(cert_path) and _cert_needs_renew(cert_path):
+        for _f in (cert_path, key_path):
+            try:
+                os.remove(_f)
+            except Exception:
+                pass
     if not (os.path.isfile(cert_path) and os.path.isfile(key_path)):
         _write_self_signed_cert(cert_path, key_path, names)
     elif not _cert_covers(cert_path, names):
@@ -919,7 +1113,9 @@ def page_update():
 # ---------------------------------------------------------------------------
 WIZARD_EXEMPT = ("/static/", "/api/wizard", "/wizard", "/favicon.ico",
                  "/api/auth/create", "/api/auth/passwords", "/api/auth/me", "/api/health",
-                 "/activate", "/api/auth/activate_token", "/api/auth/qr_create")
+                 "/activate", "/api/auth/activate_token", "/api/auth/qr_create",
+                 # 向导期间手机也要能配对：配对页 + 手动输配对码；设置页也要能进
+                 "/pair", "/api/auth/activate")
 
 
 def wizard_done():
@@ -982,6 +1178,12 @@ def page_wizard():
     return render_template("wizard.html")
 
 
+@app.route("/pair")
+def page_pair():
+    """手机配对页：扫码打开自动配对，也可以手动输入配对码（向导期间同样可用）。"""
+    return render_template("pair.html")
+
+
 @app.route("/activate")
 def page_activate():
     """手机扫码打开这个页面，自动完成设备激活（不需要手输密码）。"""
@@ -1008,10 +1210,130 @@ def api_wizard_state():
         # 手机端激活/监控必须走 https（浏览器只在安全上下文里给 crypto.subtle）
         "secure_enabled": secure_enabled,
         "secure_port": secure_port,
+        # 向导进度（刷新/重启后回到原来那一步）
+        "step": int(load_json(STATE_PATH, {}).get("wizard_step", 0) or 0),
+        "license_agreed": bool(load_json(STATE_PATH, {}).get("license_agreed")),
+        # 个性化设置（向导里可以恢复）
+        "phrase": cfg.get("phrase", ""),
+        "play_count": int(cfg.get("play_count", 1) or 1),
+        "volume_enabled": bool(cfg.get("volume_enabled", True)),
+        "volume": int(cfg.get("volume", 100) or 0),
+        "prompt_enabled": bool(cfg.get("prompt_enabled", True)),
+        "prompt_sound": cfg.get("prompt_sound", "beep"),
+        "tts_engine": cfg.get("tts_engine", "auto"),
         "http_url": "http://%s:%d" % (host or "127.0.0.1", port),
         "https_url": ("https://%s:%d" % (host or "127.0.0.1", secure_port)
                       if secure_enabled else ""),
     })
+
+
+@app.route("/api/wizard/step", methods=["POST"])
+def api_wizard_step():
+    """向导每点一次上/下一步：保存进度 + 这一步填过的配置（随时可中断、可刷新）。"""
+    from auth import is_local
+    if not is_local():
+        return jsonify({"ok": False, "error": "只能在本机操作"}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        step = int(data.get("step", 0))
+    except Exception:
+        step = 0
+    step = max(0, min(step, 6))
+    fields = data.get("fields") or {}
+    cfg = get_config()
+    changed = False
+    need_mdns = False
+
+    host = str(fields.get("mdns_hostname", "") or "").strip().lower()
+    if host:
+        host = "".join(ch for ch in host if ch in "abcdefghijklmnopqrstuvwxyz0123456789-")
+        host = host.strip("-")
+        if host and host != normalize_hostname(cfg.get("mdns_hostname", "")):
+            cfg["mdns_hostname"] = host
+            cfg["wizard_renamed_host"] = True
+            cfg["mdns_enabled"] = True
+            changed = True
+            need_mdns = True
+
+    if "autostart" in fields:
+        want = bool(fields.get("autostart"))
+        if want != bool(cfg.get("autostart")):
+            cfg["autostart"] = want
+            changed = True
+            try:
+                apply_autostart(want)
+            except Exception as exc:
+                print("[向导] 开机自启设置失败:", exc)
+
+    ch = str(fields.get("update_channel", "") or "")
+    if ch in ("stable", "beta", "dev") and ch != cfg.get("update_channel"):
+        cfg["update_channel"] = ch
+        changed = True
+    pol = str(fields.get("update_policy", "") or "")
+    if pol in ("none", "check", "download", "install") and pol != cfg.get("update_policy"):
+        cfg["update_policy"] = pol
+        changed = True
+
+    # 个性化（向导/设置页共用同一套键）
+    if "phrase" in fields:
+        cfg["phrase"] = str(fields.get("phrase") or "")[:200]
+        changed = True
+    if "play_count" in fields:
+        try:
+            cfg["play_count"] = max(1, min(10, int(fields.get("play_count"))))
+            changed = True
+        except Exception:
+            pass
+    if "volume_enabled" in fields:
+        cfg["volume_enabled"] = bool(fields.get("volume_enabled"))
+        changed = True
+    if "volume" in fields:
+        try:
+            cfg["volume"] = max(0, min(100, int(fields.get("volume"))))
+            changed = True
+        except Exception:
+            pass
+    if "prompt_enabled" in fields:
+        cfg["prompt_enabled"] = bool(fields.get("prompt_enabled"))
+        changed = True
+    if "prompt_sound" in fields:
+        ps = str(fields.get("prompt_sound") or "")
+        if ps in ("none", "beep", "custom"):
+            cfg["prompt_sound"] = ps
+            changed = True
+    if "tts_engine" in fields:
+        te = str(fields.get("tts_engine") or "")
+        if te in ("auto", "edge", "comtypes"):
+            cfg["tts_engine"] = te
+            changed = True
+
+    if changed:
+        save_config(cfg)
+    if need_mdns:
+        try:
+            threading.Thread(target=lambda: register_mdns(get_config()), daemon=True).start()
+        except Exception:
+            pass
+
+    roster = fields.get("roster")
+    if isinstance(roster, list) and roster:
+        try:
+            save_roster(roster)
+        except Exception as exc:
+            print("[向导] 保存名条失败:", exc)
+
+    st = load_json(STATE_PATH, {})
+    st["wizard_step"] = step
+    if fields.get("license_agreed") or data.get("license_agreed"):
+        st["license_agreed"] = True
+    st["wizard_updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_json(STATE_PATH, st)
+    print("[向导] 步骤已保存 step=%d license=%s config_changed=%s"
+          % (step, bool(st.get("license_agreed")), changed))
+
+    return jsonify({"ok": True, "step": step, "config_saved": changed,
+                    "license_agreed": bool(st.get("license_agreed")),
+                    "roster_count": len(get_roster())})
 
 
 @app.route("/api/wizard/hostname", methods=["POST"])
@@ -1203,6 +1525,33 @@ def api_status():
     })
 
 
+@app.route("/api/port_check")
+def api_port_check():
+    """检查端口能否作为 HTTP 端口（设置页保存前调用）。"""
+    try:
+        p = int(request.args.get("port", "0"))
+    except Exception:
+        return jsonify({"ok": False, "reason": "端口必须是数字"})
+    if not (1 <= p <= 65535):
+        return jsonify({"ok": False, "reason": "端口范围应为 1~65535"})
+    try:
+        if _port_excluded(p, _excluded_tcp_ranges()):
+            return jsonify({"ok": False, "excluded": True,
+                            "reason": "该端口落在 Windows 保留端口段里（Hyper-V/WSL 等占用）"})
+    except Exception:
+        pass
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("0.0.0.0", p))
+        finally:
+            sock.close()
+    except OSError as exc:
+        return jsonify({"ok": False, "busy": True,
+                        "reason": "端口被占用或不可用（%s）" % (exc.strerror or exc)})
+    return jsonify({"ok": True})
+
+
 @app.route("/api/settings", methods=["GET", "POST"])
 def api_settings():
     err = check_access()
@@ -1229,6 +1578,18 @@ def api_settings():
     if "mdns_interface" in data:
         cfg["mdns_interface"] = str(data["mdns_interface"]).strip() or "auto"
         changed = True
+    if "remote_gesture_mode" in data:
+        gm = str(data["remote_gesture_mode"]).strip().lower()
+        if gm in ("zoom_scroll", "touch"):
+            cfg["remote_gesture_mode"] = gm
+    if "remote_touch_mode" in data:
+        tm = str(data["remote_touch_mode"]).strip().lower()
+        if tm in ("auto", "touch", "mouse"):
+            cfg["remote_touch_mode"] = tm
+    if "monitor_quality" in data:
+        qv = str(data["monitor_quality"]).strip().lower()
+        if qv in ("smooth", "standard", "hd"):
+            cfg["monitor_quality"] = qv
     if "phrase" in data:
         phrase = str(data["phrase"]).strip()
         if phrase:
@@ -1907,6 +2268,10 @@ def _main():
     ensure_admin()
 
     set_config_getter(get_config)
+    try:
+        remote_set_config_getter(get_config)
+    except Exception:
+        pass
     update_mod.set_config_getter(get_config)
     update_mod.set_restart_callback(_restart_app)
 
@@ -1956,8 +2321,36 @@ def _main():
     from werkzeug.serving import make_server
 
     # HTTP 服务（叫号主功能）
+    # 端口被占用 / 落在系统保留段时，自动往后找可用端口再启动
+    # （原来会直接弹错误退出，用户改成这类端口后软件就起不来，看起来像"端口改不了"）
+    server = None
+    bind_err = None
     try:
-        server = make_server("0.0.0.0", port, app, threaded=True)
+        excl = _excluded_tcp_ranges()
+    except Exception:
+        excl = []
+    cands = [port]
+    cands += [p for p in range(port + 1, port + 11)]
+    for p in (8000, 8080, 8888, 9000, 10080):
+        if p not in cands:
+            cands.append(p)
+    for p in cands:
+        if not (1 <= p <= 65535) or p in excl:
+            continue
+        try:
+            server = make_server("0.0.0.0", p, app, threaded=True)
+            if p != port:
+                print("[启动] 端口 %d 不可用，已改用 %d" % (port, p))
+                status("端口 %d 被占用，已改用 %d" % (port, p))
+            port = p
+            _running_port = p
+            break
+        except BaseException as exc:
+            bind_err = exc
+            server = None
+    try:
+        if server is None:
+            raise RuntimeError(bind_err or "所有候选端口都不可用")
     except BaseException as exc:  # werkzeug 绑定失败会 sys.exit(1)，必须接住
         cause = "HTTP 端口 %d 启动失败：%s" % (port, exc)
         print("\n[错误] " + cause)
@@ -1993,7 +2386,8 @@ def _main():
     def _auto_open_browser():
         try:
             st = load_json(STATE_PATH, {})
-            if st.get("wizard_done") or st.get("browser_auto_opened"):
+            # 首次设置没完成：每次启动都把设置向导弹出来（不再只弹一次）
+            if st.get("wizard_done"):
                 return
             time.sleep(2.5)
             import webbrowser

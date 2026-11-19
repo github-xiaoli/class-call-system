@@ -400,15 +400,23 @@ def api_auth_qr_create():
     token = secrets.token_urlsafe(24)
     now = time.time()
     auth = load_auth()
-    # 顺手清掉过期未用的旧票据，避免越积越多
-    auth["passwords"] = [p for p in auth.get("passwords", [])
-                         if not (p.get("qr_token") and not p.get("used")
-                                 and float(p.get("qr_until", 0) or 0) < now)]
+    # 只保留"最新一张"扫码票：旧的一次性票连同它的密码记录一起清掉，
+    # 避免用户连点「重新生成」时堆出一大堆密码（也避免旧二维码还能用）
+    keep, dropped = [], 0
+    for p in auth.get("passwords", []):
+        old = bool(p.get("qr_token")) and not p.get("used")
+        if old:
+            dropped += 1
+            continue
+        keep.append(p)
+    auth["passwords"] = keep
+    if dropped:
+        print("[配对] 作废旧扫码票 %d 张，只保留最新一张" % dropped)
     auth.setdefault("passwords", []).append({
         "id": uuid.uuid4().hex,
         "hash": _sha256_text(code),
-        "name": str(data.get("name", "") or "手机扫码配对"),
-        "note": "扫码自动激活",
+        "name": (str(data.get("name", "") or "").strip()[:40] or "手机扫码配对"),
+        "note": (str(data.get("note", "") or "").strip()[:100] or "扫码自动激活"),
         "created_at": now,
         "activate_until": now + minutes * 60,
         "valid_days": valid_days,
@@ -420,7 +428,9 @@ def api_auth_qr_create():
         "qr_code": code,
     })
     save_auth(auth)
+    rec = auth["passwords"][-1]
     return jsonify({"ok": True, "token": token, "code": code,
+                    "name": rec.get("name", ""), "note": rec.get("note", ""),
                     "expires_in": minutes * 60, "valid_days": valid_days})
 
 

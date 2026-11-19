@@ -15,6 +15,8 @@ function getCookie(name) {
 
 let ws = null;
 let started = false;
+let drawing = false;
+let pendingFrame = null;
 let screenW = 1920;
 let screenH = 1080;
 let lastTouchSent = 0;
@@ -68,6 +70,16 @@ function sendInput(payload) {
 }
 
 function drawFrame(buf) {
+  drawing = true;
+  const done = () => {
+    drawing = false;
+    // 有排队的帧就接着画最新的一张（只保留最新，避免越积越卡）
+    if (pendingFrame) {
+      const next = pendingFrame;
+      pendingFrame = null;
+      drawFrame(next);
+    }
+  };
   const blob = new Blob([buf], { type: "image/jpeg" });
   if (window.createImageBitmap) {
     createImageBitmap(blob).then((bmp) => {
@@ -76,7 +88,8 @@ function drawFrame(buf) {
       ctx.drawImage(bmp, 0, 0);
       bmp.close();
       $("screen-hint").classList.add("hidden");
-    }).catch(() => {});
+      done();
+    }).catch(done);
   } else {
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -86,7 +99,9 @@ function drawFrame(buf) {
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       $("screen-hint").classList.add("hidden");
+      done();
     };
+    img.onerror = done;
     img.src = url;
   }
 }
@@ -109,6 +124,8 @@ async function startRemote() {
     };
     ws.onmessage = (e) => {
       if (typeof e.data === "string") return;
+      // 解码跟不上就直接丢帧（否则会积压，表现为每隔几秒卡一下）
+      if (drawing) { pendingFrame = e.data; return; }
       drawFrame(e.data);
     };
     ws.onerror = () => { $("remote-state").textContent = "连接失败"; };

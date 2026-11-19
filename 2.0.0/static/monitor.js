@@ -10,6 +10,8 @@ function toast(msg) {
 }
 
 let audioCtx = null;
+let playRate = 48000;      // 服务端上报的真实采样率
+let pcmLowCount = 0;       // 连续低电平帧计数（用于提示没声音）
 let nextTime = 0;
 let camWs = null;
 let micWs = null;
@@ -85,25 +87,39 @@ async function loadDevices() {
 }
 
 function playPcm16(bytes) {
-  if (!bytes || !bytes.length) return;
+  if (!bytes || !bytes.length || !audioCtx) return;
   const int16 = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   if (!int16.length) return;
+
+  // 电平打点：连续约 2 秒都接近静音，就提示一次（帮助定位"没声音"是谁的问题）
+  let sum = 0;
+  for (let i = 0; i < int16.length; i += 16) sum += Math.abs(int16[i]);
+  const rms = sum / Math.max(1, Math.ceil(int16.length / 16));
+  if (rms < 30) {
+    pcmLowCount++;
+    if (pcmLowCount === 60) toast("没收到麦克风声音：请检查电脑上的麦克风设备和系统权限");
+  } else {
+    pcmLowCount = 0;
+  }
+
   pcmChunks.push(int16);
   pcmTotal += int16.length;
-  // 攒到约 85ms 再一起播放，减少小块调度导致的断续
   if (pcmTotal < 4096) return;
   const all = new Int16Array(pcmTotal);
   let off = 0;
   for (const c of pcmChunks) { all.set(c, off); off += c.length; }
   pcmChunks = [];
   pcmTotal = 0;
-  // 积压超过 0.5 秒就丢弃旧音频，保持低延迟
   if (audioCtx && nextTime < audioCtx.currentTime - 0.5) {
     nextTime = audioCtx.currentTime + 0.03;
   }
+  // 只累积不追：落后太多就直接跳到"现在"，避免越积越多（听感上就是几十秒延迟）
+  if (audioCtx && nextTime > audioCtx.currentTime + 0.35) {
+    nextTime = audioCtx.currentTime + 0.05;
+  }
   const f32 = new Float32Array(all.length);
-  for (let i = 0; i < all.length; i++) f32[i] = all[i] / 32768;
-  const buf = audioCtx.createBuffer(1, f32.length, 48000);
+  for (let k = 0; k < all.length; k++) f32[k] = all[k] / 32768;
+  const buf = audioCtx.createBuffer(1, f32.length, playRate);
   buf.copyToChannel(f32, 0);
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
@@ -173,7 +189,31 @@ async function startMonitor() {
     const mUrl = await Auth.urlWithToken("/ws/monitor/audio?mic=" + encodeURIComponent(mic));
     micWs = openWs(mUrl);
     micWs.binaryType = "arraybuffer";
-    micWs.onmessage = (e) => playPcm16(new Uint8Array(e.data));
+    micWs.onmessage = (e) => {
+      if (typeof e.data === "string") {
+        // 服务端握手：告诉我们真实采样率
+        try {
+          const h = JSON.parse(e.data);
+          if (h && h.rate) {
+            playRate = h.rate | 0;
+            if (audioCtx && audioCtx.sampleRate && playRate !== audioCtx.sampleRate) {
+              console.log("[监听] 服务端采样率", playRate, "音频上下文", audioCtx.sampleRate);
+            }
+          }
+        } catch (err) { /* 忽略非 JSON */ }
+        return;
+      }
+      try {
+        if (e.data instanceof Blob) {
+          e.data.arrayBuffer().then((buf) => playPcm16(new Uint8Array(buf)))
+            .catch((err) => console.warn("音频 Blob 解析失败", err));
+        } else {
+          playPcm16(new Uint8Array(e.data));
+        }
+      } catch (err) {
+        console.warn("音频播放异常", err);
+      }
+    };
     micWs.onerror = () => { toast("麦克风连接失败"); };
 
     monitoring = true;
@@ -224,6 +264,14 @@ async function startTalk() {
   talkWs.onopen = () => {
     talkCtx = new (window.AudioContext || window.webkitAudioContext)();
     talkCtx.resume().catch(() => {});
+    // 第一条文本帧告诉服务端本机采样率（服务端据此决定播放采样率）
+    try {
+      talkWs.send(JSON.stringify({
+        type: "hello",
+        rate: talkCtx.sampleRate || 48000,
+        format: "s16le",
+      }));
+    } catch (e) { /* 忽略 */ }
     const srcNode = talkCtx.createMediaStreamSource(talkStream);
     talkProc = talkCtx.createScriptProcessor(4096, 1, 1);
     talkChunks = [];
@@ -237,7 +285,7 @@ async function startTalk() {
       talkChunks.push(i16);
       let total = 0;
       for (const c of talkChunks) total += c.length;
-      if (total >= 4800) flushTalk();
+      if (total >= 1920) flushTalk();   // 40ms 一片，降低上行延迟
     };
     srcNode.connect(talkProc);
     const gain = talkCtx.createGain();

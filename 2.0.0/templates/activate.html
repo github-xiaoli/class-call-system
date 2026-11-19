@@ -5,13 +5,16 @@
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>激活这台设备 · 班级叫号器</title>
-<link rel="stylesheet" href="/static/style.css?v=20261119a">
+<link rel="stylesheet" href="/static/style.css?v=20261119f">
 <style>
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  html, body { min-height: 100%; }
+  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+         padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch;
          background: linear-gradient(160deg, #e0f2fe 0%, #a7f3d0 60%, #bbf7d0 100%);
          font-family: "Microsoft YaHei", system-ui, sans-serif; color: #0f172a; }
+  /* margin:auto：内容比屏幕高时自动塌成 0，配合 body 滚动，按钮不会被切掉 */
   .card { background: #fff; border-radius: 22px; box-shadow: 0 22px 60px rgba(15,23,42,.2);
-          padding: 30px 26px 26px; width: min(420px, 92vw); text-align: center; }
+          padding: 30px 26px 26px; width: min(420px, 92vw); margin: auto; text-align: center; }
   .spin { width: 52px; height: 52px; margin: 4px auto 16px; border: 5px solid #e2e8f0;
           border-top-color: #2563eb; border-radius: 50%; animation: sp 1s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
@@ -23,6 +26,15 @@
          text-decoration: none; padding: 11px 24px; border-radius: 12px; font-size: 15px; }
   .tip { margin-top: 14px; font-size: 12.5px; color: #94a3b8; }
   .hidden { display: none; }
+  /* 矮屏（横屏手机 / 系统字体放大）：压缩留白，保证按钮始终可见 */
+  @media (max-height: 480px) {
+    .card { padding: 20px 18px 18px; border-radius: 16px; }
+    .spin { width: 38px; height: 38px; border-width: 4px; margin-bottom: 10px; }
+    .ok, .err { font-size: 38px; }
+    h1 { font-size: 17px; }
+    p { font-size: 13px; line-height: 1.6; }
+    .btn { margin-top: 12px; padding: 9px 18px; font-size: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -46,7 +58,7 @@
     <div class="tip">二维码是一次性的、几分钟内有效；过期后请在电脑上重新生成。</div>
   </div>
 </div>
-<script src="/static/auth.js?v=20261119a"></script>
+<script src="/static/auth.js?v=20261119f"></script>
 <script>
 (function () {
   const qs = new URLSearchParams(location.search);

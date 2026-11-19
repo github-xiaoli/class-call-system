@@ -6,8 +6,8 @@
 <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>班级叫号器 · 首次设置</title>
-<link rel="stylesheet" href="/static/style.css?v=20261118c">
-<link rel="stylesheet" href="/static/wizard.css?v=20261119c">
+<link rel="stylesheet" href="/static/style.css?v=20261119f">
+<link rel="stylesheet" href="/static/wizard.css?v=20261119f">
 </head>
 <body data-scene="forest">
 <div class="scene" aria-hidden="true">
@@ -112,6 +112,13 @@
     <section class="step" data-step="5">
       <h1>配对一台手机（可选）</h1>
       <p class="lead">用手机扫下面这个二维码，浏览器会打开并 <b>自动完成激活</b>（不用手输密码）。</p>
+      <div class="two-col" style="margin:12px 0 2px">
+        <label class="field"><span>名称（可改）</span>
+          <input id="pair-name" maxlength="40" placeholder="手机扫码配对" autocomplete="off"></label>
+        <label class="field"><span>备注（可改）</span>
+          <input id="pair-note" maxlength="100" placeholder="例如：班主任手机" autocomplete="off"></label>
+      </div>
+      <p class="hint">手机也可以直接打开 <b id="pair-manual-url">…</b> 手动输入配对码。</p>
       <div class="pair">
         <div class="pair-left">
           <canvas id="qr" width="200" height="200"></canvas>
@@ -131,8 +138,44 @@
       </div>
     </section>
 
-    <!-- 6 完成 -->
+    <!-- 6 个性化（叫号语/次数/音量/提示音） -->
     <section class="step" data-step="6">
+      <h1>叫号声音</h1>
+      <p class="lead">这些随时都能改，先设一个顺手的就行。</p>
+      <div class="form-row" style="margin-top:10px">
+        <label class="field"><span>叫号语模板</span>
+          <textarea id="wiz-phrase" rows="2"
+            placeholder="请 %number% 号 %name% 同学上台"></textarea></label>
+        <p class="hint">占位符：%number% 学号 · %name% 姓名 · %note% 备注 · %teacher% 老师</p>
+        <p class="hint">预览：<span id="wiz-phrase-preview" class="preview"></span></p>
+      </div>
+      <div class="two-col" style="margin-top:8px">
+        <label class="field"><span>叫号次数</span>
+          <input id="wiz-play-count" type="number" min="1" max="10" value="1"></label>
+        <label class="field"><span>叫号音量（%）</span>
+          <input id="wiz-volume" type="number" min="0" max="100" value="100"></label>
+      </div>
+      <div class="two-col" style="margin-top:8px">
+        <label class="field"><span>提示音</span>
+          <select id="wiz-prompt-sound">
+            <option value="beep">系统“叮”声</option>
+            <option value="none">无</option>
+            <option value="custom">自定义 WAV（装好后在设置里上传）</option>
+          </select></label>
+        <label class="field"><span>语音引擎</span>
+          <select id="wiz-tts-engine">
+            <option value="auto">自动（推荐）</option>
+            <option value="edge">自然语音（需联网）</option>
+            <option value="comtypes">离线语音</option>
+          </select></label>
+      </div>
+      <label class="field checkbox" style="margin-top:10px">
+        <input type="checkbox" id="wiz-prompt-enabled" checked>
+        <span>叫号前播放提示音</span></label>
+    </section>
+
+    <!-- 7 完成 -->
+    <section class="step" data-step="7">
       <h1>设置完成 🎉</h1>
       <p class="lead">一切就绪，现在就可以开始叫号了。</p>
       <ul class="summary" id="summary"></ul>
@@ -153,7 +196,7 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/qrcode.js?v=20261118c"></script>
-<script src="/static/wizard.js?v=20261119c"></script>
+<script src="/static/qrcode.js?v=20261119f"></script>
+<script src="/static/wizard.js?v=20261119f"></script>
 </body>
 </html>

@@ -187,6 +187,25 @@ def _send(inputs):
 # Windows 触摸注入（InitializeTouchInjection / InjectTouchInput）
 # ---------------------------------------------------------------------------
 TOUCH_FEEDBACK_DEFAULT = 0x1
+_config_getter = None
+
+
+def set_config_getter(fn):
+    global _config_getter
+    _config_getter = fn
+
+
+def _touch_mode():
+    """auto（默认，单指鼠标/双指触摸） / touch（全部触摸注入） / mouse（全部鼠标）"""
+    try:
+        cfg = (_config_getter or (lambda: {}))()
+        mode = str(cfg.get("remote_touch_mode", "mouse") or "mouse").strip().lower()
+        return mode if mode in ("auto", "touch", "mouse") else "mouse"
+    except Exception:
+        return "auto"
+
+
+HAS_TOUCH_API = hasattr(ctypes.windll.user32, "InjectTouchInput")
 PT_TOUCH = 2
 POINTER_FLAG_INRANGE = 0x2
 POINTER_FLAG_INCONTACT = 0x4
@@ -241,6 +260,13 @@ _touch_ready = False
 _touch_init_tried = False
 
 
+def _touch_init_tried_global_reset():
+    """允许重复自检：清掉初始化缓存，重新 InitializeTouchInjection。"""
+    global _touch_ready, _touch_init_tried
+    _touch_ready = False
+    _touch_init_tried = False
+
+
 def _init_touch():
     global _touch_ready, _touch_init_tried
     if _touch_init_tried:
@@ -253,32 +279,444 @@ def _init_touch():
     return _touch_ready
 
 
-def inject_touch(x, y, action, pointer_id=1):
-    """注入单指触摸。action: down | move | up；x,y 为屏幕像素坐标。
-    注意：仅设置必要的字段，pressure/himetric/raw/rcContact 等字段会导致
-    InjectTouchInput 返回 ERROR_INVALID_PARAMETER(87)。"""
+def _screen_dpi():
+    """当前主屏 DPI（默认 96）。"""
+    try:
+        dc = _user32.GetDC(0)
+        try:
+            dpi = int(ctypes.windll.gdi32.GetDeviceCaps(dc, 88))  # LOGPIXELSX
+            return dpi if dpi > 0 else 96
+        finally:
+            _user32.ReleaseDC(0, dc)
+    except Exception:
+        return 96
+
+
+def _to_himetric(px, dpi=None):
+    """像素 -> HIMETRIC（1 单位 = 0.01mm）。触点定位靠它，不能直接塞像素。"""
+    d = dpi or _screen_dpi()
+    return int(round(px * 2540.0 / max(1, d)))
+
+
+def _touch_contact(x, y, action, pointer_id=1):
+    """构造一个触点的 POINTER_TOUCH_INFO。"""
+    info = _POINTER_TOUCH_INFO()
+    info.pointerInfo.pointerType = PT_TOUCH
+    info.pointerInfo.pointerId = int(pointer_id)
+    flags = POINTER_FLAG_INRANGE
+    if action == "down":
+        flags |= POINTER_FLAG_DOWN | POINTER_FLAG_INCONTACT
+    elif action == "move":
+        flags |= POINTER_FLAG_UPDATE | POINTER_FLAG_INCONTACT
+    elif action == "up":
+        flags |= POINTER_FLAG_UP
+    info.pointerInfo.pointerFlags = flags
+    info.pointerInfo.ptPixelLocation = _POINT(int(x), int(y))
+    # 注意：绝对不要设置 ptHimetricLocation！
+    # Windows 要求 himetric 必须与"鼠标/笔设备上报的原始值"自洽，合成输入没有对应设备，
+    # 填任何值（像素或换算值）都会让 InjectTouchInput 返回 87 ERROR_INVALID_PARAMETER，
+    # 表现就是"完全点不动"。保持 0,0 即可，系统按像素坐标定位。
+    try:
+        info.pointerInfo.dwTime = int(ctypes.windll.kernel32.GetTickCount())
+    except Exception:
+        pass
+    info.orientation = 90
+    info.touchFlags = 0
+    info.touchMask = 0
+    return info
+
+
+def _last_error():
+    try:
+        return int(ctypes.windll.kernel32.GetLastError())
+    except Exception:
+        return -1
+
+
+_GESTURE = {"touch": False, "active": {}}
+_LAST_INPUT_LOG = [0.0]
+
+
+def _reset_gesture():
+    """新连接/断线时清空触点与手势状态（顺手抬起残留触点，避免后续注入 87）。"""
+    try:
+        touch_reset(True)
+        gesture_reset()
+    except Exception as exc:
+        print("[远控] 重置触点状态失败:", exc)
+
+
+def _mouse_emulate(ttype, x, y):
+    """鼠标路径：按下 / 移动 / 抬起。"""
+    if ttype == "down":
+        move_absolute(x, y)
+        mouse_button("left", True)
+    elif ttype in ("up", "cancel"):
+        mouse_button("left", False)
+    else:
+        move_absolute(x, y)
+
+
+def _handle_touch(data):
+    """手机触摸分发：默认走 Windows 多点触摸 API，失败自动降级鼠标。
+
+    触摸注入 = InitializeTouchInjection + InjectTouchInput（Win8+ 多点触摸 API）。
+    注入的触点会以 WM_POINTERDOWN 投递给目标窗口，普通 Win32 窗口还会被系统
+    自动 promote 成 WM_LBUTTONDOWN，所以"真触摸"和"点得动"可以同时成立。
+    """
+    ttype = str(data.get("type", "move"))
+    try:
+        x = int(round(float(data.get("x", 0))))
+        y = int(round(float(data.get("y", 0))))
+    except Exception:
+        x, y = 0, 0
+    try:
+        pid = int(data.get("pointer_id", 1) or 1)
+    except Exception:
+        pid = 1
+    pid = max(1, min(10, pid))
+    mode = _touch_mode()
+
+    now = time.time()
+    if now - _LAST_INPUT_LOG[0] > 1.0:
+        _LAST_INPUT_LOG[0] = now
+        print("[远控] 触摸 %s pid=%d (%d,%d) 模式=%s%s"
+              % (ttype, pid, x, y, mode,
+                 "（已降级鼠标）" if touch_fallback_active() else ""))
+
+    # 双指手势（缩放/滚动）：优先于单点注入，任何程序都生效
+    if mode != "touch":
+        if _gesture_feed(ttype, x, y, pid):
+            if _TOUCH_STATE["down"]:
+                touch_reset(True)     # 手势期间把残留触点抬干净，避免 87
+            return
+
+    if mode == "mouse" or touch_fallback_active():
+        _mouse_emulate(ttype, x, y)
+        return
+
+    # 已经进入 batch 模式：每帧带上全部触点
+    if _TOUCH_STATE.get("batch"):
+        ok = _inject_frame(x, y, ttype, pid)
+        if ok:
+            return
+        if mode == "touch":
+            return
+        _TOUCH_STATE["fallback_mouse"] = True
+        print("[远控] 批量注入也不可用，本会话改用鼠标模式")
+        _mouse_emulate(ttype, x, y)
+        return
+
+    ok = inject_touches([{"x": x, "y": y, "action": ttype, "pointer_id": pid}])
+    if ok or mode == "touch":
+        return
+
+    # 顺序注入被拒：如果已经有手指按着，就切到"批量帧"再试一次
+    if _TOUCH_STATE["down"]:
+        _TOUCH_STATE["batch"] = True
+        st = _TOUCH_STATE
+        st["pts"] = {}
+        for lp, cid in list(_PID_MAP.items()):
+            px, py = st.get("pos", {}).get(lp, (x, y))
+            st["pts"][lp] = (px, py, cid)
+        print("[远控] 顺序注入被拒，切换为批量帧模式（一次调用下发全部触点）")
+        if _inject_frame(x, y, ttype, pid):
+            return
+        _TOUCH_STATE["batch"] = False
+
+    # 仍失败：auto 模式降级鼠标
+    _TOUCH_STATE["fallback_mouse"] = True
+    print("[远控] 触摸注入不可用，本会话改用鼠标模式（不影响使用）")
+    _mouse_emulate(ttype, x, y)
+
+
+# 双指手势状态：跟踪每根手指的位置，算出缩放/滚动
+_GESTURE_STATE = {"pts": {}, "prev_dist": None, "prev_cy": None,
+                  "zoom_acc": 0.0, "scroll_acc": 0.0, "last": 0.0,
+                  "active": False}
+
+
+def _gesture_mode():
+    try:
+        cfg = (_config_getter or (lambda: {}))()
+        m = str(cfg.get("remote_gesture_mode", "zoom_scroll") or "zoom_scroll").lower()
+        return m if m in ("zoom_scroll", "touch") else "zoom_scroll"
+    except Exception:
+        return "zoom_scroll"
+
+
+def gesture_reset():
+    _GESTURE_STATE.update({"pts": {}, "prev_dist": None, "prev_cy": None,
+                           "zoom_acc": 0.0, "scroll_acc": 0.0,
+                           "last": 0.0, "active": False})
+
+
+def _gesture_feed(ttype, x, y, pid):
+    """喂一个触摸事件；返回 True 表示这次事件已被手势消费（不要再注入触点）。"""
+    # 手势模式设为「真实触摸注入」时，不消费任何事件，让多根手指都真正注入
+    if _gesture_mode() != "zoom_scroll":
+        return False
+    st = _GESTURE_STATE
+    if ttype == "down":
+        if not st["pts"]:
+            gesture_reset()
+        st["pts"][pid] = (x, y)
+        if len(st["pts"]) == 2:
+            ps = list(st["pts"].values())[:2]
+            d = ((ps[0][0] - ps[1][0]) ** 2 + (ps[0][1] - ps[1][1]) ** 2) ** 0.5
+            st["prev_dist"] = max(1.0, d)
+            st["prev_cy"] = (ps[0][1] + ps[1][1]) / 2.0
+            st["zoom_acc"] = 0.0
+            st["scroll_acc"] = 0.0
+            st["active"] = True
+            st["last"] = 0.0
+            print("[远控] 双指手势开始（%s）" % _gesture_mode())
+            return True          # 第二根手指按下：不注入
+        return False
+
+    if ttype in ("up", "cancel"):
+        was = st["active"]
+        st["pts"].pop(pid, None)
+        if len(st["pts"]) < 2:
+            st["active"] = False
+            st["prev_dist"] = None
+            st["prev_cy"] = None
+        return was
+
+    # move
+    if pid not in st["pts"]:
+        return False
+    st["pts"][pid] = (x, y)
+    if not st["active"] or len(st["pts"]) < 2 or st["prev_dist"] is None:
+        return False
+
+    ps = list(st["pts"].values())[:2]
+    dist = max(1.0, ((ps[0][0] - ps[1][0]) ** 2 + (ps[0][1] - ps[1][1]) ** 2) ** 0.5)
+    cy = (ps[0][1] + ps[1][1]) / 2.0
+
+    # 与上一帧比较，累积缩放/滚动量
+    st["zoom_acc"] += (dist / st["prev_dist"] - 1.0) * 8.0
+    st["scroll_acc"] += (cy - st["prev_cy"]) / 26.0
+    st["prev_dist"] = dist
+    st["prev_cy"] = cy
+
+    now = time.time()
+    if now - st["last"] < 0.03:
+        return True
+    st["last"] = now
+
+    if _gesture_mode() == "zoom_scroll":
+        # 滚轮事件是发给"光标下的窗口"的，所以先把光标挪到双指中心
+        try:
+            move_absolute(int(ps[0][0]), int(ps[0][1]))
+        except Exception:
+            pass
+        z = int(st["zoom_acc"])
+        if z:
+            st["zoom_acc"] -= z
+            _ctrl_wheel(z)
+        sc = int(st["scroll_acc"])
+        if sc:
+            st["scroll_acc"] -= sc
+            scroll_mouse(-sc * 2)
+    return True
+
+
+# 每个 WebSocket 连接一份触点状态；断线/新连接时强制清空
+_TOUCH_STATE = {"down": set(), "fallback_mouse": False, "failures": 0,
+                "batch": False, "pts": {}}
+_PID_MAP = {}      # 逻辑手指号(1..10) -> 实际注入用的 pointerId
+
+
+def touch_reset(release=True):
+    """重置触点状态；release=True 时先把手里的触点全部抬起（防止 87 连锁）。"""
+    global _TOUCH_STATE, _PID_MAP
+    if release:
+        for cid in list(_TOUCH_STATE["down"]):
+            try:
+                arr = (_POINTER_TOUCH_INFO * 1)(_touch_contact(0, 0, "up", cid))
+                _user32.InjectTouchInput(1, arr)
+            except Exception:
+                pass
+    _TOUCH_STATE = {"down": set(), "fallback_mouse": False, "failures": 0,
+                    "batch": False, "pts": {}}
+    _PID_MAP = {}
+
+
+def touch_fallback_active():
+    return bool(_TOUCH_STATE.get("fallback_mouse"))
+
+
+def _raw_inject(x, y, action, cid):
+    """真正调用 InjectTouchInput，返回 (ok, err)。"""
+    try:
+        arr = (_POINTER_TOUCH_INFO * 1)(_touch_contact(x, y, action, cid))
+        ok = bool(_user32.InjectTouchInput(1, arr))
+        return ok, (0 if ok else _last_error())
+    except Exception as exc:
+        print("[远控] InjectTouchInput 异常:", exc)
+        return False, -1
+
+
+def _inject_frame(x, y, action, logic_pid):
+    """把"当前所有触点 + 本次变化"打包成一次 InjectTouchInput 调用。
+
+    有些机器只接受这种帧式下发：顺序发第二个触点会返回 87。
+    """
+    st = _TOUCH_STATE
+    pts = st.setdefault("pts", {})          # 逻辑手指 -> (x, y, 注入 id)
+    mapped = _PID_MAP.get(logic_pid)
+
+    if action == "down":
+        if mapped is None:
+            # 分配一个空闲 id
+            used = {v[2] for v in pts.values()}
+            cand = next((i for i in [logic_pid] + list(range(1, 11)) if i not in used), None)
+            if cand is None:
+                return False
+            mapped = cand
+            _PID_MAP[logic_pid] = cand
+        pts[logic_pid] = (x, y, mapped)
+    elif action in ("move",):
+        if logic_pid not in pts:
+            return False
+        pts[logic_pid] = (x, y, pts[logic_pid][2])
+    else:                                   # up / cancel
+        if logic_pid not in pts:
+            return True
+
+    items = []
+    for lp, (px, py, cid) in list(pts.items()):
+        if lp == logic_pid:
+            if action in ("up", "cancel"):
+                flags = 0x2 | 0x40000       # INRANGE | UP
+            elif action == "down":
+                flags = 0x2 | 0x10000 | 0x4  # INRANGE | DOWN | INCONTACT
+            else:
+                flags = 0x2 | 0x20000 | 0x4  # INRANGE | UPDATE | INCONTACT
+        else:
+            flags = 0x2 | 0x20000 | 0x4      # 其它触点：UPDATE 停留在原位
+        items.append(_touch_contact(px, py, "down" if flags & 0x10000 else
+                                   ("up" if flags & 0x40000 else "move"), cid))
+
+    try:
+        arr = (_POINTER_TOUCH_INFO * len(items))(*items)
+        ok = bool(_user32.InjectTouchInput(len(items), arr))
+    except Exception as exc:
+        print("[远控] 批量注入异常:", exc)
+        ok = False
+
+    if ok:
+        if action == "down":
+            st["down"].add(mapped)
+        elif action in ("up", "cancel"):
+            pts.pop(logic_pid, None)
+            _PID_MAP.pop(logic_pid, None)
+            st["down"].discard(mapped)
+        return True
+
+    st["failures"] += 1
+    print("[远控] 批量注入失败 action=%s err=%s" % (action, _last_error()))
+    if action in ("up", "cancel"):
+        pts.pop(logic_pid, None)
+        _PID_MAP.pop(logic_pid, None)
+        st["down"].discard(mapped)
+    return False
+
+
+def _inject_one(x, y, action, logic_pid):
+    """注入单个触点；pointerId 冲突(87)时自动换一个空闲 id。"""
+    st = _TOUCH_STATE
+    mapped = _PID_MAP.get(logic_pid)
+
+    if action in ("up", "cancel"):
+        if mapped is None:
+            return True                      # 没按下就别抬
+        ok, err = _raw_inject(x, y, "up", mapped)
+        if ok or err == 87:                  # 87 说明这个触点早被系统取消了，也算结束
+            st["down"].discard(mapped)
+            _PID_MAP.pop(logic_pid, None)
+            st.setdefault("pos", {}).pop(logic_pid, None)
+            return True
+        st["failures"] += 1
+        print("[远控] 抬起失败 pid=%s(%d) err=%s" % (logic_pid, mapped, err))
+        return False
+
+    if action == "move":
+        if mapped is None:
+            return False                     # 没按下就移动：忽略
+        ok, err = _raw_inject(x, y, "move", mapped)
+        if ok:
+            st.setdefault("pos", {})[logic_pid] = (x, y)
+        if not ok:
+            st["failures"] += 1
+            if err == 87:
+                # 触点已被系统取消（目标窗口不收触摸）：这个手指不再能用
+                st["down"].discard(mapped)
+                _PID_MAP.pop(logic_pid, None)
+            print("[远控] 移动失败 pid=%s(%d) err=%s" % (logic_pid, mapped, err))
+        return ok
+
+    # ---- down ----
+    if mapped is not None and mapped in st["down"]:
+        _inject_one(x, y, "up", logic_pid)   # 先抬起，避免重复 down
+
+    tried = []
+    if mapped is not None:
+        tried.append(mapped)
+    for cand in [logic_pid] + list(range(1, 11)):
+        if cand not in tried:
+            tried.append(cand)
+
+    for cid in tried:
+        if cid in st["down"]:
+            continue                         # 这个号已被其它手指占着
+        ok, err = _raw_inject(x, y, "down", cid)
+        if ok:
+            _PID_MAP[logic_pid] = cid
+            st["down"].add(cid)
+            st.setdefault("pos", {})[logic_pid] = (x, y)
+            if cid != logic_pid:
+                print("[远控] 手指 %d 改用 pointerId=%d（%d 号被系统占用）"
+                      % (logic_pid, cid, logic_pid))
+            return True
+        if err != 87:
+            st["failures"] += 1
+            print("[远控] 按下失败 pid=%d err=%s" % (cid, err))
+            return False
+    st["failures"] += 1
+    print("[远控] 按下失败：pointerId 1~10 全部被拒（多为系统已占满或不允许注入）")
+    return False
+
+
+def inject_touches(items):
+    """逐个注入触点（批量注入在部分机器上会 87）。任一失败返回 False。"""
+    if not items:
+        return True
     if not _init_touch():
         return False
-    try:
-        info = _POINTER_TOUCH_INFO()
-        info.pointerInfo.pointerType = PT_TOUCH
-        info.pointerInfo.pointerId = pointer_id
-        flags = POINTER_FLAG_INRANGE
-        if action == "down":
-            flags |= POINTER_FLAG_DOWN | POINTER_FLAG_INCONTACT
-        elif action == "move":
-            flags |= POINTER_FLAG_UPDATE | POINTER_FLAG_INCONTACT
-        elif action == "up":
-            flags |= POINTER_FLAG_UP
-        info.pointerInfo.pointerFlags = flags
-        info.pointerInfo.ptPixelLocation = _POINT(int(x), int(y))
-        info.orientation = 90
-        info.touchFlags = 0
-        info.touchMask = 0
-        arr = (_POINTER_TOUCH_INFO * 1)(info)
-        return bool(_user32.InjectTouchInput(1, arr))
-    except Exception:
+    all_ok = True
+    for it in items:
+        try:
+            pid = int(it.get("pointer_id", 1))
+        except Exception:
+            pid = 1
+        action = str(it.get("action", "move"))
+        all_ok = _inject_one(it.get("x", 0), it.get("y", 0), action, pid) and all_ok
+    return all_ok
+
+
+def inject_touch(x, y, action, pointer_id=1):
+    """注入单指触摸。action: down | move | up；x,y 为屏幕像素坐标。"""
+    if not _init_touch():
         return False
+    return inject_touches([{"x": x, "y": y, "action": action,
+                            "pointer_id": pointer_id}])
+
+
+def touch_supported():
+    """触摸注入是否可用（初始化成功即视为可用）。"""
+    return bool(_init_touch())
 
 
 def _mouse(dx=0, dy=0, flags=0, data=0):
@@ -330,6 +768,22 @@ def mouse_button(button, down):
     }
     d, u = fmap.get(button, fmap["left"])
     _send([_mouse(flags=d if down else u)])
+
+
+VK_CONTROL_ = 0x11
+
+
+def _ctrl_wheel(steps):
+    """按住 Ctrl 滚轮（多数程序里等于缩放）。"""
+    n = int(steps)
+    if n == 0:
+        return
+    _send([_key(VK_CONTROL_, 0)])
+    try:
+        for _ in range(abs(n)):
+            scroll_mouse(1 if n > 0 else -1)
+    finally:
+        _send([_key(VK_CONTROL_, KEYEVENTF_KEYUP)])
 
 
 def scroll_mouse(delta):
@@ -428,16 +882,21 @@ def _gen_screen():
         time.sleep(max(0.03, 0.1 - dt))
 
 
-def _grab_frame():
+def _grab_frame(quality=40, max_width=1024):
     """抓取一帧屏幕，返回 JPEG bytes（失败返回 b""）。"""
     try:
         img = ImageGrab.grab(all_screens=False)
         w, h = img.size
-        scale = 1280.0 / max(w, 1)
-        if scale < 1.0:
-            img = img.resize((int(w * scale), int(h * scale)))
+        # 大屏先按整数倍快速降采样（C 实现，比 resize 快几倍），再精确缩到目标宽度
+        while w > max_width * 2:
+            img = img.reduce(2)
+            w, h = img.size
+        if w > max_width:
+            scale = float(max_width) / w
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                             resample=1)
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=45)
+        img.save(buf, "JPEG", quality=int(quality))
         return buf.getvalue()
     except Exception:
         return b""
@@ -465,23 +924,10 @@ def handle_input(data):
     elif action == "scroll":
         scroll_mouse(int(float(data.get("delta", 0))))
     elif action == "touch":
-        # 手机端触摸：优先注入 Windows 触摸；不支持时回退为鼠标
-        ttype = str(data.get("type", "move"))
-        x = int(round(float(data.get("x", 0))))
-        y = int(round(float(data.get("y", 0))))
         try:
-            pid = int(data.get("pointer_id", 1) or 1)
-        except Exception:
-            pid = 1
-        pid = max(1, min(10, pid))
-        if not inject_touch(x, y, ttype, pid):
-            if ttype == "down":
-                move_absolute(x, y)
-                mouse_button("left", True)
-            elif ttype == "up":
-                mouse_button("left", False)
-            else:
-                move_absolute(x, y)
+            _handle_touch(data)
+        except Exception as exc:
+            print("[远控] 处理触摸事件失败:", exc)
     elif action == "osk":
         return _toggle_osk()
     elif action == "key":
@@ -535,6 +981,7 @@ def api_remote_start():
         return err
     data = request.get_json(silent=True) or {}
     teacher = str(data.get("teacher", "")).strip() or "老师"
+    _reset_gesture()          # 新连接，清掉上次可能残留的触点状态
     with _LOCK:
         _remote_active = True
         _remote_teacher = teacher
@@ -595,6 +1042,118 @@ def api_remote_screen_size():
         return err
     sw, sh = get_screen_size()
     return jsonify({"ok": True, "width": sw, "height": sh})
+
+
+@remote_bp.route("/api/remote/touch_selftest")
+def api_touch_selftest():
+    """触摸自检：逐个 pointerId 探测 + 双指配对，返回每一步的 ok/err。"""
+    from auth import is_local
+    if not is_local():
+        return jsonify({"ok": False, "error": "只能在本机自检"}), 403
+    if not HAS_TOUCH_API:
+        return jsonify({"ok": False, "error": "当前系统不支持触摸注入 API"})
+
+    res = {"admin": False, "init": None, "single": [], "pair": None}
+    try:
+        import ctypes as _ct
+        res["admin"] = bool(_ct.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        pass
+
+    try:
+        w, h = get_screen_size()
+        cx, cy = w // 2, h // 2
+    except Exception:
+        cx, cy = 400, 300
+
+    _touch_init_tried_global_reset()
+    ok_init = bool(_init_touch())
+    res["init"] = {"ok": ok_init, "err": _last_error()}
+    if not ok_init:
+        res["ok"] = True
+        res["hint"] = "InitializeTouchInjection 失败，无法使用触摸注入"
+        return jsonify(res)
+
+    # 逐个 id 探测：能不能单独按一下
+    good_ids = []
+    for cid in range(1, 11):
+        touch_reset(False)
+        ok, err = _raw_inject(cx, cy, "down", cid)
+        if ok:
+            _user32.InjectTouchInput(1, (_POINTER_TOUCH_INFO * 1)(_touch_contact(cx, cy, "up", cid)))
+            good_ids.append(cid)
+        res["single"].append({"id": cid, "ok": bool(ok), "err": err})
+    touch_reset(False)
+
+    # 双指配对：用两个可用的 id 同时按下并移动
+    if len(good_ids) >= 2:
+        a, b = good_ids[0], good_ids[1]
+        seq = []
+        ok1, e1 = _raw_inject(cx - 60, cy, "down", a)
+        ok2, e2 = _raw_inject(cx + 60, cy, "down", b)
+        ok3, e3 = _raw_inject(cx - 80, cy + 10, "move", a)
+        ok4, e4 = _raw_inject(cx + 80, cy + 10, "move", b)
+        ok5, e5 = _raw_inject(cx - 80, cy + 10, "up", a)
+        ok6, e6 = _raw_inject(cx + 80, cy + 10, "up", b)
+        seq = [{"step": "downA", "id": a, "ok": bool(ok1), "err": e1},
+               {"step": "downB", "id": b, "ok": bool(ok2), "err": e2},
+               {"step": "moveA", "id": a, "ok": bool(ok3), "err": e3},
+               {"step": "moveB", "id": b, "ok": bool(ok4), "err": e4},
+               {"step": "upA", "id": a, "ok": bool(ok5), "err": e5},
+               {"step": "upB", "id": b, "ok": bool(ok6), "err": e6}]
+        res["pair"] = {"ids": [a, b], "steps": seq,
+                       "ok": all(x["ok"] for x in seq)}
+    touch_reset(True)
+
+    # 批量测试：两根手指放在"同一次调用"里下发（部分机器只认这种）
+    if len(good_ids) >= 2:
+        a, b = good_ids[0], good_ids[1]
+        _touch_init_tried_global_reset()
+        _init_touch()
+        touch_reset(False)
+        t = ctypes.windll.kernel32.GetTickCount()
+        batch_steps = []
+
+        def batch(items, name):
+            arr = (_POINTER_TOUCH_INFO * len(items))(*items)
+            ok = bool(_user32.InjectTouchInput(len(items), arr))
+            batch_steps.append({"step": name, "ok": ok, "err": 0 if ok else _last_error()})
+            return ok
+
+        def C(x, y, flags, pid, dt):
+            i = _POINTER_TOUCH_INFO()
+            i.pointerInfo.pointerType = PT_TOUCH
+            i.pointerInfo.pointerId = pid
+            i.pointerInfo.pointerFlags = flags
+            i.pointerInfo.ptPixelLocation = _POINT(int(x), int(y))
+            i.pointerInfo.dwTime = dt
+            i.orientation = 90
+            return i
+
+        batch([C(cx - 60, cy, 0x2 | 0x10000 | 0x4, a, t),
+               C(cx + 60, cy, 0x2 | 0x10000 | 0x4, b, t)], "batch_down")
+        batch([C(cx - 80, cy + 10, 0x2 | 0x20000 | 0x4, a, t + 1),
+               C(cx + 80, cy + 10, 0x2 | 0x20000 | 0x4, b, t + 1)], "batch_move")
+        batch([C(cx - 80, cy + 10, 0x2 | 0x40000, a, t + 2),
+               C(cx + 80, cy + 10, 0x2 | 0x40000, b, t + 2)], "batch_up")
+        res["batch"] = {"ids": [a, b], "steps": batch_steps,
+                        "ok": all(x["ok"] for x in batch_steps)}
+        touch_reset(False)
+
+    res["ok"] = True
+    res["usable_ids"] = good_ids
+    if res.get("batch", {}).get("ok"):
+        res["hint"] = "批量注入可用：请把「双指手势」设为「真实触摸注入」测试双指同按"
+        return jsonify(res)
+    if len(good_ids) >= 2 and res.get("pair", {}).get("ok"):
+        res["hint"] = "多点触摸可用（双指可同时按下并拖动）"
+    elif len(good_ids) >= 2:
+        res["hint"] = "能按两根手指，但移动被拒（目标程序/系统限制）"
+    elif good_ids:
+        res["hint"] = "只允许一个触点，真多点不可用；双指请用「缩放/滚动」手势"
+    else:
+        res["hint"] = "触摸注入完全不可用，已自动使用鼠标"
+    return jsonify(res)
 
 
 @remote_bp.route("/api/remote/input", methods=["POST"])
@@ -675,18 +1234,29 @@ def ws_remote(ws):
             pass
     try:
         last_frame = 0.0
+        interval = 0.066           # 目标帧间隔（约 15fps）
+        quality = 40
         while True:
             now = time.time()
             if now - last_frame >= 0.125:  # 约 8 帧/秒，降低带宽与卡顿
                 last_frame = now
-                data = _grab_frame()
+                data = _grab_frame(quality=quality)
                 if data:
+                    t_send = time.time()
                     try:
                         ws.send(data)
                     except Exception:
                         break
+                    cost = time.time() - t_send
+                    # 网络/手机跟不上就自动降帧降质，避免"卡一下再追上"的周期性停顿
+                    if cost > 0.3:
+                        interval = min(0.2, interval + 0.02)
+                        quality = max(32, quality - 2)
+                    elif cost < 0.1:
+                        interval = max(0.05, interval - 0.005)
+                        quality = min(48, quality + 1)
             # 非阻塞接收输入指令
-            for _ in range(20):
+            for _ in range(4):
                 try:
                     msg = ws.receive(timeout=0.001)
                 except Exception:

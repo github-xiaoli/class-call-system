@@ -23,6 +23,8 @@ const state = {
   roster: [],
   pairing: null,
   licTimer: null,
+  restoring: false,   // 正在恢复上次进度，不要触发保存
+  saveTimer: null,
 };
 
 function toast(msg) {
@@ -69,6 +71,44 @@ function paintDeco(scene) {
   });
 }
 
+function collectFields() {
+  const f = {};
+  const hostEl = $("host-name");
+  if (hostEl) f.mdns_hostname = (hostEl.value || "").trim();
+  const asEl = $("opt-autostart");
+  if (asEl) f.autostart = !!asEl.checked;
+  const chEl = $("opt-channel");
+  if (chEl) f.update_channel = chEl.value;
+  const polEl = $("opt-policy");
+  if (polEl) f.update_policy = polEl.value;
+  if (state.roster && state.roster.length) f.roster = state.roster;
+  const ph = $("wiz-phrase");
+  if (ph) f.phrase = ph.value;
+  const pc = $("wiz-play-count");
+  if (pc) f.play_count = Number(pc.value) || 1;
+  const vo = $("wiz-volume");
+  if (vo) f.volume = Number(vo.value) || 0;
+  const ps = $("wiz-prompt-sound");
+  if (ps) f.prompt_sound = ps.value;
+  const pe = $("wiz-prompt-enabled");
+  if (pe) f.prompt_enabled = !!pe.checked;
+  const te = $("wiz-tts-engine");
+  if (te) f.tts_engine = te.value;
+  return f;
+}
+
+function saveStep(step) {
+  if (state.restoring) return;
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(() => {
+    api("/api/wizard/step", {
+      method: "POST",
+      body: JSON.stringify({ step: step, fields: collectFields(),
+                             license_agreed: !!($("lic-agree") || {}).checked }),
+    }).catch(() => {});
+  }, 120);
+}
+
 function go(step) {
   if (step < 0 || step >= totalSteps) return;
   state.step = step;
@@ -89,7 +129,16 @@ function go(step) {
   if (step === totalSteps - 1) { buildSummary(); confetti(); }
   if (step === 2) $("host-name").focus();
   if (step === 5) { if (state.pairToken) drawQR(); else makePairQR(); }
+  if (step === 5) {
+    const mu = $("pair-manual-url");
+    if (mu) {
+      const h = state.host || window.__defHost || "127.0.0.1";
+      const pt = window.__port || 8000;
+      mu.textContent = "http://" + h + ".local:" + pt + "/pair";
+    }
+  }
   refreshGate();
+  saveStep(step);
 }
 
 function canNext() {
@@ -274,12 +323,24 @@ function drawQR() {
 }
 
 /* ---------- 扫码配对（扫一下就自动激活） ---------- */
+let pairBusy = false;
 async function makePairQR() {
   const box = $("pw-value");
+  const btn = $("btn-genpw");
+  // 连点保护：正在生成时直接忽略，避免每次点击都新建一张密码
+  if (pairBusy) return;
+  pairBusy = true;
+  const btnText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "生成中…";
+  }
   try {
     const d = await api("/api/auth/qr_create", {
       method: "POST",
-      body: JSON.stringify({ minutes: 30, valid_days: 365, name: "手机扫码配对" }),
+      body: JSON.stringify({ minutes: 30, valid_days: 365,
+        name: (($("pair-name") || {}).value || "").trim() || "手机扫码配对",
+        note: (($("pair-note") || {}).value || "").trim() }),
     });
     state.pairToken = d.token;
     window.__pairToken = d.token;   // 方便调试/自动化测试读取
@@ -292,6 +353,12 @@ async function makePairQR() {
   } catch (e) {
     if (box) box.textContent = "生成失败";
     toast("生成二维码失败：" + e.message);
+  } finally {
+    pairBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btnText || "🔄 重新生成二维码";
+    }
   }
 }
 
@@ -466,7 +533,29 @@ $("lic-box").addEventListener("scroll", onLicScroll);
 document.querySelectorAll(".lic-tabs .tab").forEach((b) =>
   b.addEventListener("click", () => showLang(b.dataset.lang)));
 $("lic-agree").addEventListener("change", () => { tickLic(); refreshGate(); });
+// 任何一项改动都即时保存（异步防抖，不会打断输入）
+function autosaveField() { saveStep(state.step); }
 $("host-name").addEventListener("input", syncHost);
+$("host-name").addEventListener("change", autosaveField);
+function previewWizPhrase() {
+  const el = $("wiz-phrase-preview");
+  const src = $("wiz-phrase");
+  if (!el || !src) return;
+  el.textContent = String(src.value || "")
+    .replace(/%number%/g, "12").replace(/%name%/g, "张子墨")
+    .replace(/%note%/g, "数学课代表").replace(/%teacher%/g, "王老师") || "（未设置叫号语）";
+}
+$("wiz-phrase").addEventListener("input", () => { previewWizPhrase(); autosaveField(); });
+["wiz-play-count", "wiz-volume", "wiz-prompt-sound", "wiz-prompt-enabled", "wiz-tts-engine"]
+  .forEach((id) => { const el = $(id); if (el) { el.addEventListener("change", autosaveField); el.addEventListener("input", autosaveField); } });
+
+["opt-autostart", "opt-channel", "opt-policy"].forEach((id) => {
+  const el = $(id);
+  if (el) {
+    el.addEventListener("change", autosaveField);
+    el.addEventListener("input", autosaveField);
+  }
+});
 $("roster-text").addEventListener("input", syncRoster);
 $("btn-pick-file").addEventListener("click", () => $("roster-file").click());
 $("roster-file").addEventListener("change", (e) => {
@@ -513,9 +602,35 @@ $("btn-start").addEventListener("click", finish);
       $("roster-hint").textContent =
         "检测到已有 " + st.roster_count + " 条名条：这里留空就保持原来的名条不变。";
     }
+    state.resumeStep = Number(st.step || 0) || 0;
+    state.resumeAgreed = !!st.license_agreed;
+    if ($("wiz-phrase")) $("wiz-phrase").value = st.phrase || "";
+    if ($("wiz-play-count")) $("wiz-play-count").value = st.play_count || 1;
+    if ($("wiz-volume")) $("wiz-volume").value = (st.volume != null ? st.volume : 100);
+    if ($("wiz-prompt-sound")) $("wiz-prompt-sound").value = st.prompt_sound || "beep";
+    if ($("wiz-prompt-enabled")) $("wiz-prompt-enabled").checked = !!st.prompt_enabled;
+    if ($("wiz-tts-engine")) $("wiz-tts-engine").value = st.tts_engine || "auto";
+    previewWizPhrase();
   } catch (e) { /* 忽略，用默认值 */ }
   syncHost();
   await loadLicense();
-  go(0);
+  // 恢复"已同意许可证"（必须放在 loadLicense 之后，否则会被初始化重置）
+  if (state.resumeAgreed) {
+    const agree = $("lic-agree");
+    if (agree) agree.checked = true;
+    const cur = state.lic[state.lang];
+    if (cur) { cur.bottom = true; cur.t0 = Date.now() - 11000; }
+    if (typeof tickLic === "function") tickLic();
+  }
+  // 回到上次那一步（没同意许可证就停在许可证页）
+  let resume = Number(state.resumeStep || 0);
+  const agreed = ($("lic-agree") || {}).checked;
+  if (!agreed && resume > 1) resume = 1;
+  if (resume > totalSteps - 1) resume = totalSteps - 1;
+  if (resume < 0) resume = 0;
+  state.restoring = true;
+  go(resume);
+  state.restoring = false;
+  if (resume > 0) toast("已从第 " + (resume + 1) + " 步继续");
   setInterval(() => { if (state.step === 1) tickLic(); }, 500);
 })();

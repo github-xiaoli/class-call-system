@@ -342,7 +342,14 @@ function fillSettingsForm() {
   $("set-tts-engine").value = c.tts_engine || "auto";
   $("set-autostart").checked = !!c.autostart;
   $("set-mdns-enabled").checked = !!c.mdns_enabled;
+  if ($("set-port")) $("set-port").value = c.port || 8000;
   $("set-mdns-hostname").value = c.mdns_hostname || "";
+  const gSel = $("set-gesture");
+  if (gSel) gSel.value = c.remote_gesture_mode || "zoom_scroll";
+  const rtSel = $("set-remote-touch");
+  if (rtSel) rtSel.value = c.remote_touch_mode || "auto";
+  const qSel = $("set-monitor-quality");
+  if (qSel) qSel.value = c.monitor_quality || "standard";
   const ifSel = $("set-mdns-interface");
   ifSel.innerHTML = "";
   ifSel.add(new Option("自动（全部网卡）", "auto"));
@@ -378,12 +385,27 @@ async function saveSettings() {
     autostart: $("set-autostart").checked,
     mdns_enabled: $("set-mdns-enabled").checked,
     mdns_hostname: $("set-mdns-hostname").value.trim(),
+    port: Math.max(1, Math.min(65535, parseInt($("set-port").value, 10) || 8000)),
     mdns_interface: $("set-mdns-interface").value || "auto",
+    monitor_quality: ($("set-monitor-quality") || {}).value || "standard",
+    remote_touch_mode: ($("set-remote-touch") || {}).value || "auto",
+    remote_gesture_mode: ($("set-gesture") || {}).value || "zoom_scroll",
     secure_port: parseInt($("set-secure-port").value, 10) || 9443,
     secure_port_force: !!($("set-secure-force") && $("set-secure-force").checked),
     secure_enabled: $("set-secure-enabled").checked,
   };
   try {
+    // 端口变了先检查能不能绑：避免存进去一个用不了的端口（重启后才炸）
+    if (cfg.port !== oldPort) {
+      try {
+        const r = await fetch("/api/port_check?port=" + encodeURIComponent(cfg.port));
+        const chk = await r.json();
+        if (chk && chk.ok === false) {
+          toast("端口 " + cfg.port + " 用不了：" + (chk.reason || "未知原因") + "，换一个再保存");
+          return;
+        }
+      } catch (e) { /* 校验接口本身异常时不阻塞保存 */ }
+    }
     await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
     state.config = { ...state.config, ...cfg };
     await loadStatus();
@@ -641,7 +663,36 @@ function bindEvents() {
   });
 
   // 设置
-  $("btn-settings").addEventListener("click", () => {
+  /* ---------- 全屏叫号 ---------- */
+function syncFsClass() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  document.body.classList.toggle("fs", on);
+  const b = $("btn-fullscreen");
+  if (b) b.textContent = on ? "⛶ 退出全屏" : "⛶ 全屏";
+}
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      await (document.exitFullscreen ? document.exitFullscreen() : Promise.resolve());
+    } else {
+      const el = document.documentElement;
+      if (el.requestFullscreen) await el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else {
+        // 浏览器不允许全屏时，退化成"隐藏顶栏的紧凑模式"
+        document.body.classList.toggle("fs");
+      }
+    }
+  } catch (e) {
+    document.body.classList.toggle("fs");
+  }
+  syncFsClass();
+}
+document.addEventListener("fullscreenchange", syncFsClass);
+document.addEventListener("webkitfullscreenchange", syncFsClass);
+$("btn-fullscreen").addEventListener("click", toggleFullscreen);
+
+$("btn-settings").addEventListener("click", () => {
     loadConfig().then(() => { fillSettingsForm(); openModal("modal-settings"); });
   });
   $("btn-update").addEventListener("click", () => { location.href = "/update"; });

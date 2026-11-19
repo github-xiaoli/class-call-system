@@ -61,8 +61,8 @@ body[data-scene="starry"] .sun { background: radial-gradient(circle,#ffffff 0%,#
 /* ---------- 主体卡片 ---------- */
 .wiz {
   position: relative; z-index: 2;
-  width: min(880px, 94vw); height: min(660px, 92vh);
-  margin: 4vh auto; display: flex; flex-direction: column;
+  width: min(880px, 94vw); height: min(660px, 92dvh); max-height: 92dvh;
+  margin: 4dvh auto; display: flex; flex-direction: column; min-height: 0;
   background: rgba(255,255,255,.93);
   border-radius: 26px; box-shadow: 0 26px 70px rgba(15,23,42,.28);
   backdrop-filter: blur(6px); overflow: hidden;
@@ -83,10 +83,14 @@ body[data-scene="starry"] .sun { background: radial-gradient(circle,#ffffff 0%,#
 .dots i.on { background: #2563eb; transform: scale(1.25); }
 .dots i.done { background: #93c5fd; }
 
-.wiz-body { flex: 1; padding: 28px 34px 8px; overflow: hidden; position: relative; }
+.wiz-body { flex: 1; padding: 0; overflow: hidden; position: relative; min-height: 0; }
 .step {
   position: absolute; inset: 0; padding: 28px 34px 8px;
   display: none; flex-direction: column;
+  /* 内容比盒子高时可以滚动（大缩放 / 小屏不再把按钮切掉） */
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .step.active { display: flex; animation: slideIn .38s ease; }
 @keyframes slideIn { from { opacity: 0; transform: translateX(26px) } to { opacity: 1; transform: none } }
@@ -188,9 +192,27 @@ body[data-scene="starry"] .sun { background: radial-gradient(circle,#ffffff 0%,#
 .btn.hidden { display: none; }
 
 @media (max-width: 720px) {
-  .wiz { height: 96vh; }
+  .wiz { height: 96dvh; max-height: 96dvh; margin: 2dvh auto; border-radius: 18px; }
   .cards, .two-col, .pair { grid-template-columns: 1fr; }
   .lic-note { display: none; }
+  .step { padding: 20px 18px 8px; }
+  .step h1 { font-size: 21px; }
+}
+
+/* 矮视口（笔记本 150% 缩放、投影仪、横屏手机）：压缩留白，避免按钮被挤出可视区 */
+@media (max-height: 640px) {
+  .wiz { height: 96dvh; max-height: 96dvh; margin: 2dvh auto; border-radius: 18px; }
+  .step { padding: 16px 20px 6px; }
+  .step h1 { font-size: 20px; margin-bottom: 6px; }
+  .step .lead { font-size: 13.5px; margin-bottom: 10px; line-height: 1.55; }
+  .step .hint { font-size: 12px; }
+  .cards { gap: 10px; margin: 6px 0 10px; }
+  .card { padding: 10px; }
+  .card b { font-size: 24px; }
+  .wiz-foot { padding: 10px 20px; }
+  .lic-box { min-height: 120px !important; }
+  .pair-left canvas { width: 150px; height: 150px; }
+  textarea#roster-text { min-height: 90px; }
 }
 
 /* 完成页：改过设备名时的重启提示 */

@@ -7,7 +7,52 @@
 <link rel="apple-touch-icon" href="/static/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>班级叫号器</title>
-<link rel="stylesheet" href="/static/style.css?v=20261118b">
+<link rel="stylesheet" href="/static/style.css?v=20261119f">
+<style>
+/* ---------- 全屏叫号模式：一屏放完，不出现滚动条 ---------- */
+body.fs { overflow: hidden; height: 100dvh; }
+body.fs .topbar { display: none; }
+body.fs .layout {
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+}
+body.fs .call-panel { grid-column: 1; grid-row: 1 / span 2; }
+body.fs .student-panel { grid-column: 2; grid-row: 1; min-height: 0; overflow: auto; }
+body.fs .records-panel { grid-column: 2; grid-row: 2; min-height: 0; overflow: auto; }
+body.fs .panel { padding: 10px 12px; }
+body.fs .call-panel { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+body.fs .call-meta { font-size: 13px; }
+body.fs .banner { font-size: 13px; padding: 6px 10px; }
+body.fs .selected-line { padding: 4px 0; }
+body.fs .sel-number { font-size: 30px; }
+body.fs .call-controls { flex: 1; min-height: 0; gap: 12px; }
+body.fs .numpad-wrap { display: flex; flex-direction: column; min-height: 0; }
+body.fs .num-display { font-size: 26px; min-height: 42px; padding: 6px 12px; margin-bottom: 6px; }
+body.fs .numpad { flex: 1; grid-auto-rows: 1fr; gap: 6px; }
+body.fs .numpad button { font-size: 24px; padding: 0; }
+body.fs .call-side { gap: 8px; justify-content: flex-start; }
+body.fs .call-side .btn.big { padding: 16px; font-size: 22px; }
+body.fs .call-side .hint { display: none; }
+body.fs .msg-row { margin-top: 8px; gap: 8px; }
+body.fs .msg-row input { padding: 10px 12px; }
+@media (max-height: 620px) {
+  body.fs .numpad button { font-size: 19px; }
+  body.fs .num-display { font-size: 22px; min-height: 36px; }
+  body.fs .sel-number { font-size: 24px; }
+  body.fs .call-side .btn.big { padding: 12px; font-size: 19px; }
+}
+@media (max-width: 900px) {
+  body.fs .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  body.fs .call-panel { grid-column: 1; grid-row: 1; }
+  body.fs .student-panel, body.fs .records-panel { display: none; }
+}
+</style>
 </head>
 <body>
 <header class="topbar">
@@ -26,6 +71,7 @@
     <button id="btn-deactivate" class="btn ghost hidden">🔓 取消激活</button>
     <button id="btn-password" class="btn ghost hidden">🔐 密码管理</button>
     <button id="btn-update" class="btn ghost">🔄 软件更新</button>
+    <button id="btn-fullscreen" class="btn ghost" title="全屏显示（一屏放完小键盘/备注/叫号/消息）">⛶ 全屏</button>
     <button id="btn-settings" class="btn ghost">⚙️ 设置</button>
     <button id="btn-import" class="btn ghost">📥 导入CSV</button>
     <button id="btn-manage" class="btn ghost">👥 名条管理</button>
@@ -159,6 +205,36 @@
       <label class="checkbox"><input id="set-secure-force" type="checkbox" /> 占用系统保留端口时自动抢占（管理员权限，会短暂停止 WinNAT/Hyper-V 网络）</label>
       </div>
       <p class="hint">手机端“激活 / 监控 / 远程控制 / 文件传输”等敏感功能需通过 https://主机名.local:安全端口 访问（自签名证书，首次需点“继续访问”）。</p>
+      <div class="form-grid">
+        <label>监控画质
+          <select id="set-monitor-quality">
+            <option value="smooth">流畅（640×480，省流量）</option>
+            <option value="standard">标准（1280×720，推荐）</option>
+            <option value="hd">高清（1920×1080，占带宽）</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">画质越高越清晰、也越吃 Wi-Fi 带宽；用手机看讲台时建议「高清」，网络差就选「流畅」。</p>
+      <div class="form-grid">
+        <label>双指手势
+          <select id="set-gesture">
+            <option value="zoom_scroll">缩放 / 滚动（推荐，所有程序都支持）</option>
+            <option value="touch">真实触摸注入（仅支持触摸的程序有效）</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">双指捏合＝Ctrl+滚轮（缩放），双指上下滑＝滚轮（滚动）。</p>
+      <div class="form-grid">
+        <label>手机触控方式
+          <select id="set-remote-touch">
+            <option value="auto">自动（推荐：触摸注入优先，失败自动改用鼠标）</option>
+            <option value="touch">只用触摸注入（调试用）</option>
+            <option value="mouse">只用鼠标（最兼容）</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">「自动」会用 Windows 多点触摸 API 注入真实触点（支持双指手势），
+        注入失败时自动退回鼠标，保证一定能点。</p>
     </div>
     <div class="modal-foot">
       <button id="btn-restart" class="btn danger" style="margin-right:auto">🔄 重启软件</button>
@@ -240,7 +316,7 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/auth.js?v=20261118b"></script>
-<script src="/static/app.js?v=20261119c"></script>
+<script src="/static/auth.js?v=20261119f"></script>
+<script src="/static/app.js?v=20261119f"></script>
 </body>
 </html>

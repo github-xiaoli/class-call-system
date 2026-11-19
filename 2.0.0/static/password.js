@@ -105,3 +105,120 @@ $("btn-random").addEventListener("click", () => {
 });
 $("btn-create").addEventListener("click", createPassword);
 loadPasswords();
+
+
+/* ---------- 扫码配对 ---------- */
+let pairCode = "";
+
+function pairHostOf(st) {
+  st = st || {};
+  // /api/status 返回的是 mdns_hostname；没有就退回局域网 IP，绝不能用 location.hostname
+  //（在电脑上打开时那是 127.0.0.1，手机扫了打不开）
+  const isIp = (v) => /^\d+\.\d+\.\d+\.\d+$/.test(v || "");
+  let host = st.mdns_hostname || "";
+  if (!host) {
+    const ips = st.local_ips || [];
+    const lan = ips.find((ip) => !ip.startsWith("127.") && !ip.startsWith("169.254."));
+    host = lan || ips[0] || "";
+  }
+  if (!host) return "";
+  return isIp(host) ? host : host + ".local";
+}
+
+function pairPageUrlOf(st) {
+  st = st || {};
+  const host = pairHostOf(st);
+  if (!host) return "（未配置设备名）";
+  const port = st.port || location.port || 8000;
+  return "http://" + host + ":" + port + "/pair";
+}
+
+function pairScanUrlOf(st) {
+  st = st || {};
+  const host = pairHostOf(st);
+  if (!host) return "";
+  if (st.secure_enabled) {
+    return "https://" + host + ":" + (st.secure_port || 9443) + "/pair";
+  }
+  return "http://" + host + ":" + (st.port || location.port || 8000) + "/pair";
+}
+
+function drawPairQR(text) {
+  const cv = document.getElementById("qr-canvas");
+  if (!cv || typeof qrcode !== "function") return;
+  const qr = qrcode(0, "M");
+  qr.addData(text);
+  qr.make();
+  const ctx = cv.getContext("2d");
+  const n = qr.getModuleCount();
+  const cell = Math.floor(200 / n);
+  const size = cell * n;
+  const off = Math.floor((200 - size) / 2);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, 200, 200);
+  ctx.fillStyle = "#0f172a";
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (qr.isDark(r, c)) ctx.fillRect(off + c * cell, off + r * cell, cell, cell);
+    }
+  }
+}
+
+async function makePairQR() {
+  const btn = document.getElementById("btn-qr-create");
+  if (!btn || btn.disabled) return;
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "生成中…";
+  try {
+    const name = (document.getElementById("qr-name").value || "").trim();
+    const note = (document.getElementById("qr-note").value || "").trim();
+    const d = await api("/api/auth/qr_create", {
+      method: "POST",
+      body: JSON.stringify({ minutes: 30, valid_days: 365,
+                             name: name || "手机扫码配对", note: note }),
+    });
+    pairCode = d.code;
+    document.getElementById("qr-box").classList.remove("hidden");
+    document.getElementById("qr-code").textContent = d.code;
+    document.getElementById("qr-who").textContent =
+      (d.name ? "名称：" + d.name : "") + (d.note ? "　备注：" + d.note : "");
+    const st = await api("/api/status").catch(() => ({}));
+    const scanBase = pairScanUrlOf(st);
+    if (!scanBase) {
+      toast("还没有设备名：请先到设置里填一个主机名，手机才能访问");
+      return;
+    }
+    const qrUrl = scanBase + "?t=" + encodeURIComponent(d.token);
+    drawPairQR(qrUrl);
+    const cv = document.getElementById("qr-canvas");
+    if (cv) cv.dataset.content = qrUrl;      // 方便自查二维码指向
+    document.getElementById("btn-qr-copy").disabled = false;
+    toast("二维码已生成，30 分钟内有效；旧二维码已作废");
+    if (typeof loadPasswords === "function") await loadPasswords();
+  } catch (e) {
+    toast("生成失败：" + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText || "生成配对二维码";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const b1 = document.getElementById("btn-qr-create");
+  if (b1) b1.addEventListener("click", makePairQR);
+  const b2 = document.getElementById("btn-qr-copy");
+  if (b2) b2.addEventListener("click", async () => {
+    if (!pairCode) return;
+    try {
+      await navigator.clipboard.writeText(pairCode);
+      toast("已复制配对码：" + pairCode);
+    } catch (e) {
+      toast("配对码：" + pairCode);
+    }
+  });
+  api("/api/status").then((st) => {
+    const el = document.getElementById("pair-url");
+    if (el) el.textContent = pairPageUrlOf(st);
+  }).catch(() => {});
+});
