@@ -254,15 +254,15 @@ def _load_channels():
         return json.loads(_http_get(url, timeout=6, retries=1))
 
     ex = ThreadPoolExecutor(max_workers=len(CHANNELS_JSON_URLS) or 1)
-    best = None
-    best_key = ()
+    merged = {}          # 通道 -> 目前看到的最新那条
+    got_any = False
     try:
         futures = [ex.submit(fetch, u) for u in CHANNELS_JSON_URLS]
         pending = set(futures)
         overall = time.time() + 6.5
-        settle = time.time() + 1.5
+        settle = time.time() + 3.0   # 镜像快的~0.7s、慢的~2s，留 3s 才收全，避免取到旧副本
         while pending:
-            target = settle if best is not None else overall
+            target = settle if got_any else overall
             left = target - time.time()
             if left <= 0:
                 break
@@ -276,16 +276,21 @@ def _load_channels():
                     continue
                 if not isinstance(data, dict) or not data:
                     continue
-                key = _channels_key(data)
-                if best is None or key > best_key:
-                    best = data
-                    best_key = key
+                got_any = True
+                # 按通道逐个合并：每个通道取"版本号最高"的那一份，
+                # 避免某个镜像整体旧一点就把整个通道拖回去
+                for name, entry in data.items():
+                    if not isinstance(entry, dict) or not entry.get("version"):
+                        continue
+                    cur = merged.get(name)
+                    if cur is None or _parse_ver(entry["version"]) > _parse_ver(cur.get("version", "0")):
+                        merged[name] = entry
     finally:
         ex.shutdown(wait=False)
-    if best is not None:
-        _CH_CACHE["data"] = best
+    if merged:
+        _CH_CACHE["data"] = merged
         _CH_CACHE["time"] = time.time()
-        return best
+        return merged
     return None
 
 
