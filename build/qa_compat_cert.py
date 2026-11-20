@@ -111,8 +111,13 @@ def main():
     try:
         check("升级后能正常启动", wait_ok("http://127.0.0.1:%d/api/status" % PORT))
 
+        # 根证书是在 HTTPS 服务启动阶段生成的，比 HTTP 接口晚一两秒，必须等
         ca_path = os.path.join(root, "data", "ca.crt")
-        check("自动生成了根证书 ca.crt", os.path.isfile(ca_path))
+        for _ in range(60):
+            if os.path.isfile(ca_path):
+                break
+            time.sleep(0.5)
+        check("自动生成了根证书 ca.crt", os.path.isfile(ca_path), ca_path)
         ca = x509.load_pem_x509_certificate(open(ca_path, "rb").read())
         try:
             is_ca = ca.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
@@ -120,6 +125,13 @@ def main():
             is_ca = False
         check("根证书是 CA（iPhone 才能开启完全信任）", is_ca is True)
 
+        for _ in range(60):      # 重签完成的标志：issuer 变成根证书
+            try:
+                if x509.load_pem_x509_certificate(open(old_crt, "rb").read()).issuer != old.issuer:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
         new = x509.load_pem_x509_certificate(open(old_crt, "rb").read())
         check("旧证书已被根证书重签", new.issuer == ca.subject,
               "%s -> %s" % (old.issuer.rfc4514_string()[:24], new.issuer.rfc4514_string()[:24]))
