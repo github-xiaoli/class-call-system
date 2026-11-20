@@ -5,13 +5,16 @@
 ## 下载与安装
 
 - **安装版（推荐）**：[Releases](https://github.com/github-xiaoli/class-call-system/releases/latest) 里下载
-  `ClassCaller-Setup-v2.0.21.exe`（约 60 MB），双击运行。安装向导 5 步：
+  `ClassCaller-Setup-v2.0.30.exe`（约 60 MB），双击运行。安装向导 5 步：
   欢迎 → 许可协议（GNU GPL v3 中文全文）→ 安装位置（默认 `C:\Program Files\班级叫号器`）→ 安装 → 完成。
   装完桌面和开始菜单都有快捷方式，之后可在「控制面板 → 卸载程序」里卸载（卸载时可选保留 `data` 数据）。
-- **图文说明书**：同一 release 里的 `ClassCaller-Manual-v2.0.21.pdf`，仓库内也有
+- **图文说明书**：同一 release 里的 `ClassCaller-Manual-v2.0.30.pdf`，仓库内也有
   [`使用说明-图文版.pdf`](使用说明-图文版.pdf) / [`.html`](使用说明-图文版.html)，纯文本版见 [`使用说明.txt`](使用说明.txt)。
-- **绿色版**：把 `classcaller-2.0.21.zip` 解压到已有安装目录即可（它是自动更新用的增量代码包），
+- **绿色版**：把 `classcaller-2.0.30.zip` 解压到已有安装目录即可（它是自动更新用的增量代码包），
   全新的手工部署请参看 `build_tools/`。
+- **⚠️ 手机/平板连不上？先看这份**：[`docs/环境与设备限制.md`](docs/环境与设备限制.md)
+  —— 把「改程序解决不了的问题」全部写清楚了：安卓/鸿蒙不解析 `.local`、iPhone 白屏（自签证书 /
+  第三方浏览器 / 完全信任设置）、校园 AP 屏蔽多播、DHCP 换 IP、防火墙按网络类型生效，等等。
 
 安装包自带 Python 3.13 运行环境，目标机不需要另外装 Python。安装包支持往同一目录重复安装
 （升级），`data/` 里的名单、叫号记录、配对密码会原样保留。
@@ -28,6 +31,13 @@
 ## 运行
 
 双击 `start.bat`（或 `启动-隐藏窗口.vbs`）。本机访问 `http://127.0.0.1:8000`。
+
+排障入口（2.0.30 起）：
+
+- `/plain`：不含脚本的极简页，能打开就说明网络与服务正常（白屏时先用它）
+- `/api/health`：纯 JSON，返回你连到的服务器 IP、协议、客户端 IP、UA
+- `/cert`：手机装证书引导页（iOS 白屏就靠它），另有 `/cert.mobileconfig`、`/cert.crt`
+- `/logs`：实时运行日志，可一键导出 txt（稳定版主页不显示入口，直接输网址可进）
 
 ## 许可证
 
