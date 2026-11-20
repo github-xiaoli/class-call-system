@@ -16,6 +16,8 @@ const state = {
   isLocal: false,
   activated: false,
   hasValidPassword: false,
+  edition: "stable",
+  mdns: { enabled: false, ok: true, error: "", urls: [], hostname: "" },
 };
 
 /* ---------- 工具 ---------- */
@@ -116,16 +118,110 @@ async function loadStatus() {
     $("roster-count").textContent = s.roster_count;
     const urls = [];
     for (const ip of s.local_ips) urls.push("http://" + ip + ":" + s.port);
-    if (s.mdns_enabled) urls.push(s.mdns_url);
+    if (s.mdns_enabled) {
+      const mdnsUrls = (s.mdns_urls && s.mdns_urls.length) ? s.mdns_urls : [s.mdns_url];
+      for (const u of mdnsUrls) urls.push(u);
+    }
     if (s.secure_enabled) urls.push(s.secure_url + " (安全)");
     $("server-url").textContent = urls.join("  ·  ");
     state.secureUrl = s.secure_url;
     state.securePort = s.secure_port;
+    state.edition = s.edition || "stable";
+    state.mdns = { enabled: !!s.mdns_enabled, ok: s.mdns_ok !== false, error: s.mdns_error || "",
+                   urls: s.mdns_urls || [], hostname: s.mdns_hostname || "" };
     $("status-dot").className = "dot " + (s.zeroconf_ok ? "ok" : "err");
+    // 日志入口：稳定版隐藏（但直接输 /logs 仍然能进）
+    const lb = $("btn-logs");
+    if (lb) lb.classList.toggle("hidden", state.edition === "stable");
+    renderMdnsState();
   } catch (e) {
     $("status-dot").className = "dot err";
   }
 }
+
+/* mDNS 状态提示：注册失败时在设置里用红字说清楚原因和办法 */
+function renderMdnsState() {
+  const box = $("mdns-state");
+  if (!box) return;
+  const m = state.mdns || {};
+  box.classList.remove("ok", "bad");
+  if (!m.enabled) {
+    box.textContent = "mDNS 状态：已关闭（手机只能用 IP 访问）";
+    return;
+  }
+  if (m.ok === false || m.error) {
+    box.classList.add("bad");
+    box.textContent = "⚠️ mDNS 注册失败：" + (m.error || "原因见日志") +
+      "（手机可先用 http://电脑IP:端口 访问；点右侧「mDNS 诊断」查明原因）";
+    return;
+  }
+  const urls = (m.urls && m.urls.length) ? m.urls.join("  ") : "http://" + (m.hostname || "主机名") + ".local";
+  box.classList.add("ok");
+  box.textContent = "✅ mDNS 已生效：" + urls;
+}
+
+async function mdnsDiag() {
+  const out = $("mdns-diag-out");
+  out.classList.remove("hidden");
+  out.textContent = "正在检查…";
+  try {
+    const d = await authedApi("/api/mdns/diag");
+    const lines = [];
+    lines.push("【网卡判定】");
+    for (const a of (d.adapters || [])) {
+      lines.push("  " + (a.usable ? "✅" : "⏭") + " " + a.alias +
+        "　IP=" + ((a.ips || []).join(",") || "-") +
+        (a.gateway ? "　有默认网关" : "　无默认网关") +
+        (a.desc ? "\n      " + a.desc : "") +
+        (a.reason ? "　→ " + a.reason : ""));
+    }
+    lines.push("");
+    lines.push("【mDNS 广播计划】");
+    if (!(d.plan || []).length) lines.push("  （没有可广播的网卡）");
+    for (const p of (d.plan || [])) {
+      lines.push("  http://" + p.hostname + ".local:" + (d.status || {}).port +
+        "　→ " + (p.ips || []).join(",") + "（网卡 " + p.iface + "）");
+    }
+    lines.push("");
+    lines.push("【本机解析结果】");
+    for (const r of (d.resolved || [])) {
+      lines.push("  " + (r.ok ? "✅" : "⚠️") + " " + r.host + " → " + (r.ip || "解析不到"));
+    }
+    if ((d.hints || []).length) {
+      lines.push("");
+      lines.push("【提示】");
+      for (const h of d.hints) lines.push("  · " + h);
+    }
+    lines.push("");
+    lines.push("【计算机名】" + d.computer_name + "　默认路由 IP：" + (d.default_route_ip || "-"));
+    lines.push("【日志文件】" + (d.log_file || "-"));
+    out.textContent = lines.join("\n");
+    if (d.status) {
+      state.mdns = { enabled: !!d.status.enabled, ok: !!d.status.ok,
+                     error: d.status.error || "", urls: d.status.urls || [],
+                     hostname: d.status.hostname || "" };
+      renderMdnsState();
+    }
+  } catch (e) {
+    out.textContent = "诊断失败：" + e.message;
+  }
+}
+
+async function mdnsRetry() {
+  try {
+    const d = await authedApi("/api/mdns/refresh", { method: "POST", body: "{}" });
+    const registered = (d.registered !== undefined) ? !!d.registered : !!d.ok;
+    state.mdns = { enabled: !!d.enabled, ok: registered, error: d.error || "",
+                   urls: d.urls || [], hostname: d.hostname || "" };
+    renderMdnsState();
+    await loadStatus();
+    toast(registered ? "mDNS 已重新注册：" + (d.urls || []).join("  ")
+                     : "重新注册失败：" + (d.error || "原因见日志"));
+  } catch (e) {
+    toast("重新注册失败：" + e.message);
+  }
+}
+
 
 async function loadAuthMe() {
   try {
@@ -352,7 +448,7 @@ function fillSettingsForm() {
   if (qSel) qSel.value = c.monitor_quality || "standard";
   const ifSel = $("set-mdns-interface");
   ifSel.innerHTML = "";
-  ifSel.add(new Option("自动（全部网卡）", "auto"));
+  ifSel.add(new Option("自动（推荐：自动挑选能连上的网卡）", "auto"));
   for (const it of (state.interfaces || [])) {
     ifSel.add(new Option(it.name + "（" + (it.ips || []).join(", ") + "）", it.id));
   }
@@ -406,13 +502,21 @@ async function saveSettings() {
         }
       } catch (e) { /* 校验接口本身异常时不阻塞保存 */ }
     }
-    await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
+    const r = await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
     state.config = { ...state.config, ...cfg };
     await loadStatus();
     const hostChanged = String(cfg.mdns_hostname || "").toLowerCase() !== oldHost;
     const tips = [];
     if (cfg.port !== oldPort) tips.push("端口需重启生效");
     if (hostChanged) tips.push("主机名已改：http 立刻可用，https 需重启一次生效");
+    if (r && r.mdns) {
+      state.mdns = { enabled: !!r.mdns.enabled, ok: !!r.mdns.ok, error: r.mdns.error || "",
+                     urls: r.mdns.urls || [], hostname: r.mdns.hostname || "" };
+      renderMdnsState();
+      if (cfg.mdns_enabled && r.mdns.ok === false) {
+        tips.push("mDNS 没成功：" + (r.mdns.error || "原因见日志") + "（手机可用 IP 直连）");
+      }
+    }
     toast("设置已保存" + (tips.length ? "（" + tips.join("；") + "）" : ""));
   } catch (e) {
     if (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message)) {
@@ -693,8 +797,20 @@ document.addEventListener("webkitfullscreenchange", syncFsClass);
 $("btn-fullscreen").addEventListener("click", toggleFullscreen);
 
 $("btn-settings").addEventListener("click", () => {
-    loadConfig().then(() => { fillSettingsForm(); openModal("modal-settings"); });
+    loadConfig().then(() => {
+      fillSettingsForm();
+      renderMdnsState();
+      openModal("modal-settings");
+    });
   });
+  const btnLogs = $("btn-logs");
+  if (btnLogs) btnLogs.addEventListener("click", () => { location.href = "/logs"; });
+  const btnOpenLogs = $("btn-open-logs");
+  if (btnOpenLogs) btnOpenLogs.addEventListener("click", () => { location.href = "/logs"; });
+  const btnDiag = $("btn-mdns-diag");
+  if (btnDiag) btnDiag.addEventListener("click", mdnsDiag);
+  const btnRetry = $("btn-mdns-retry");
+  if (btnRetry) btnRetry.addEventListener("click", mdnsRetry);
   $("btn-update").addEventListener("click", () => { location.href = "/update"; });
   $("set-phrase").addEventListener("input", updatePhrasePreview);
   $("set-volume-enabled").addEventListener("change", () => {
@@ -732,5 +848,6 @@ async function init() {
   await loadConfig();
   fillSettingsForm();
   updateSelectedDisplay();
+  window.__appReady = true;        // 告诉白屏兜底：脚本正常运行，不用显示提示
 }
 init();

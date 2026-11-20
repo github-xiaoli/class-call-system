@@ -110,27 +110,44 @@ loadPasswords();
 /* ---------- 扫码配对 ---------- */
 let pairCode = "";
 
+function lanIpOf(st) {
+  st = st || {};
+  const ips = st.local_ips || [];
+  return ips.find((ip) => !ip.startsWith("127.") && !ip.startsWith("169.254.")) || "";
+}
+
+/* 二维码里放的地址：**优先用 IP**（所有手机、所有系统都能打开）。
+   名字（xxx.local）靠设备自己解析 mDNS：iPhone / iPad / 电脑 / 较新安卓
+   （Android 12+、LineageOS 等）可以，部分华为鸿蒙等机型不行 —— 实测
+   荣耀30S(鸿蒙3.0) 报"找不到服务器"，Lenovo 平板(LineageOS 23 GSI) 正常。
+   所以默认用 IP，名字只在页面文字里作备选。 */
 function pairHostOf(st) {
   st = st || {};
-  // /api/status 返回的是 mdns_hostname；没有就退回局域网 IP，绝不能用 location.hostname
-  //（在电脑上打开时那是 127.0.0.1，手机扫了打不开）
-  const isIp = (v) => /^\d+\.\d+\.\d+\.\d+$/.test(v || "");
-  let host = st.mdns_hostname || "";
-  if (!host) {
-    const ips = st.local_ips || [];
-    const lan = ips.find((ip) => !ip.startsWith("127.") && !ip.startsWith("169.254."));
-    host = lan || ips[0] || "";
-  }
+  const ip = lanIpOf(st);
+  if (ip) return ip;
+  const host = st.mdns_hostname || "";
   if (!host) return "";
-  return isIp(host) ? host : host + ".local";
+  return /^\d+\.\d+\.\d+\.\d+$/.test(host) ? host : host + ".local";
+}
+
+/* 备用：用设备名访问的地址（苹果/电脑可用）。 */
+function pairNameUrlOf(st) {
+  st = st || {};
+  const host = st.mdns_hostname || "";
+  if (!host || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return "";
+  const port = st.port || location.port || 8000;
+  return "http://" + host + ".local:" + port + "/pair";
 }
 
 function pairPageUrlOf(st) {
   st = st || {};
   const host = pairHostOf(st);
-  if (!host) return "（未配置设备名）";
+  if (!host) return "（没有可用的局域网地址）";
   const port = st.port || location.port || 8000;
-  return "http://" + host + ":" + port + "/pair";
+  let text = "http://" + host + ":" + port + "/pair";
+  const nameUrl = pairNameUrlOf(st);
+  if (nameUrl) text += "　（iPhone/电脑也可用 " + nameUrl + "）";
+  return text;
 }
 
 function pairScanUrlOf(st) {
@@ -194,7 +211,7 @@ async function makePairQR() {
     const cv = document.getElementById("qr-canvas");
     if (cv) cv.dataset.content = qrUrl;      // 方便自查二维码指向
     document.getElementById("btn-qr-copy").disabled = false;
-    toast("二维码已生成，30 分钟内有效；旧二维码已作废");
+    toast("二维码已生成（用 IP 直连，任何手机都能打开），30 分钟内有效");
     if (typeof loadPasswords === "function") await loadPasswords();
   } catch (e) {
     toast("生成失败：" + e.message);

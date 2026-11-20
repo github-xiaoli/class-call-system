@@ -877,6 +877,13 @@ class DesktopUI:
         """后台下载更新时只弹右下角气泡（不弹大窗口）。"""
         self._queue.put(("update_toast", text))
 
+    def _open_manual(self):
+        """打开图文使用说明（软件内置页面；缺说明书文件时也有速查兜底页）。"""
+        try:
+            os.startfile("http://127.0.0.1:%d/manual" % self.port)
+        except Exception as exc:
+            print("[说明] 打开使用说明失败:", exc)
+
     def _open_update_page(self):
         """打开网页版更新界面（和托盘菜单共用）。"""
         self._close_toast()
@@ -1354,6 +1361,7 @@ class DesktopUI:
         try:
             menu = win32gui.CreatePopupMenu()
             win32gui.AppendMenu(menu, win32con.MF_STRING, 1, "打开网页")
+            win32gui.AppendMenu(menu, win32con.MF_STRING, 4, "📖 使用说明")
             win32gui.AppendMenu(menu, win32con.MF_STRING, 3,
                                 "软件更新（查看进度）" if self._updating else "软件更新")
             # 分隔线：某些 pywin32 版本要求必须给字符串，给 None 会抛 TypeError
@@ -1387,6 +1395,8 @@ class DesktopUI:
                 os.startfile("http://127.0.0.1:%d" % self.port)
             except Exception:
                 pass
+        elif cmd == 4:
+            self._open_manual()
         elif cmd == 3:
             self._open_update_page()
         elif cmd == 2:

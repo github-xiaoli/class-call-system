@@ -23,10 +23,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
-from flask import Flask, jsonify, render_template, request, redirect
+from flask import (Flask, Response, jsonify, render_template, request,
+                   redirect, send_file, send_from_directory)
 from flask_sock import Sock
 
 # ---------------------------------------------------------------------------
@@ -55,8 +57,9 @@ ROSTER_PATH = os.path.join(DATA_DIR, "roster.json")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 CALLS_PATH = os.path.join(DATA_DIR, "calls.json")
 LOG_PATH = os.path.join(DATA_DIR, "calls.log")
+LOGS_DIR = os.path.join(DATA_DIR, "logs")     # 运行日志（排障用，网页 /logs 可查看导出）
 
-for _d in (DATA_DIR, SOUNDS_DIR, UPLOAD_DIR):
+for _d in (DATA_DIR, SOUNDS_DIR, UPLOAD_DIR, LOGS_DIR):
     os.makedirs(_d, exist_ok=True)
 
 DEFAULT_CONFIG = {
@@ -93,9 +96,14 @@ except Exception:
 
 try:
     from zeroconf import ServiceInfo, Zeroconf, NonUniqueNameException
+    try:
+        from zeroconf import IPVersion       # 0.154 起可把收发限制在 IPv4
+    except Exception:
+        IPVersion = None
     HAS_ZEROCONF = True
 except Exception:
     HAS_ZEROCONF = False
+    IPVersion = None
 
 # 控制台/日志编码统一成 UTF-8（Windows 默认 GBK 时，print 中文或 emoji 会抛
 # UnicodeEncodeError，把后台线程带崩）
@@ -108,6 +116,13 @@ try:
             pass
 except Exception:
     pass
+
+# 运行日志：print/logging 的输出同时进内存缓冲与 data/logs/app-日期.log，
+# 网页 /logs 可实时查看 + 一键导出（不再需要截图黑窗口）。
+import netif        # 网卡枚举：GetAdaptersAddresses（不依赖 PowerShell / WMI）
+import runlog       # 运行日志
+
+runlog.install(LOGS_DIR)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB，支持文件传输上传
@@ -585,149 +600,151 @@ threading.Thread(target=playback_worker, daemon=True, name="tts-worker").start()
 # mDNS：让局域网设备通过 http://主机名.local:端口 访问
 # ---------------------------------------------------------------------------
 def get_lan_ips():
-    """返回本机局域网 IPv4 列表，默认路由网卡 IP 排在最前（多网卡时优先可用）。"""
-    primary = None
-    ips = set()
+    """本机可用于局域网访问的 IPv4 列表（真实网卡优先，主网卡排最前）。
+
+    用 netif（GetAdaptersAddresses）取网卡，排除虚拟网卡（Hyper-V / WSL /
+    Wi-Fi Direct 等）和 169.254 地址；取不到再退回默认路由 + 主机名解析。
+    """
+    out = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            primary = s.getsockname()[0]
-            ips.add(primary)
-        finally:
-            s.close()
-    except Exception:
-        pass
+        for it in netif.usable_adapters():
+            for ip in it.get("ips", []):
+                if ip not in out:
+                    out.append(ip)
+    except Exception as exc:
+        print("[网卡] 读取网卡失败:", exc)
+    if out:
+        return out
+    ip = netif.default_route_ip()
+    if ip:
+        out.append(ip)
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.add(info[4][0])
+            ip2 = info[4][0]
+            if netif.ip_ok(ip2) and ip2 not in out:
+                out.append(ip2)
     except Exception:
         pass
-    ips.discard("127.0.0.1")
-    ordered = []
-    if primary and primary in ips:
-        ordered.append(primary)
-    for ip in sorted(ips):
-        if ip != primary:
-            ordered.append(ip)
-    return ordered
+    return out
 
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000
 
 
 def get_network_interfaces():
-    """枚举带有 IPv4 地址的网卡（用于设置界面选择 mDNS 绑定网卡）。
-    返回 [{id, name, ips}]，id/name 使用 Windows 网卡别名（如 以太网 / WLAN）。"""
+    """枚举网卡（用于设置界面选择 mDNS 绑定网卡，以及诊断显示）。
+
+    返回 [{id, name, ips, virtual, usable, gateway, desc, reason}]，
+    id/name 用 Windows 网卡别名（如 以太网 / WLAN）。虚拟网卡会标注出来，
+    以免老师误选一块手机根本连不上的网卡。
+    """
     interfaces = []
     try:
-        ps = ("Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-              "Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254*' } | "
-              "Select-Object InterfaceAlias,IPAddress | ConvertTo-Json -Compress")
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-Command", ps],
-            capture_output=True, text=True, timeout=25,
-            creationflags=_CREATE_NO_WINDOW, check=False)
-        items = json.loads(proc.stdout.strip() or "[]")
-        if isinstance(items, dict):
-            items = [items]
-        by_name = {}
-        for it in items:
-            name = str(it.get("InterfaceAlias", "")).strip()
-            ip = str(it.get("IPAddress", "")).strip()
-            if not name or not ip:
+        for it in netif.enum_adapters():
+            ips = it.get("ips") or it.get("all_ips") or []
+            if not ips:
                 continue
-            by_name.setdefault(name, []).append(ip)
-        for name in sorted(by_name.keys()):
-            virtual = _looks_virtual_iface(name)
-            interfaces.append({"id": name,
-                               "name": name + ("（虚拟网卡）" if virtual else ""),
-                               "ips": sorted(by_name[name]),
-                               "virtual": virtual})
+            alias = it.get("alias") or ("网卡%s" % it.get("index"))
+            if it.get("virtual"):
+                tag = "（虚拟网卡）"
+            elif not it.get("usable"):
+                tag = "（%s）" % (it.get("reason") or "不可用")
+            elif not it.get("gateway"):
+                tag = "（无默认网关）"
+            else:
+                tag = ""
+            interfaces.append({
+                "id": alias,
+                "name": alias + tag,
+                "ips": ips,
+                "virtual": bool(it.get("virtual")),
+                "usable": bool(it.get("usable")),
+                "gateway": bool(it.get("gateway")),
+                "desc": it.get("desc") or "",
+                "reason": it.get("reason") or "",
+            })
     except Exception as exc:
         print("[网卡] 枚举网卡失败:", exc)
-    if not interfaces:
-        ips = get_lan_ips()
-        if ips:
-            interfaces.append({"id": "auto", "name": "自动（全部网卡）", "ips": ips})
     return interfaces
 
 
-def get_mdns_ips(cfg):
-    """按 mdns_interface 配置返回 mDNS 应广播的 IP 列表（所有目标网卡合并、去重）。"""
-    out = []
-    for g in get_mdns_targets(cfg):
-        for ip in g.get("ips", []):
-            if ip not in out:
-                out.append(ip)
-    if out:
-        return out
-    return get_lan_ips()
-
-
-# 判断网卡是不是"虚拟/隧道"类型：这些网卡的 IP 广播出去手机也连不上，
-# 自动模式下把它们排到后面、优先只广播真实网卡
-_VIRTUAL_IFACE_HINTS = ("vethernet", "hyper-v", "vmware", "virtualbox", "virtual",
-                        "loopback", "npcap", "docker", "wsl", "bluetooth", "teredo",
-                        "6to4", "isatap", "tap", "tun", "vpn", "zerotier", "tailscale",
-                        "sangfor", "easyconnect", "clash", "vmnet")
-
-
-def _looks_virtual_iface(name):
-    low = (name or "").strip().lower()
-    if not low:
-        return False
-    return any(h in low for h in _VIRTUAL_IFACE_HINTS)
-
-
 def _mdns_ip_ok(ip):
-    """mDNS 广播时该 IP 有没有意义。"""
-    ip = str(ip or "").strip()
-    if not ip:
-        return False
-    if ip.startswith("127.") or ip.startswith("169.254.") or ip == "0.0.0.0":
-        return False
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
+    """mDNS 广播时该 IP 有没有意义（内部走 netif 的判定规则）。"""
+    return netif.ip_ok(ip)
+
+
+def _mdns_domain(hostname, n):
+    """第 n 块网卡用哪个域名：主机名、主机名-2、主机名-3……
+
+    绝不让两块网卡共用同一个域名 —— zeroconf 会把同域名（server）的 A 记录
+    合并成一条记录集，那样手机上就会拿到"一半能连、一半连不上"的地址列表。
+    """
+    hostname = normalize_hostname(hostname)
+    return hostname if n <= 1 else "%s-%d" % (hostname, n)
+
+
+def get_mdns_plan(cfg):
+    """生成 mDNS 广播计划：[{hostname, ips, iface, primary, virtual}]。
+
+    每块**真实**网卡一个独立域名，并且每个域名只带 1 个 IP。
+    虚拟网卡（Hyper-V / WSL / Wi-Fi Direct / VPN …）一律不广播。
+    """
+    hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
+    wanted = str(cfg.get("mdns_interface", "") or "").strip()
     try:
-        return all(0 <= int(p) <= 255 for p in parts)
-    except Exception:
-        return False
+        adapters = netif.enum_adapters()
+    except Exception as exc:
+        print("[mDNS] 枚举网卡失败:", exc)
+        adapters = []
+
+    usable = [a for a in adapters if a.get("usable") and a.get("ips")]
+    if not usable:
+        ip = netif.default_route_ip()
+        if netif.ip_ok(ip):
+            print("[mDNS] 没有识别到可用真实网卡，退回默认路由地址 %s" % ip)
+            return [{"hostname": hostname, "ips": [ip], "iface": "默认路由",
+                     "primary": True, "virtual": False}]
+        return []
+
+    if wanted and wanted.lower() not in ("auto", "自动", "全部"):
+        picked = [a for a in usable
+                  if wanted in (a.get("alias") or "", a.get("desc") or "")]
+        if picked:
+            usable = picked
+        else:
+            print("[mDNS] 设置里指定的网卡「%s」不存在，改用自动选择" % wanted)
+
+    plan = []
+    n = 0
+    for a in usable:
+        ips = [ip for ip in a.get("ips", []) if netif.ip_ok(ip)]
+        if not ips:
+            continue
+        n += 1
+        plan.append({"hostname": _mdns_domain(hostname, n), "ips": ips[:1],
+                     "iface": a.get("alias") or "-", "primary": n == 1,
+                     "virtual": bool(a.get("virtual"))})
+    return plan
 
 
 def get_mdns_targets(cfg):
-    """按网卡分组返回 mDNS 要广播的地址：[{name, ips, virtual}]。
+    """按网卡返回分组信息（设置界面、自检、诊断用）。"""
+    out = []
+    for p in get_mdns_plan(cfg):
+        out.append({"id": p["iface"], "name": p["iface"], "ips": p["ips"],
+                    "virtual": p["virtual"], "hostname": p["hostname"],
+                    "primary": p["primary"]})
+    return out
 
-    每块网卡单独注册一个 mDNS 服务实例，各自只带自己那张网卡的 IP，
-    避免"一个应答里塞进 WSL/Hyper-V 虚拟网卡地址"导致手机解析到连不上的地址。
-    """
-    wanted = str(cfg.get("mdns_interface", "") or "").strip()
-    groups = []
-    try:
-        for it in get_network_interfaces():
-            alias = str(it.get("id") or it.get("name") or "").strip()
-            ips = [ip for ip in it.get("ips", []) if _mdns_ip_ok(ip)]
-            if not ips:
-                continue
-            virtual = bool(it.get("virtual")) or _looks_virtual_iface(alias)
-            groups.append({"id": alias, "name": alias, "ips": ips, "virtual": virtual})
-    except Exception as exc:
-        print("[网卡] 分组失败:", exc)
 
-    if wanted and wanted not in ("auto", "自动"):
-        picked = [g for g in groups if g["id"] == wanted or g["name"] == wanted]
-        if picked:
-            return picked
-
-    real = [g for g in groups if not g["virtual"]]
-    if real:
-        return real
-    if groups:
-        return groups
-    ips = [ip for ip in get_lan_ips() if _mdns_ip_ok(ip)]
-    return [{"name": "自动", "ips": ips, "virtual": False}] if ips else []
+def get_mdns_ips(cfg):
+    """mDNS 实际广播出去的 IP（所有域名合并、去重，主网卡在最前）。"""
+    out = []
+    for p in get_mdns_plan(cfg):
+        for ip in p["ips"]:
+            if ip not in out:
+                out.append(ip)
+    return out
 
 
 def normalize_hostname(name):
@@ -737,15 +754,104 @@ def normalize_hostname(name):
     return name or socket.gethostname().lower()
 
 
-def register_mdns(cfg):
-    """按当前配置注册（或更新）mDNS 服务。
+_MDNS_STATE = {
+    "ok": False,        # 最近一次注册是否成功
+    "error": "",        # 失败原因（网页直接显示给老师看）
+    "solution": "",     # 对应的解决办法
+    "at": 0.0,          # 最近一次尝试的时间
+    "plan": [],         # [{hostname, ips, iface, primary}]
+    "names": [],        # 实际注册上去的服务名（可能因撞名被自动加了后缀）
+}
+_MDNS_STOP = threading.Event()
+_MDNS_WATCHER = None
+_MDNS_WATCH_INTERVAL = 8.0     # 每 8 秒看一眼网卡有没有变化（换网/插拔/Wi-Fi 连上）
 
-    每块网卡一个实例，只带该网卡的 IP（HTTP + HTTPS 各一条）。
-    重复调用时：状态没变就直接返回；变了就 update_service / 定向重注册，
-    避免 "注销后立刻注册同名服务" 被 mDNS 自身缓存挡住（NonUniqueNameException）。
+
+def mdns_status():
+    """mDNS 状态汇总（设置界面、启动自检、诊断接口共用，不做耗时解析）。"""
+    cfg = get_config()
+    port = int(_running_port or cfg.get("port", 8000))
+    hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
+    plan = list(_MDNS_STATE.get("plan") or [])
+    st = {
+        "ok": bool(_MDNS_STATE.get("ok")),
+        "enabled": bool(cfg.get("mdns_enabled")),
+        "error": _MDNS_STATE.get("error") or "",
+        "solution": _MDNS_STATE.get("solution") or "",
+        "at": _MDNS_STATE.get("at") or 0,
+        "at_text": (time.strftime("%Y-%m-%d %H:%M:%S",
+                                  time.localtime(_MDNS_STATE["at"]))
+                    if _MDNS_STATE.get("at") else ""),
+        "zeroconf_ok": HAS_ZEROCONF,
+        "hostname": hostname,
+        "port": port,
+        "plan": plan,
+        "names": list(_MDNS_STATE.get("names") or []),
+        "urls": ["http://%s.local:%d" % (p.get("hostname") or hostname, port) for p in plan],
+        "lan_ips": get_lan_ips(),
+    }
+    return st
+
+
+def mdns_diagnose():
+    """完整诊断：网卡判定（含每块网卡被跳过的原因）+ 注册计划 + 本机解析结果。"""
+    cfg = get_config()
+    hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
+    adapters = []
+    try:
+        adapters = netif.enum_adapters(force=True)
+    except Exception as exc:
+        print("[mDNS] 诊断时枚举网卡失败:", exc)
+    plan = get_mdns_plan(cfg)
+    resolved = []
+    for p in plan:
+        ip = _resolve_mdns(p["hostname"])
+        resolved.append({"host": "%s.local" % p["hostname"], "ip": ip or "",
+                         "ok": bool(ip and ip in p["ips"])})
+    hints = []
+    if not HAS_ZEROCONF:
+        hints.append("缺少 zeroconf 组件，mDNS 不可用")
+    if not plan:
+        hints.append("没有可广播的网卡：请确认网线/Wi-Fi 已连接并且拿到了 IP")
+    for a in adapters:
+        if a.get("usable") and not a.get("gateway"):
+            hints.append("网卡「%s」没有默认网关，通常说明这块网卡没接到路由器" % a.get("alias"))
+    if hostname.lower() == socket.gethostname().lower():
+        hints.append("主机名与 Windows 计算机名相同，可能与系统自带的网络发现服务抢名字，"
+                     "建议改成别的名字（例如 %s-cls）" % hostname)
+    if plan and not any(r["ok"] for r in resolved):
+        hints.append("本机暂时解析不到自己的 .local 名字：其它设备一般仍可访问，"
+                     "若手机也打不开，多半是路由器屏蔽了 mDNS 多播（可用 IP 直连）")
+    return {
+        "ok": True,
+        "status": mdns_status(),
+        "adapters": [{
+            "alias": a.get("alias"), "desc": a.get("desc"), "ips": a.get("ips"),
+            "all_ips": a.get("all_ips"), "gateway": a.get("gateway"),
+            "usable": a.get("usable"), "virtual": a.get("virtual"),
+            "reason": a.get("reason"), "iftype": a.get("iftype"),
+        } for a in adapters],
+        "adapters_text": netif.describe(adapters),
+        "plan": plan,
+        "resolved": resolved,
+        "hints": hints,
+        "computer_name": socket.gethostname(),
+        "default_route_ip": netif.default_route_ip(),
+        "log_file": runlog.log_file_path(),
+    }
+
+
+def register_mdns(cfg, force=False):
+    """注册（或更新）mDNS 服务：**一个域名只带一块网卡的地址**。
+
+    重复调用时状态没变就直接返回；变了就 update_service / 重新注册，避免
+    "注销后立刻注册同名服务"被自身缓存挡住（NonUniqueNameException）。
     """
     global _mdns_zc, _mdns_infos
     if not HAS_ZEROCONF:
+        _MDNS_STATE.update({"ok": False, "at": time.time(), "plan": [], "names": [],
+                            "error": "缺少 zeroconf 组件，mDNS 无法使用",
+                            "solution": "请使用完整版软件（内含 mDNS 组件）"})
         return False
     with MDNS_LOCK:
         try:
@@ -756,47 +862,83 @@ def register_mdns(cfg):
                     except Exception:
                         pass
                 _mdns_infos = []
+                register_mdns._key = None
+                _MDNS_STATE.update({"ok": False, "error": "", "solution": "",
+                                    "at": time.time(), "plan": [], "names": []})
                 return False
 
-            hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
             port = int(_running_port or cfg.get("port", 8000))
             secure_port = int(_running_secure_port or cfg.get("secure_port", 9443))
             secure_on = bool(cfg.get("secure_enabled", True))
-            targets = get_mdns_targets(cfg)
-            if not targets:
-                print("[mDNS] 没有可广播的局域网地址，跳过注册")
+            plan = get_mdns_plan(cfg)
+            if not plan:
+                msg = "没有可广播的局域网地址（网卡未连接或没拿到 IPv4）"
+                print("[mDNS] " + msg)
+                _MDNS_STATE.update({
+                    "ok": False, "error": msg, "at": time.time(),
+                    "solution": "确认网线/Wi-Fi 已连接、能上网；或在设置里换一块网卡后重启软件",
+                    "plan": [], "names": []})
                 return False
 
-            if _mdns_zc is None:
-                _mdns_zc = Zeroconf()
-            zc = _mdns_zc
-
-            # ---- 计算期望的服务表：name -> (addresses, port)
+            # ---- 期望的服务表：name -> (type, addrs, port, hostname, iface, ips)
             wanted = {}
-            multi = len(targets) > 1
-            for g in targets:
-                addrs = []
-                for ip in g["ips"]:
-                    try:
-                        addrs.append(socket.inet_aton(ip))
-                    except Exception:
-                        pass
+            for p in plan:
+                try:
+                    addrs = [socket.inet_aton(ip) for ip in p["ips"]]
+                except Exception:
+                    addrs = []
                 if not addrs:
                     continue
-                tag = (" (%s)" % g["name"]) if (multi and g.get("name")) else ""
-                wanted["班级叫号器%s._http._tcp.local." % tag] = ("_http._tcp.local.", addrs, port,
-                                                                  g.get("name") or "-", g["ips"])
+                tag = " (%s)" % p["hostname"]     # 实例名带域名：同一局域网多台电脑不会撞名
+                wanted["班级叫号器%s._http._tcp.local." % tag] = (
+                    "_http._tcp.local.", addrs, port, p["hostname"], p["iface"], p["ips"])
                 if secure_on:
                     wanted["班级叫号器%s-安全._https._tcp.local." % tag] = (
-                        "_https._tcp.local.", addrs, secure_port, g.get("name") or "-", g["ips"])
+                        "_https._tcp.local.", addrs, secure_port, p["hostname"],
+                        p["iface"], p["ips"])
             if not wanted:
+                _MDNS_STATE.update({"ok": False, "at": time.time(), "plan": plan, "names": [],
+                                    "error": "网卡地址无效，无法广播",
+                                    "solution": "在设置里更换网卡或重启软件"})
                 return False
 
             # ---- 状态完全没变就不动（最常见：向导里连续保存两次）
-            state_key = (hostname, secure_on, secure_port, tuple(
-                sorted((n, p, tuple(a)) for n, (_t, a, p, _g, _i) in wanted.items())))
-            if _mdns_infos and getattr(register_mdns, "_key", None) == state_key:
+            state_key = (secure_on, secure_port, tuple(sorted(
+                (n, t, tuple(a), sp) for n, (t, a, sp, _h, _i, _ips) in wanted.items())))
+            if (not force and _mdns_infos
+                    and getattr(register_mdns, "_key", None) == state_key):
                 return True
+
+            # ---- 响应器：只绑定真实网卡（虚拟网卡不参与收发）
+            ifaces = []
+            for p in plan:
+                for ip in p["ips"]:
+                    if ip not in ifaces:
+                        ifaces.append(ip)
+            if _mdns_zc is None:
+                try:
+                    _mdns_zc = Zeroconf(interfaces=ifaces,
+                                        ip_version=(IPVersion.V4Only if IPVersion else None))
+                except Exception as exc:
+                    print("[mDNS] 按网卡创建响应器失败（%r），改用系统默认" % (exc,))
+                    _mdns_zc = Zeroconf()
+                register_mdns._ifaces = ifaces
+            elif getattr(register_mdns, "_ifaces", None) != ifaces:
+                try:
+                    _mdns_zc.update_interfaces(
+                        interfaces=ifaces,
+                        ip_version=(IPVersion.V4Only if IPVersion else None))
+                    register_mdns._ifaces = ifaces
+                    print("[mDNS] 网卡地址变化，已重新绑定: %s" % (", ".join(ifaces) or "-"))
+                except Exception as exc:
+                    print("[mDNS] 重新绑定网卡失败（%r），重建响应器" % (exc,))
+                    try:
+                        _mdns_zc.close()
+                    except Exception:
+                        pass
+                    _mdns_zc = Zeroconf()
+                    register_mdns._ifaces = ifaces
+            zc = _mdns_zc
 
             # ---- 注销不再需要的
             keep = []
@@ -809,51 +951,110 @@ def register_mdns(cfg):
                 else:
                     keep.append(info)
 
-            # ---- 更新/注册
+            # ---- 更新 / 注册
             new_infos = []
-            for name, (stype, addrs, sport, iface_name, ips) in wanted.items():
+            errors = []
+            for name, (stype, addrs, sport, host_name, iface_name, ips) in wanted.items():
+                server = "%s.local." % host_name
                 existing = next((x for x in keep if x.name == name), None)
                 if existing is not None:
-                    # 同名：只更新地址/端口，不重新注册
                     try:
                         zc.update_service(ServiceInfo(
                             stype, name, addresses=addrs, port=sport,
-                            properties={b"path": b"/"}, server=("%s.local." % hostname)))
+                            properties={b"path": b"/"}, server=server))
                         new_infos.append(existing)
-                        print("[mDNS] 已更新 %s  网卡=%s  IP=%s" % (name, iface_name, ", ".join(ips)))
+                        print("[mDNS] 已更新 %s  网卡=%s  IP=%s" % (name, iface_name,
+                                                                 ", ".join(ips)))
                         continue
                     except Exception as exc:
                         print("[mDNS] 更新 %s 失败，改为重注册: %r" % (name, exc))
                 info = ServiceInfo(stype, name, addresses=addrs, port=sport,
-                                   properties={b"path": b"/"}, server=("%s.local." % hostname))
+                                   properties={b"path": b"/", b"host": host_name.encode(),
+                                               b"ver": _app_version().encode("utf-8", "ignore")},
+                                   server=server)
                 ok = False
                 for attempt in (1, 2):
                     try:
-                        zc.register_service(info)
+                        # allow_name_change：万一和别的电脑撞名，自动改成 名字-2，
+                        # 而不是整台电脑的 mDNS 直接注册失败
+                        zc.register_service(info, allow_name_change=True)
                         ok = True
                         break
                     except Exception as exc:
                         kind = type(exc).__name__
                         if attempt == 1 and "NonUniqueName" in kind:
-                            # 自己的旧缓存还没过期：稍等再试一次
                             try:
                                 zc.unregister_service(info)
                             except Exception:
                                 pass
                             time.sleep(0.3)
                             continue
+                        errors.append("%s：%s" % (name, exc))
                         print("[mDNS] 注册 %s 失败（%s）: %r" % (name, iface_name, exc))
                         break
                 if ok:
                     new_infos.append(info)
-                    print("[mDNS] 已注册 %s  网卡=%s  IP=%s" % (name, iface_name, ", ".join(ips)))
+                    print("[mDNS] 已注册 %s  网卡=%s  IP=%s" % (info.name, iface_name,
+                                                             ", ".join(ips)))
 
             _mdns_infos = new_infos
             register_mdns._key = state_key
-            return bool(new_infos)
+            ok = bool(new_infos)
+            for p in plan:
+                print("[mDNS] 手机访问地址：http://%s.local:%d（网卡 %s，IP %s）"
+                      % (p["hostname"], port, p["iface"], ", ".join(p["ips"])))
+            _MDNS_STATE.update({
+                "ok": ok, "at": time.time(), "plan": plan,
+                "names": [i.name for i in new_infos],
+                "error": "" if ok else (errors[0] if errors else "mDNS 注册失败"),
+                "solution": "" if ok else "到设置里点「mDNS 诊断」查看原因；"
+                                          "手机也可直接用 http://IP:端口 访问",
+            })
+            return ok
         except Exception as exc:
             print("[mDNS] 注册失败（不影响叫号功能）:", exc)
+            _MDNS_STATE.update({"ok": False, "at": time.time(),
+                                "error": str(exc),
+                                "solution": "到设置里点「mDNS 诊断」查看网卡情况；"
+                                            "手机也可直接用 http://IP:端口 访问"})
             return False
+
+
+def _mdns_watcher_loop():
+    """盯着网卡变化：换网、插网线、Wi-Fi 连上、IP 变了 → 自动重新注册。
+
+    以前只在启动时注册一次，所以"开机时 Wi-Fi 还没连上"或"中途换了网络"
+    之后 mDNS 就一直不生效 —— 这也是"有时能解析有时不能"的原因之一。
+    """
+    last_sig = None
+    while not _MDNS_STOP.wait(_MDNS_WATCH_INTERVAL):
+        try:
+            cfg = get_config()
+            if not cfg.get("mdns_enabled"):
+                last_sig = None
+                continue
+            sig = netif.signature()
+            if sig == last_sig and _MDNS_STATE.get("ok"):
+                continue
+            if last_sig is not None and sig != last_sig:
+                print("[mDNS] 检测到网络变化，重新注册…")
+            ok = register_mdns(cfg, force=True)
+            last_sig = sig if ok else None
+        except Exception as exc:
+            print("[mDNS] 监听线程异常:", exc)
+
+
+def start_mdns_watcher():
+    """启动 mDNS 监听线程（幂等）。"""
+    global _MDNS_WATCHER
+    if not HAS_ZEROCONF:
+        return
+    if _MDNS_WATCHER is not None and _MDNS_WATCHER.is_alive():
+        return
+    _MDNS_STOP.clear()
+    _MDNS_WATCHER = threading.Thread(target=_mdns_watcher_loop, daemon=True,
+                                     name="mdns-watcher")
+    _MDNS_WATCHER.start()
 
 
 def _excluded_tcp_ranges():
@@ -936,18 +1137,109 @@ def _cert_desired_names():
     return sorted(n for n in names if n)
 
 
-def _cert_covers(cert_path, names):
-    """现有证书的 SAN 是否已经包含全部名字。"""
+CA_CERT_PATH = os.path.join(DATA_DIR, "ca.crt")   # 本机根证书（手机装这个）
+CA_KEY_PATH = os.path.join(DATA_DIR, "ca.key")
+
+
+def _cert_desired_ips():
+    """证书里应该包含的 IP：本机所有局域网 IP + 127.0.0.1。
+
+    二维码/接入地址用的是 IP，所以证书里必须有 IP，否则 iPhone 打开
+    https://IP:9443 会报"证书名称不匹配"（这个错误不像"不受信任"那样能点继续）。
+    """
+    ips = set()
+    try:
+        for ip in get_lan_ips():
+            ips.add(ip)
+    except Exception:
+        pass
+    ips.add("127.0.0.1")
+    return sorted(ips)
+
+
+def _load_cert(cert_path):
+    from cryptography import x509
+    with open(cert_path, "rb") as f:
+        return x509.load_pem_x509_certificate(f.read())
+
+
+def _ensure_ca():
+    """确保存在一份稳定的「本机根证书」。返回 (cert, key)。"""
+    import datetime as _dt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    try:
+        if os.path.isfile(CA_CERT_PATH) and os.path.isfile(CA_KEY_PATH):
+            with open(CA_KEY_PATH, "rb") as f:
+                key = serialization.load_pem_private_key(f.read(), password=None)
+            return _load_cert(CA_CERT_PATH), key
+    except Exception as exc:
+        print("[HTTPS] 现有根证书读取失败，重新生成:", exc)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "班级叫号器"),
+        x509.NameAttribute(NameOID.COMMON_NAME,
+                           "班级叫号器本机根证书 %s" % (socket.gethostname() or "").upper()),
+    ])
+    now = _dt.datetime.now(_dt.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - _dt.timedelta(days=1))
+            .not_valid_after(now + _dt.timedelta(days=3650))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, content_commitment=False,
+                key_encipherment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=True, crl_sign=True,
+                encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                           critical=False)
+            .sign(key, hashes.SHA256()))
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(CA_KEY_PATH, "wb") as f:
+        f.write(key.private_bytes(serialization.Encoding.PEM,
+                                  serialization.PrivateFormat.TraditionalOpenSSL,
+                                  serialization.NoEncryption()))
+    with open(CA_CERT_PATH, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    print("[HTTPS] 已生成根证书（手机装一次即可长期信任）：%s" % CA_CERT_PATH)
+    return cert, key
+
+
+def _cert_covers(cert_path, names, ips=None):
+    """现有证书是否覆盖全部名字 + 当前局域网 IP，且由本机根证书签发。"""
     try:
         from cryptography import x509
-        with open(cert_path, "rb") as f:
-            cert = x509.load_pem_x509_certificate(f.read())
+        cert = _load_cert(cert_path)
         try:
             ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
         except x509.ExtensionNotFound:
             return False
         have = {str(n).lower() for n in ext.value.get_values_for_type(x509.DNSName)}
-        return all(n.lower() in have for n in names)
+        if not all(n.lower() in have for n in names):
+            return False
+        if ips:
+            import ipaddress as _ip
+            have_ip = set()
+            for v in ext.value.get_values_for_type(x509.IPAddress):
+                try:
+                    have_ip.add(str(_ip.ip_address(v)))
+                except Exception:
+                    pass
+            if not all(ip in have_ip for ip in ips):
+                return False
+        if os.path.isfile(CA_CERT_PATH):
+            ca = _load_cert(CA_CERT_PATH)
+            if cert.issuer != ca.subject:      # 换过根证书 → 手机上的信任会失效，必须重签
+                return False
+        return True
     except Exception:
         return False
 
@@ -956,8 +1248,7 @@ def _cert_needs_renew(cert_path):
     """iOS 兼容性体检：有效期过长 / 缺 serverAuth / 缺 SAN 都算不合格。"""
     try:
         from cryptography import x509
-        with open(cert_path, "rb") as f:
-            cert = x509.load_pem_x509_certificate(f.read())
+        cert = _load_cert(cert_path)
         try:
             span = (cert.not_valid_after_utc - cert.not_valid_before_utc).days
         except Exception:
@@ -985,7 +1276,7 @@ def _cert_needs_renew(cert_path):
 
 
 def _write_self_signed_cert(cert_path, key_path, names):
-    """按给定名字重签自签名证书。"""
+    """用本机根证书签发服务器证书（DNS 名字 + 局域网 IP 都写进 SAN），并写入证书链。"""
     import datetime as _dt
     import ipaddress as _ip
     from cryptography import x509
@@ -993,10 +1284,10 @@ def _write_self_signed_cert(cert_path, key_path, names):
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 
+    ca_cert, ca_key = _ensure_ca()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     sans = [x509.DNSName(n) for n in names]
-    sans.append(x509.IPAddress(_ip.ip_address("127.0.0.1")))
-    for ip in get_lan_ips():
+    for ip in _cert_desired_ips():
         try:
             sans.append(x509.IPAddress(_ip.ip_address(ip)))
         except Exception:
@@ -1004,11 +1295,10 @@ def _write_self_signed_cert(cert_path, key_path, names):
     cn = names[0] if names else socket.gethostname().lower()
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
     now = _dt.datetime.now(_dt.timezone.utc)
-    # 有效期必须 ≤825 天：iOS/iPadOS 与新版 macOS 会直接拒绝长期证书，
-    # 表现就是 iPhone 上"Safari 打不开、服务器已停止响应"。
+    # 有效期 ≤825 天：iOS/iPadOS 与新版 macOS 会直接拒绝过长的服务器证书
     cert = (x509.CertificateBuilder()
             .subject_name(subject)
-            .issuer_name(subject)
+            .issuer_name(ca_cert.subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - _dt.timedelta(days=1))
@@ -1022,7 +1312,9 @@ def _write_self_signed_cert(cert_path, key_path, names):
                 encipher_only=False, decipher_only=False), critical=True)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
                            critical=False)
-            .sign(key, hashes.SHA256()))
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                ca_key.public_key()), critical=False)
+            .sign(ca_key, hashes.SHA256()))
     with open(key_path, "wb") as f:
         f.write(key.private_bytes(
             serialization.Encoding.PEM,
@@ -1030,19 +1322,23 @@ def _write_self_signed_cert(cert_path, key_path, names):
             serialization.NoEncryption()))
     with open(cert_path, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
+        f.write(ca_cert.public_bytes(serialization.Encoding.PEM))   # 带上链
 
 
 def refresh_cert_if_needed():
-    """主机名变了就重签证书。返回 True 表示证书已更新（HTTPS 要重启才会用上）。"""
+    """主机名/局域网 IP 变了就重签证书。返回 True 表示证书已更新（HTTPS 要重启才会用上）。"""
     cert_path = os.path.join(DATA_DIR, "ssl.crt")
     key_path = os.path.join(DATA_DIR, "ssl.key")
     names = _cert_desired_names()
-    if os.path.isfile(cert_path) and os.path.isfile(key_path) and _cert_covers(cert_path, names):
+    ips = _cert_desired_ips()
+    if (os.path.isfile(cert_path) and os.path.isfile(key_path)
+            and _cert_covers(cert_path, names, ips)):
         return False
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         _write_self_signed_cert(cert_path, key_path, names)
-        print("[HTTPS] 已按新主机名重签证书：%s（重启后 https 用新名字）" % ", ".join(names))
+        print("[HTTPS] 已重签证书：%s（IP: %s），重启后 https 生效"
+              % (", ".join(names), ", ".join(ips)))
         return True
     except Exception as exc:
         print("[HTTPS] 重签证书失败:", exc)
@@ -1050,11 +1346,16 @@ def refresh_cert_if_needed():
 
 
 def ensure_ssl_context():
-    """生成/加载自签名证书，供 HTTPS 安全端口使用（开源库 cryptography）。"""
+    """生成/加载证书（本机根证书 + 服务器证书链），供 HTTPS 安全端口使用。"""
     cert_path = os.path.join(DATA_DIR, "ssl.crt")
     key_path = os.path.join(DATA_DIR, "ssl.key")
     names = _cert_desired_names()
-    # iOS/iPadOS 会拒绝有效期过长的证书（>825 天），旧版本签的 10 年证书在
+    ips = _cert_desired_ips()
+    try:
+        _ensure_ca()
+    except Exception as exc:
+        print("[HTTPS] 生成根证书失败:", exc)
+    # iOS/iPadOS 会拒绝有效期过长的证书（>825 天）；旧版本签的 10 年证书在
     # iPhone 上表现就是"Safari 打不开 / 服务器已停止响应"，这里体检并重签。
     if os.path.isfile(cert_path) and _cert_needs_renew(cert_path):
         for _f in (cert_path, key_path):
@@ -1064,15 +1365,84 @@ def ensure_ssl_context():
                 pass
     if not (os.path.isfile(cert_path) and os.path.isfile(key_path)):
         _write_self_signed_cert(cert_path, key_path, names)
-    elif not _cert_covers(cert_path, names):
-        # 旧证书里没有当前主机名（比如设置里改过名字），补签一份
+    elif not _cert_covers(cert_path, names, ips):
+        # 名字 / IP 变了，或还是旧的自签名证书 → 用根证书重签
         try:
             _write_self_signed_cert(cert_path, key_path, names)
+            print("[HTTPS] 证书已更新（含当前 IP），https 重启后生效")
         except Exception as exc:
             print("[HTTPS] 补签证书失败（继续用旧证书）:", exc)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert_path, key_path)
     return ctx
+
+
+@app.route("/cert")
+def page_cert():
+    """手机装证书引导页：iOS 白屏的根治办法（装根证书 + 开启完全信任）。"""
+    cfg = get_config()
+    return render_template(
+        "cert.html", version=_app_version(),
+        hostname=normalize_hostname(cfg.get("mdns_hostname", "")),
+        lan_ips=get_lan_ips(),
+        secure_port=int(_running_secure_port or cfg.get("secure_port", 9443)),
+        port=int(_running_port or cfg.get("port", 8000)),
+        has_ca=os.path.isfile(CA_CERT_PATH))
+
+
+@app.route("/cert.crt")
+def cert_crt():
+    """下载本机根证书（.crt）。iOS/Android 都能装。"""
+    try:
+        if not os.path.isfile(CA_CERT_PATH):
+            _ensure_ca()
+        with open(CA_CERT_PATH, "rb") as f:
+            data = f.read()
+    except Exception as exc:
+        return Response("根证书还没生成：%s" % exc, status=500,
+                        mimetype="text/plain; charset=utf-8")
+    resp = Response(data, mimetype="application/x-x509-ca-cert")
+    resp.headers["Content-Disposition"] = 'attachment; filename="classcaller-ca.crt"'
+    return resp
+
+
+@app.route("/cert.mobileconfig")
+def cert_mobileconfig():
+    """下载 iOS/macOS 描述文件（.mobileconfig）：装上后在证书信任设置里开启完全信任。"""
+    import plistlib
+    import uuid as _uuid
+    try:
+        if not os.path.isfile(CA_CERT_PATH):
+            _ensure_ca()
+        with open(CA_CERT_PATH, "r", encoding="utf-8") as f:
+            der = ssl.PEM_cert_to_DER_cert(f.read())
+        payload = {
+            "PayloadType": "Configuration",
+            "PayloadVersion": 1,
+            "PayloadIdentifier": "com.xiaoli.classcaller.rootca",
+            "PayloadUUID": str(_uuid.uuid4()).upper(),
+            "PayloadDisplayName": "班级叫号器 本机根证书",
+            "PayloadOrganization": "班级叫号器",
+            "PayloadDescription": "安装后在「设置 → 通用 → 关于本机 → 证书信任设置」里"
+                                  "为「班级叫号器本机根证书」开启完全信任，手机访问就不会白屏。",
+            "PayloadRemovalDisallowed": False,
+            "PayloadContent": [{
+                "PayloadType": "com.apple.security.root",
+                "PayloadVersion": 1,
+                "PayloadIdentifier": "com.xiaoli.classcaller.rootca.cert",
+                "PayloadUUID": str(_uuid.uuid4()).upper(),
+                "PayloadDisplayName": "班级叫号器 根证书",
+                "PayloadCertificateFileName": "classcaller-ca.cer",
+                "PayloadContent": der,
+            }],
+        }
+        data = plistlib.dumps(payload, fmt=plistlib.FMT_XML)
+    except Exception as exc:
+        return Response("生成描述文件失败：%s" % exc, status=500,
+                        mimetype="text/plain; charset=utf-8")
+    resp = Response(data, mimetype="application/x-apple-aspen-config")
+    resp.headers["Content-Disposition"] =         'attachment; filename="classcaller-ca.mobileconfig"'
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -1115,7 +1485,9 @@ WIZARD_EXEMPT = ("/static/", "/api/wizard", "/wizard", "/favicon.ico",
                  "/api/auth/create", "/api/auth/passwords", "/api/auth/me", "/api/health",
                  "/activate", "/api/auth/activate_token", "/api/auth/qr_create",
                  # 向导期间手机也要能配对：配对页 + 手动输配对码；设置页也要能进
-                 "/pair", "/api/auth/activate")
+                 "/pair", "/api/auth/activate",
+                 # 手机白屏排查用的极简页（不含脚本，最不容易被拦）
+                 "/plain", "/ping", "/cert", "/manual")
 
 
 def wizard_done():
@@ -1203,6 +1575,7 @@ def api_wizard_state():
         "hostname": host,
         "port": port,
         "computer_name": os.environ.get("COMPUTERNAME", "") or "这台电脑",
+        "local_ips": get_lan_ips(),      # 手机接入用 IP（安卓不解析 .local）
         "roster_count": len(get_roster()),
         "autostart": bool(cfg.get("autostart")),
         "update_channel": cfg.get("update_channel", "stable"),
@@ -1489,17 +1862,45 @@ def api_wizard_finish():
 # ---------------------------------------------------------------------------
 # 状态与配置 API
 # ---------------------------------------------------------------------------
-@app.route("/api/health")
-def api_health():
-    """启动自检用测试接口：HTTP/HTTPS 服务是否正常响应。"""
-    ver = "2.0.0"
+def _app_version():
     try:
         with open(os.path.join(ROOT_DIR, "version.json"), "r", encoding="utf-8") as f:
-            ver = str(json.load(f).get("version", "2.0.0"))
+            return str(json.load(f).get("version", "2.0.0"))
     except Exception:
-        pass
-    return jsonify({"ok": True, "app": "班级叫号器",
-                    "version": ver, "time": int(time.time())})
+        return "2.0.0"
+
+
+def app_edition():
+    """当前版本类型：stable / beta / dev。稳定版隐藏主页的「查看日志」入口。"""
+    try:
+        with open(os.path.join(ROOT_DIR, "version.json"), "r", encoding="utf-8") as f:
+            return str(json.load(f).get("edition", "stable") or "stable").strip().lower()
+    except Exception:
+        return "stable"
+
+
+def _safe_host(text):
+    """只保留主机名字符，防止把奇怪的东西塞进诊断页面。"""
+    text = str(text or "")
+    return "".join(ch for ch in text if ch.isalnum() or ch in ".:-[]")[:80]
+
+
+@app.route("/api/health")
+def api_health():
+    """启动自检 / 手机排障接口：告诉调用者"你到底连到了谁"。
+
+    手机白屏时直接打开 http://IP:端口/api/health 看这段 JSON：
+    能出 JSON 说明服务和网络都正常，白屏就是页面/证书/权限的问题。
+    """
+    return jsonify({
+        "ok": True, "app": "班级叫号器", "version": _app_version(),
+        "time": int(time.time()),
+        "scheme": request.scheme,
+        "host": _safe_host(request.host),
+        "server_ip": _safe_host((request.host or "").split(":")[0]),
+        "client_ip": _safe_host(request.remote_addr),
+        "ua": (request.headers.get("User-Agent") or "")[:200],
+    })
 
 
 @app.route("/api/status")
@@ -1508,12 +1909,16 @@ def api_status():
     state = get_state()
     roster = get_roster()
     hostname = normalize_hostname(cfg.get("mdns_hostname", ""))
+    mdns = mdns_status()
     return jsonify({
         "ok": True,
         "port": _running_port or cfg.get("port", 8000),
         "mdns_enabled": bool(cfg.get("mdns_enabled")),
         "mdns_hostname": hostname,
         "mdns_url": "http://%s.local:%d" % (hostname, _running_port or cfg.get("port", 8000)),
+        "mdns_ok": mdns.get("ok"),
+        "mdns_error": mdns.get("error") or "",
+        "mdns_urls": mdns.get("urls") or [],
         "secure_enabled": bool(cfg.get("secure_enabled", True)),
         "secure_port": int(_running_secure_port or cfg.get("secure_port", 9443)),
         "secure_url": "https://%s.local:%d" % (hostname, int(_running_secure_port or cfg.get("secure_port", 9443))),
@@ -1522,7 +1927,226 @@ def api_status():
         "call_count": state.get("call_count", 0),
         "zeroconf_ok": HAS_ZEROCONF,
         "tts_ok": True,
+        "edition": app_edition(),
+        "version": _app_version(),
     })
+
+
+@app.route("/ping")
+def page_ping():
+    """极简连通性测试（纯文本）：手机白屏时先测这个。"""
+    return Response("OK %s %s\n" % (_app_version(), time.strftime("%Y-%m-%d %H:%M:%S")),
+                    mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/plain")
+def page_plain():
+    """极简页面（不含 JS/CSS/图片），用来区分"连不上服务"和"页面渲染不出来"。"""
+    cfg = get_config()
+    port = int(_running_port or cfg.get("port", 8000))
+    sp = int(_running_secure_port or cfg.get("secure_port", 9443))
+    items = "".join("<li>http://%s:%d</li>" % (_safe_host(ip), port) for ip in get_lan_ips())
+    html = (
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>连接正常 - 班级叫号器</title>"
+        "<style>body{font-family:'Microsoft YaHei',system-ui,sans-serif;padding:18px;"
+        "line-height:1.9;color:#0f172a}h1{font-size:19px}code{background:#f1f5f9;"
+        "padding:2px 5px;border-radius:5px}li{margin:2px 0}</style>"
+        "<h1>✅ 已经连上这台电脑，网络和服务都正常</h1>"
+        "<p>你访问的地址：<code>%s://%s</code></p>"
+        "<p>你的 IP：<code>%s</code>　软件版本：<code>%s</code></p>"
+        "<p>这台电脑的局域网地址：</p><ul>%s</ul>"
+        "<p>如果<b>这一页能看到</b>，但主页白屏，说明是浏览器/证书/缓存的问题：<br>"
+        "① <b>iPhone / iPad 请先到 <a href=/cert>/cert</a> 装一次证书</b>并开启「完全信任」；"
+        "② 再试 <code>https://%s:%d</code>（主机名或 IP 都行）；"
+        "③ 清一下浏览器缓存；④ 设置 → 隐私与安全性 → 本地网络，允许浏览器访问局域网。</p>"
+        "<p>手机访问的每个地址、是否走名字解析，都能在 <a href=/api/health>/api/health</a> "
+        "里看到（纯 JSON）；电脑端可开 <a href=/logs>/logs</a> 看运行日志。</p>"
+        % (_safe_host(request.scheme), _safe_host(request.host),
+           _safe_host(request.remote_addr), _app_version(), items,
+           _safe_host(normalize_hostname(cfg.get("mdns_hostname", "")) or "主机名"), sp)
+    )
+    return Response(html, mimetype="text/html; charset=utf-8")
+
+
+@app.route("/logs")
+def page_logs():
+    """运行日志查看页。稳定版不在主页显示入口，但直接输网址仍可进入。"""
+    return render_template("logs.html", edition=app_edition(), version=_app_version())
+
+
+@app.route("/api/logs")
+def api_logs():
+    err = check_access()
+    if err:
+        return err
+    try:
+        after = int(request.args.get("after", "-1"))
+    except Exception:
+        after = -1
+    try:
+        limit = int(request.args.get("limit", "400"))
+    except Exception:
+        limit = 400
+    data = runlog.snapshot(after=after, limit=limit,
+                           keyword=request.args.get("q", ""),
+                           level=request.args.get("level", ""))
+    data["ok"] = True
+    data["file"] = runlog.log_file_path()
+    data["edition"] = app_edition()
+    return jsonify(data)
+
+
+@app.route("/api/logs/export")
+def api_logs_export():
+    """导出日志（UTF-8 BOM，记事本打开不乱码）。"""
+    err = check_access()
+    if err:
+        return err
+    try:
+        text = runlog.export_text()
+    except Exception as exc:
+        text = "导出失败：%r" % (exc,)
+    fn = "classcaller-log-%s.txt" % time.strftime("%Y%m%d-%H%M%S")
+    resp = Response("\ufeff" + text, mimetype="text/plain; charset=utf-8")
+    resp.headers["Content-Disposition"] = (
+        "attachment; filename=%s; filename*=UTF-8''%s"
+        % (fn, urllib.parse.quote("班级叫号器-日志-%s.txt"
+                                  % time.strftime("%Y%m%d-%H%M%S"))))
+    return resp
+
+
+MANUAL_HTML = os.path.join(ROOT_DIR, "使用说明-图文版.html")
+MANUAL_PDF = os.path.join(ROOT_DIR, "使用说明-图文版.pdf")
+MANUAL_TXT = os.path.join(ROOT_DIR, "使用说明.txt")
+MANUAL_IMG_DIR = os.path.join(ROOT_DIR, "使用说明-图片")
+_manual_cache = {"key": None, "html": ""}
+
+
+def _manual_html_text():
+    """读图文说明书并把图片路径改成 /manual-img/（带缓存，文件更新后自动失效）。"""
+    try:
+        st = os.stat(MANUAL_HTML)
+        key = (int(st.st_mtime), st.st_size)
+        if _manual_cache["key"] == key and _manual_cache["html"]:
+            return _manual_cache["html"]
+        with open(MANUAL_HTML, "r", encoding="utf-8", errors="replace") as f:
+            html = f.read()
+        html = (html.replace('src="使用说明-图片/', 'src="/manual-img/')
+                    .replace("src='使用说明-图片/", "src='/manual-img/"))
+        _manual_cache.update({"key": key, "html": html})
+        return html
+    except Exception:
+        return ""
+
+
+@app.route("/manual")
+def page_manual():
+    """图文使用说明（托盘「📖 使用说明」直接打开这里）。
+
+    向下兼容：这份安装里没有说明书文件时（旧版本升级上来、或 OTA 只更新了代码目录），
+    退回到一个同样有用的兜底页，而不是报错。
+    """
+    html = _manual_html_text()
+    if html:
+        return Response(html, mimetype="text/html; charset=utf-8")
+    if os.path.isfile(MANUAL_PDF):
+        return redirect("/manual.pdf")
+    cfg = get_config()
+    port = int(_running_port or cfg.get("port", 8000))
+    sp = int(_running_secure_port or cfg.get("secure_port", 9443))
+    urls = "".join("<li><code>http://%s:%d</code></li>" % (_safe_host(ip), port)
+                   for ip in get_lan_ips())
+    body = (
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>使用说明 - 班级叫号器</title>"
+        "<style>body{font-family:'Microsoft YaHei',system-ui,sans-serif;padding:20px;"
+        "line-height:1.9;color:#0f172a;max-width:640px;margin:0 auto}"
+        "h1{font-size:19px}h2{font-size:15.5px;margin-top:20px}code{background:#f1f5f9;"
+        "padding:1px 5px;border-radius:5px}a{color:#1d4ed8}</style>"
+        "<h1>📖 班级叫号器 使用说明</h1>"
+        "<p>当前版本 <b>%s</b>。这份安装目录里没有放图文说明书文件"
+        "（<code>使用说明-图文版.pdf</code> / <code>.html</code>），所以这里显示速查页。</p>"
+        "<h2>叫号</h2><p>手机与电脑连同一个 Wi-Fi，用下面任一地址打开即可：</p><ul>%s</ul>"
+        "<p>也可以：<code>http://主机名.local:%d</code>（iPhone / 电脑支持；"
+        "部分安卓/鸿蒙不解析 .local，请用 IP）。</p>"
+        "<h2>激活 / 监控 / 远控 / 文件传输</h2>"
+        "<p>必须走安全端口：<code>https://本机IP:%d</code>；"
+        "iPhone 白屏请先到 <a href='/cert'>/cert</a> 装一次证书并开启「完全信任」。</p>"
+        "<h2>排障入口</h2><ul>"
+        "<li><a href='/plain'>/plain</a>　极简页（白屏时先试它）</li>"
+        "<li><a href='/api/health'>/api/health</a>　看连到的是哪台电脑</li>"
+        "<li><a href='/cert'>/cert</a>　手机装证书（iOS 白屏根治）</li>"
+        "<li><a href='/logs'>/logs</a>　运行日志（可导出）</li>"
+        "<li><a href='/manual.txt'>使用说明.txt</a>　纯文字版</li>"
+        "</ul>"
+        "<p><a href='/'>返回主页</a></p>"
+        % (_app_version(), urls, port, sp)
+    )
+    return Response(body, mimetype="text/html; charset=utf-8")
+
+
+@app.route("/manual.pdf")
+def page_manual_pdf():
+    if os.path.isfile(MANUAL_PDF):
+        try:
+            return send_file(MANUAL_PDF, mimetype="application/pdf", as_attachment=False,
+                             download_name="班级叫号器-使用说明.pdf")
+        except Exception as exc:
+            print("[说明] 发送 PDF 失败:", exc)
+    return redirect("/manual")
+
+
+@app.route("/manual.txt")
+def page_manual_txt():
+    if os.path.isfile(MANUAL_TXT):
+        try:
+            return send_file(MANUAL_TXT, mimetype="text/plain; charset=utf-8",
+                             as_attachment=False)
+        except Exception:
+            pass
+    return redirect("/manual")
+
+
+@app.route("/manual-img/<path:name>")
+def page_manual_img(name):
+    """图文说明书的图片。"""
+    try:
+        return send_from_directory(MANUAL_IMG_DIR, name, max_age=3600)
+    except Exception:
+        return Response("", status=404)
+
+
+@app.route("/api/mdns/status")
+def api_mdns_status():
+    st = mdns_status()
+    st["registered"] = st.pop("ok")
+    st["ok"] = True          # 接口本身成功；是否注册成功看 registered
+    return jsonify(st)
+
+
+@app.route("/api/mdns/diag")
+def api_mdns_diag():
+    """mDNS 完整诊断：网卡判定 + 注册计划 + 本机解析 + 提示。"""
+    err = check_access()
+    if err:
+        return err
+    return jsonify(mdns_diagnose())
+
+
+@app.route("/api/mdns/refresh", methods=["POST"])
+def api_mdns_refresh():
+    """重新注册一次 mDNS（设置页「立即重试」用）。"""
+    err = check_access()
+    if err:
+        return err
+    ok = register_mdns(get_config(), force=True)
+    st = mdns_status()
+    st["registered"] = bool(ok)
+    st["ok"] = True
+    return jsonify(st)
 
 
 @app.route("/api/port_check")
@@ -1629,14 +2253,19 @@ def api_settings():
     save_config(cfg)
     host_changed = normalize_hostname(cfg.get("mdns_hostname", "")) != old_host
     if changed:
-        register_mdns(cfg)  # 主机名 / 开关变化立即重新注册（http 立即生效）
+        register_mdns(cfg, force=True)  # 主机名 / 开关 / 网卡变化立即重新生效
     if host_changed:
         refresh_cert_if_needed()   # 证书补上新名字，https 需重启才用得上
     notes = ["端口修改后需重启软件生效"]
     if host_changed:
         notes.insert(0, "主机名已修改：手机上的 http://新名字.local 立刻可用，"
                         "https（监控 / 文件 / 更新）需要重启软件一次才会换用新名字的证书")
+    mdns = mdns_status()
+    if cfg.get("mdns_enabled") and not mdns.get("ok"):
+        notes.insert(0, "mDNS 没注册成功：%s（手机可用 http://IP:端口 直连）"
+                        % (mdns.get("error") or "原因见日志"))
     return jsonify({"ok": True, "config": cfg, "host_changed": host_changed,
+                    "mdns": mdns,
                     "note": "；".join(notes)})
 
 
@@ -2178,30 +2807,44 @@ def run_startup_checks(cfg, hostname, port, secure_port, progress=None):
 
     if cfg.get("mdns_enabled"):
         step("mDNS 域名解析")
+        mdns = mdns_status()
+        plan = mdns.get("plan") or []
+        host_list = "、".join("%s.local → %s" % (p.get("hostname"),
+                                              ", ".join(p.get("ips") or [])) for p in plan)
         if not HAS_ZEROCONF:
             checks.append({"level": "warn", "name": "mDNS",
                            "detail": "未安装 zeroconf 组件",
                            "solution": "请使用完整版软件（含 mDNS 组件）。"})
+        elif not mdns.get("ok"):
+            checks.append({"level": "warn", "name": "mDNS",
+                           "detail": "mDNS 未注册成功：%s" % (mdns.get("error") or "未知原因"),
+                           "solution": mdns.get("solution") or
+                                         "到设置里点「mDNS 诊断」查看网卡情况；"
+                                         "手机也可用 http://IP:端口 直连。"})
         else:
-            target_ips = get_mdns_ips(cfg)
-            ip = _resolve_mdns(hostname)
-            if ip:
-                if target_ips and ip in target_ips:
-                    checks.append({"level": "ok", "name": "mDNS",
-                                   "detail": "%s.local 解析到 %s（目标网卡一致）" % (hostname, ip),
-                                   "solution": ""})
-                else:
-                    checks.append({
-                        "level": "warn", "name": "mDNS",
-                        "detail": "%s.local 解析到 %s，与目标网卡 IP(%s)不一致" % (
-                            hostname, ip,
-                            ", ".join(target_ips) if target_ips else "无"),
-                        "solution": "到设置中选择正确网卡，并确认访问设备与该网卡在同一网络。",
-                    })
+            # 本机解析只作参考：刚注册完 Windows 解析器常有缓存/延迟，查不到不代表手机打不开
+            first = plan[0] if plan else {}
+            ip = None
+            for _ in range(3):
+                ip = _resolve_mdns(first.get("hostname") or "") if first else None
+                if ip:
+                    break
+                time.sleep(0.8)
+            level = "ok"
+            detail = "已注册 %s" % host_list
+            solution = ""
+            if ip and ip in (first.get("ips") or []):
+                detail += "（本机解析一致：%s）" % ip
+            elif ip:
+                level = "warn"
+                detail += "（本机解析到 %s，与预期 %s 不一致）" % (
+                    ip, ", ".join(first.get("ips") or []) or "无")
+                solution = "到设置里点「mDNS 诊断」查看网卡；也可让手机直接用 http://IP:端口。"
             else:
-                checks.append({"level": "warn", "name": "mDNS",
-                               "detail": "本机未能解析 %s.local（其他设备可能仍能访问）" % hostname,
-                               "solution": "其他设备也可直接用 http://IP:端口 访问。"})
+                detail += "（本机暂未解析到 .local 名字，其它设备通常仍可访问）"
+                solution = "若手机也打不开，多半是路由器屏蔽了 mDNS 多播，可让手机用 http://IP:端口 直连。"
+            checks.append({"level": level, "name": "mDNS", "detail": detail,
+                           "solution": solution})
 
     step("数据目录")
     try:
@@ -2468,6 +3111,7 @@ def _main():
     if cfg.get("mdns_enabled"):
         status("正在注册 mDNS…")
         register_mdns(cfg)
+        start_mdns_watcher()   # 之后网卡一变（换网/插网线/Wi-Fi 连上）就自动重新注册
     else:
         print("[mDNS] 已关闭")
 
@@ -2542,6 +3186,7 @@ def _main():
         except Exception:
             pass
     finally:
+        _MDNS_STOP.set()
         remote_shutdown()
         monitor_shutdown()
         try:

@@ -275,21 +275,42 @@ function syncRoster() {
 }
 
 /* ---------- 二维码 ---------- */
-function phoneUrl() {
-  // 手机激活/监控需要 https（浏览器只在安全上下文里提供 crypto.subtle）
+/* 手机访问的主机名：优先局域网 IP（任何手机都能打开）。
+   .local 靠设备自己解析 mDNS：苹果设备/电脑/较新安卓可用，部分华为鸿蒙等机型不可用，
+   所以主地址用 IP，设备名只作为备选显示。 */
+function phoneHost() {
+  const ips = window.__lanIps || [];
+  const ip = ips.find((v) => !v.startsWith("127.") && !v.startsWith("169.254."));
+  if (ip) return ip;
   let host = state.host || window.__defHost || "127.0.0.1";
   if (host.indexOf(".") < 0) host += ".local";
+  return host;
+}
+
+function phoneUrl() {
+  // 手机激活/监控需要 https（浏览器只在安全上下文里提供 crypto.subtle）
+  const host = phoneHost();
   const useHttps = !!window.__secure;
   const port = useHttps ? (window.__securePort || 9443) : (window.__port || 8000);
   return (useHttps ? "https://" : "http://") + host + ":" + port;
 }
 
+/* 用设备名访问的地址（苹果 / 电脑可用） */
+function phoneNameUrl() {
+  const host = state.host || window.__defHost || "";
+  if (!host || host.indexOf(".") >= 0) return "";
+  const useHttps = !!window.__secure;
+  const port = useHttps ? (window.__securePort || 9443) : (window.__port || 8000);
+  return (useHttps ? "https://" : "http://") + host + ".local:" + port;
+}
+
 function drawQR() {
   const base = phoneUrl();                    // https://host.local:9443
   const url = state.pairToken ? (base.replace(/\/+$/, "") + "/activate?t=" + encodeURIComponent(state.pairToken)) : base;
-  $("qr-url").textContent = state.pairToken
-    ? "扫码即自动激活（30 分钟内有效）"
-    : url;
+  const nameUrl = phoneNameUrl();
+  $("qr-url").textContent = (state.pairToken
+    ? "扫码即自动激活（30 分钟内有效）：" + url
+    : url) + (nameUrl ? "\n　iPhone/电脑也可用 " + nameUrl : "");
   const hint = $("qr-hint");
   if (hint) {
     if (window.__secure) {
@@ -301,6 +322,8 @@ function drawQR() {
     }
   }
   const cv = $("qr");
+  if (!cv) return;
+  cv.dataset.content = url;          // 方便自查二维码指向
   if (typeof qrcode !== "function") return;
   try {
     const qr = qrcode(0, "M");
@@ -593,6 +616,7 @@ $("btn-start").addEventListener("click", finish);
     window.__secure = !!st.secure_enabled;
     window.__securePort = st.secure_port || 9443;
     window.__defHost = st.hostname || "";
+    window.__lanIps = st.local_ips || [];
     if (st.done) { location.href = "/"; return; }
     $("host-name").value = st.hostname || "";
     $("opt-autostart").checked = !!st.autostart;

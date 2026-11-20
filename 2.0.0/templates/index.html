@@ -55,6 +55,34 @@ body.fs .msg-row input { padding: 10px 12px; }
 </style>
 </head>
 <body>
+<!-- 白屏兜底：脚本没跑起来（iPhone 上常见）时，4 秒后自动显示这层，给出可用的下一步 -->
+<div id="boot-fallback" style="display:none;position:fixed;inset:0;z-index:99999;background:#fff;
+     padding:22px 20px;font-family:'Microsoft YaHei',system-ui,sans-serif;line-height:1.9;color:#0f172a;
+     overflow:auto">
+  <h2 style="font-size:18px;margin:0 0 8px">页面好像没有加载完（一片空白？）</h2>
+  <p style="color:#475569;margin:0 0 10px">先点下面这条，它不依赖脚本，能验证"电脑那边是否正常"：</p>
+  <p style="font-size:16px"><a href="/plain">➡️ 打开极简诊断页 /plain</a></p>
+  <p style="color:#475569;margin:14px 0 6px"><b>iPhone / iPad 白屏</b>（最常见原因：自签名证书）：
+    到 <a href="/cert">/cert</a> 下载证书/描述文件 → 设置 → 通用 → 关于本机 → 证书信任设置 →
+    为「班级叫号器本机根证书」开启完全信任，然后重新打开。</p>
+  <p style="color:#475569;margin:6px 0">其它可试：清浏览器缓存；设置 → 隐私与安全性 → 本地网络 → 允许浏览器；
+    改用 <b>https://本机IP:安全端口</b>。</p>
+  <p style="margin-top:14px"><a href="/logs">查看运行日志</a>　·　<a href="/api/health">/api/health</a></p>
+</div>
+<noscript>
+  <div style="padding:22px;font-family:'Microsoft YaHei',sans-serif;line-height:1.9">
+    <h2 style="font-size:18px">浏览器禁用了 JavaScript</h2>
+    <p>班级叫号器需要 JavaScript。请点这里打开极简页：<a href="/plain">/plain</a>，
+       或换用 Safari / Chrome 再打开。</p>
+  </div>
+</noscript>
+<script>
+  setTimeout(function () {
+    if (window.__appReady) return;
+    var d = document.getElementById('boot-fallback');
+    if (d) d.style.display = 'block';
+  }, 4000);
+</script>
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">班级叫号器</div>
   <div class="topbar-right">
@@ -71,6 +99,7 @@ body.fs .msg-row input { padding: 10px 12px; }
     <button id="btn-deactivate" class="btn ghost hidden">🔓 取消激活</button>
     <button id="btn-password" class="btn ghost hidden">🔐 密码管理</button>
     <button id="btn-update" class="btn ghost">🔄 软件更新</button>
+    <button id="btn-logs" class="btn ghost hidden" title="查看运行日志（排障用）">📜 日志</button>
     <button id="btn-fullscreen" class="btn ghost" title="全屏显示（一屏放完小键盘/备注/叫号/消息）">⛶ 全屏</button>
     <button id="btn-settings" class="btn ghost">⚙️ 设置</button>
     <button id="btn-import" class="btn ghost">📥 导入CSV</button>
@@ -193,12 +222,21 @@ body.fs .msg-row input { padding: 10px 12px; }
         <label>主机名 <input id="set-mdns-hostname" placeholder="如 classroom" /></label>
         <label>网卡
           <select id="set-mdns-interface">
-            <option value="auto">自动（全部网卡）</option>
+            <option value="auto">自动（推荐：自动挑选能连上的网卡）</option>
           </select>
         </label>
         <label>端口 <input id="set-port" type="number" min="1" max="65535" /></label>
       </div>
-      <p class="hint">其他设备浏览器访问：http://主机名.local:端口（修改端口后需重启软件生效）</p>
+      <p class="hint">其他设备浏览器访问：<b>http://本机IP:端口</b>（所有手机都能用）；<b>http://主机名.local:端口</b> 需要设备支持 mDNS —— iPhone / iPad / 电脑 / 较新安卓系统（如 Android 12+、LineageOS）可以，部分华为鸿蒙等机型解析不了（浏览器会报"找不到服务器"），这类设备请用 IP。修改端口后需重启软件生效。</p>
+      <div class="form-row mdns-box">
+        <p class="hint" id="mdns-state">mDNS 状态：读取中…</p>
+        <div class="mdns-actions">
+          <button id="btn-mdns-diag" class="btn ghost small" type="button">🔍 mDNS 诊断</button>
+          <button id="btn-mdns-retry" class="btn ghost small" type="button">🔁 重新注册</button>
+          <button id="btn-open-logs" class="btn ghost small" type="button">📜 查看日志</button>
+        </div>
+        <pre id="mdns-diag-out" class="mdns-diag hidden"></pre>
+      </div>
       <div class="form-grid">
         <label class="checkbox"><input id="set-secure-enabled" type="checkbox" /> 启用 HTTPS 安全端口</label>
         <label>安全端口 <input id="set-secure-port" type="number" min="1" max="65535" /></label>

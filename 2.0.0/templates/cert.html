@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>安装证书 - 班级叫号器</title>
+<link rel="icon" href="/static/favicon.ico" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px 16px 40px; background: #f1f5f9; color: #0f172a;
+         font-family: "Microsoft YaHei", -apple-system, system-ui, sans-serif; line-height: 1.85; }
+  .card { background: #fff; border-radius: 16px; padding: 18px 16px; max-width: 560px;
+          margin: 0 auto 14px; box-shadow: 0 10px 30px rgba(15,23,42,.08); }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  h2 { font-size: 15.5px; margin: 18px 0 6px; }
+  p, li { font-size: 14.5px; color: #334155; }
+  .muted { color: #64748b; font-size: 13px; }
+  .btn { display: block; text-align: center; text-decoration: none; font-weight: 700;
+         font-size: 16px; padding: 14px 16px; border-radius: 12px; margin: 10px 0; color: #fff;
+         background: #2563eb; }
+  .btn.secondary { background: #0f172a; }
+  .btn.ghost { background: #e2e8f0; color: #0f172a; }
+  ol, ul { padding-left: 22px; margin: 8px 0; }
+  code { background: #f1f5f9; border-radius: 5px; padding: 1px 5px; font-size: 13px;
+         word-break: break-all; }
+  .warn { background: #fff7ed; border-left: 4px solid #f59e0b; padding: 10px 12px;
+          border-radius: 8px; color: #7c2d12; font-size: 13.5px; }
+  .ok { background: #ecfdf5; border-left: 4px solid #10b981; padding: 10px 12px;
+        border-radius: 8px; color: #065f46; font-size: 13.5px; }
+  .urls li { font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>📱 手机装证书（一次就够）</h1>
+  <p>iPhone / iPad 打开本软件时<b>白屏、没有报错</b>，几乎都是同一个原因：
+     软件用的是<b>自签名证书</b>，苹果设备默认不信任它；而 Chrome / Edge 这类第三方浏览器
+     连"继续访问"的按钮都没有，所以直接白屏。</p>
+  <p class="muted">装一次下面这份证书并开启「完全信任」，之后 Safari、Chrome、Edge、夸克
+     全都能正常打开，也不用每次点"继续"。</p>
+</div>
+
+<div class="card">
+  <h2>第 1 步：下载证书</h2>
+  <a class="btn" href="/cert.mobileconfig">① 下载描述文件（iPhone / iPad 推荐）</a>
+  <a class="btn secondary" href="/cert.crt">② 下载证书文件 .crt（安卓 / 电脑用）</a>
+  <p class="muted">本机根证书：
+    {% if has_ca %}已生成{% else %}尚未生成（请先在电脑上启动一次软件）{% endif %}；
+    版本 v{{ version }}</p>
+
+  <h2>第 2 步：安装（iPhone / iPad）</h2>
+  <ol>
+    <li>用 <b>Safari</b> 打开本页，点上面的「下载描述文件」，弹窗点<b>允许</b>；</li>
+    <li>打开 <b>设置</b> → 顶部「已下载描述文件」→ 点<b>安装</b>（要输入锁屏密码）；</li>
+    <li>再进 <b>设置 → 通用 → 关于本机 → 证书信任设置</b>；</li>
+    <li>把 <b>「班级叫号器本机根证书」</b> 的开关<b>打开（完全信任）</b>。</li>
+  </ol>
+  <div class="warn">第 4 步不做的话，证书只是"装上了但没被信任"，仍然会白屏。
+    这一步 Apple 官方说明：手动安装的证书不会自动信任，必须在「证书信任设置」里手动开启。</div>
+
+  <h2>第 3 步：重新打开软件</h2>
+  <p>用下面任一地址打开（现在用 <b>https</b> 不会再有红色警告）：</p>
+  <ul class="urls">
+    {% for ip in lan_ips %}<li><code>https://{{ ip }}:{{ secure_port }}</code></li>{% endfor %}
+    <li><code>https://{{ hostname }}.local:{{ secure_port }}</code>
+        <span class="muted">（需要设备支持 mDNS：苹果设备/电脑可以，部分鸿蒙等机型不行）</span></li>
+    <li><code>http://{{ hostname }}.local:{{ port }}</code> / <code>http://本机IP:{{ port }}</code>
+        <span class="muted">（叫号用 http 也能开，激活/监控/远控必须 https）</span></li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2>装在安卓 / 鸿蒙上</h2>
+  <ol>
+    <li>点「下载证书文件 .crt」；</li>
+    <li>设置 → 安全（或「密码与安全」）→ <b>加密与凭据</b> → 安装证书 →
+        <b>CA 证书</b> → 选择刚下载的文件；</li>
+    <li>如提示"您的数据将被公开"之类，选<b>仍然安装</b>。</li>
+  </ol>
+  <p class="muted">安卓上如果不装证书，也能用 <code>http://本机IP:{{ port }}</code> 叫号，
+     只是 https 的激活/监控会提示不安全。</p>
+</div>
+
+<div class="card">
+  <h2>还是打不开？按顺序试</h2>
+  <ol>
+    <li>打开 <a href="/plain">/plain</a> —— 这一页不含脚本，能开说明网络没问题；</li>
+    <li>打开 <a href="/api/health">/api/health</a> —— 能出 JSON 说明连的是这台电脑；</li>
+    <li>设置 → 隐私与安全性 → <b>本地网络</b> → 找到你用的浏览器，打开权限；</li>
+    <li>设置 → 无线局域网 → 当前 Wi-Fi 右侧 ⓘ → 关闭「<b>限制 IP 地址跟踪</b>」、
+        关闭「<b>私有 Wi-Fi 地址</b>」；Apple ID → iCloud → 关闭「<b>私密中继</b>」；</li>
+    <li>清掉浏览器缓存，或换 <b>Safari</b> 再试；</li>
+    <li>电脑上打开 <a href="/logs">/logs</a> 看运行日志，把内容发给我们。</li>
+  </ol>
+  <div class="ok">小提示：<b>Safari 是唯一能点「显示详细信息 → 访问此网站」跳过证书警告的</b>；
+    第三方浏览器在 iPhone 上做不到这一点，所以它们显示的是白屏。</div>
+</div>
+
+</body>
+</html>
