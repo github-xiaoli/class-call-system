@@ -2017,21 +2017,47 @@ def api_logs_export():
     return resp
 
 
-MANUAL_HTML = os.path.join(ROOT_DIR, "使用说明-图文版.html")
-MANUAL_PDF = os.path.join(ROOT_DIR, "使用说明-图文版.pdf")
-MANUAL_TXT = os.path.join(ROOT_DIR, "使用说明.txt")
-MANUAL_IMG_DIR = os.path.join(ROOT_DIR, "使用说明-图片")
+# 说明书的位置：优先当前版本目录（随 OTA 一起下发），其次安装根目录（安装包放的）
+MANUAL_SEARCH_DIRS = (BASE_DIR, ROOT_DIR)
 _manual_cache = {"key": None, "html": ""}
+
+
+def _manual_path(name, want_dir=False):
+    """在版本目录 / 安装根目录里找说明书文件，找到就返回绝对路径。"""
+    for d in MANUAL_SEARCH_DIRS:
+        p = os.path.join(d, name)
+        if (os.path.isdir(p) if want_dir else os.path.isfile(p)):
+            return p
+    return ""
+
+
+def _manual_html_path():
+    return _manual_path("使用说明-图文版.html")
+
+
+def _manual_pdf_path():
+    return _manual_path("使用说明-图文版.pdf")
+
+
+def _manual_txt_path():
+    return _manual_path("使用说明.txt")
+
+
+def _manual_img_dir():
+    return _manual_path("使用说明-图片", want_dir=True)
 
 
 def _manual_html_text():
     """读图文说明书并把图片路径改成 /manual-img/（带缓存，文件更新后自动失效）。"""
+    path = _manual_html_path()
+    if not path:
+        return ""
     try:
-        st = os.stat(MANUAL_HTML)
-        key = (int(st.st_mtime), st.st_size)
+        st = os.stat(path)
+        key = (path, int(st.st_mtime), st.st_size)
         if _manual_cache["key"] == key and _manual_cache["html"]:
             return _manual_cache["html"]
-        with open(MANUAL_HTML, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             html = f.read()
         html = (html.replace('src="使用说明-图片/', 'src="/manual-img/')
                     .replace("src='使用说明-图片/", "src='/manual-img/"))
@@ -2051,7 +2077,7 @@ def page_manual():
     html = _manual_html_text()
     if html:
         return Response(html, mimetype="text/html; charset=utf-8")
-    if os.path.isfile(MANUAL_PDF):
+    if _manual_pdf_path():
         return redirect("/manual.pdf")
     cfg = get_config()
     port = int(_running_port or cfg.get("port", 8000))
@@ -2090,9 +2116,10 @@ def page_manual():
 
 @app.route("/manual.pdf")
 def page_manual_pdf():
-    if os.path.isfile(MANUAL_PDF):
+    pdf = _manual_pdf_path()
+    if pdf:
         try:
-            return send_file(MANUAL_PDF, mimetype="application/pdf", as_attachment=False,
+            return send_file(pdf, mimetype="application/pdf", as_attachment=False,
                              download_name="班级叫号器-使用说明.pdf")
         except Exception as exc:
             print("[说明] 发送 PDF 失败:", exc)
@@ -2101,9 +2128,10 @@ def page_manual_pdf():
 
 @app.route("/manual.txt")
 def page_manual_txt():
-    if os.path.isfile(MANUAL_TXT):
+    txt = _manual_txt_path()
+    if txt:
         try:
-            return send_file(MANUAL_TXT, mimetype="text/plain; charset=utf-8",
+            return send_file(txt, mimetype="text/plain; charset=utf-8",
                              as_attachment=False)
         except Exception:
             pass
@@ -2113,8 +2141,11 @@ def page_manual_txt():
 @app.route("/manual-img/<path:name>")
 def page_manual_img(name):
     """图文说明书的图片。"""
+    img_dir = _manual_img_dir()
+    if not img_dir:
+        return Response("", status=404)
     try:
-        return send_from_directory(MANUAL_IMG_DIR, name, max_age=3600)
+        return send_from_directory(img_dir, name, max_age=3600)
     except Exception:
         return Response("", status=404)
 

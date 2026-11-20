@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>班级叫号器 图文使用说明</title>
+<style>
+:root { --blue:#2563eb; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 0 40px; color: var(--ink); background: #fff;
+  font-family: "Microsoft YaHei", "微软雅黑", "Segoe UI", sans-serif;
+  font-size: 14.5px; line-height: 1.75;
+}
+.wrap { max-width: 940px; margin: 0 auto; padding: 0 26px; }
+.cover { padding: 54px 0 26px; border-bottom: 3px solid var(--blue); margin-bottom: 26px; }
+.cover h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 1px; }
+.cover .sub { color: var(--muted); font-size: 15px; }
+.cover .ver { margin-top: 16px; font-size: 13.5px; color: var(--muted); }
+h2 { font-size: 21px; margin: 34px 0 12px; padding-left: 12px;
+     border-left: 5px solid var(--blue); page-break-after: avoid; }
+h3 { font-size: 16.5px; margin: 22px 0 8px; color: #1e293b; page-break-after: avoid; }
+p { margin: 8px 0; }
+ul, ol { margin: 8px 0 8px 22px; padding: 0; }
+li { margin: 4px 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.6px; }
+th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: #f1f5f9; font-weight: 700; }
+.shot { margin: 14px 0 22px; page-break-inside: avoid; }
+.shot img { width: 100%; border: 1px solid var(--line); border-radius: 8px;
+            box-shadow: 0 3px 14px rgba(15,23,42,.09); }
+.shot figcaption { margin-top: 10px; }
+.steps { margin: 0 0 0 20px; }
+.steps li { margin: 5px 0; }
+.note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.tip { background: #eff6ff; border-left: 4px solid var(--blue);
+       padding: 10px 14px; border-radius: 6px; margin: 12px 0; font-size: 13.8px; }
+.kbd { font-family: Consolas, monospace; background: #f1f5f9; padding: 1px 6px;
+       border-radius: 4px; border: 1px solid var(--line); font-size: 13px; }
+.faq dt { font-weight: 700; margin-top: 14px; }
+.faq dd { margin: 4px 0 0 0; color: #334155; }
+.footer { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 14px;
+          color: var(--muted); font-size: 13px; }
+.cover .privacy { margin-top: 14px; font-size: 12.5px; color: #92400e;
+                  background: #fffbeb; border-left: 4px solid #f59e0b;
+                  padding: 9px 13px; border-radius: 6px; line-height: 1.6; }
+.toc { margin: 26px 0 6px; padding: 18px 22px 14px; background: #f8fafc;
+       border: 1px solid var(--line); border-radius: 12px; page-break-inside: avoid;
+       page-break-after: always; }
+.toc .toc-title { font-size: 18px; margin: 0 0 10px; padding: 0; border: 0;
+                  color: #1e293b; letter-spacing: 4px; text-align: center; }
+.toc ol { margin: 0; padding-left: 24px; columns: 2; column-gap: 34px; font-size: 14px; }
+.toc li { margin: 6px 0; }
+.toc a { color: #1d4ed8; text-decoration: none; }
+@page { size: A4; margin: 14mm 12mm; }
+@media print {
+  body { font-size: 12pt; }
+  .cover { padding-top: 0; }
+  .toc a { color: #1d4ed8; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="cover">
+  <h1>班级叫号器 · 图文使用说明</h1>
+  <div class="sub">一台电脑装好，局域网里所有手机、平板、教室大屏都能用</div>
+  <div class="ver">适用版本 2.0.21 ｜ Windows 10 / 11 ｜ 开源许可证：GNU GPL v3（或更高版本）</div>
+  <div class="privacy">为避免泄漏学生真实信息，本文档中出现的任何姓名均为随机姓名；截图中的摄像头画面与电脑桌面已打码处理。</div>
+</div>
+
+<nav class="toc">
+  <h2 class="toc-title">目 录</h2>
+  <ol>
+    <li><a href="#s1">这东西是干什么的</a></li>
+    <li><a href="#s2">第一次使用</a></li>
+    <li><a href="#s3">叫号</a></li>
+    <li><a href="#s4">发送语音消息</a></li>
+    <li><a href="#s5">名单管理</a></li>
+    <li><a href="#s6">设置</a></li>
+    <li><a href="#s7">监控与对讲</a></li>
+    <li><a href="#s8">文件传输</a></li>
+    <li><a href="#s9">远程控制</a></li>
+    <li><a href="#s10">手机怎么用</a></li>
+    <li><a href="#s11">密码与授权</a></li>
+    <li><a href="#s12">软件更新（OTA）</a></li>
+    <li><a href="#s13">常见问题</a></li>
+    <li><a href="#s14">连不上的原因（环境限制）</a></li>
+    <li><a href="#s15">开源与致谢</a></li>
+  </ol>
+</nav>
+
+<h2 id="s1">一、这东西是干什么的</h2>
+<p>「班级叫号器」是一个放在教室电脑上的<b>随机叫号 / 点名</b>小软件。它自带 Python 运行环境，
+解压即用、不用安装，双击就能跑；随机叫号的同时会用语音把学号、姓名和老师姓名念出来。</p>
+<table>
+<tr><th style="width:24%">功能</th><th>说明</th></tr>
+<tr><td>随机叫号</td><td>按学号或直接点名单叫号，自动语音播报，可带备注（如"带上作业"）</td></tr>
+<tr><td>名单管理</td><td>支持导入 CSV 名条、手工增删、搜索、清空</td></tr>
+<tr><td>叫号记录</td><td>自动记录每一次叫号的时间、学号、姓名，可刷新、可清空</td></tr>
+<tr><td>消息播报</td><td>输入一句话，电脑用语音念出来（通知、提醒都行）</td></tr>
+<tr><td>监控对讲</td><td>看电脑摄像头画面、听电脑麦克风、用手机对讲</td></tr>
+<tr><td>文件传输</td><td>手机上直接浏览电脑文件、上传下载、新建/重命名/复制/移动/删除</td></tr>
+<tr><td>远程控制</td><td>手机当鼠标键盘遥控电脑，支持多点触控</td></tr>
+<tr><td>手机访问</td><td>同一个 Wi-Fi 下，手机浏览器输网址就能用，不用装 APP</td></tr>
+<tr><td>密码授权</td><td>敏感功能（监控 / 远控 / 文件 / 更新）需要本机创建密码后激活才可用</td></tr>
+<tr><td>在线更新</td><td>内置 OTA：自动测速选最快线路，只下增量代码包，下载完再点一下安装重启</td></tr>
+<tr><td>常驻运行</td><td>可开机自启、最小化到托盘，不占屏幕、不弹黑窗</td></tr>
+</table>
+
+<h2 id="s2">二、第一次使用</h2>
+<h3>2.1 启动软件</h3>
+<ol>
+  <li><b>用安装包（推荐）</b>：双击 <span class="kbd">班级叫号器_安装包_v2.0.19.exe</span>（约 60 MB）。
+      安装向导一共 5 步：<b>欢迎 → 许可协议 → 安装位置 → 安装 → 完成</b>。
+      许可协议页显示的是 GNU GPL v3 的<b>中文全文</b>，勾选「我已阅读并同意上述许可协议」才能点下一步；
+      安装位置默认 <span class="kbd">C:\Program Files\班级叫号器</span>，一般不用改。
+      中间会弹一次系统 UAC 提示，点「是」即可；最后一步可以直接勾上「立即启动」。</li>
+  <li><b>用绿色包</b>：解压到任意目录（路径别带特殊符号），双击 <span class="kbd">start.bat</span>。</li>
+  <li>启动后<b>不会弹大窗口</b>，屏幕右下角任务栏会出现一个托盘图标，软件已在后台运行。</li>
+  <li>想开机自动运行：网页里打开「设置 → 开机自启」并保存，以后开机自动在托盘里待命
+      （第一次申请管理员权限时点"是"，之后开机不再询问）。</li>
+</ol>
+<div class="tip">托盘图标：<b>左键</b>弹出菜单，<b>右键</b>也是菜单。菜单里有「打开网页」「软件更新」「退出」。
+有更新正在下载时，左键点托盘会直接打开更新界面。</div>
+
+<h3>2.2 打开操作界面</h3>
+<ol>
+  <li><b>本机</b>：浏览器打开 <span class="kbd">http://127.0.0.1:8000</span>。</li>
+  <li><b>手机 / 其它电脑</b>：连同一个 Wi-Fi，打开 <span class="kbd">http://主机名.local:8000</span>
+      （主机名在设置里可改，默认 nine6），或者直接输电脑的局域网 IP。</li>
+  <li>敏感功能（监控、远控、文件、更新）在手机上需要走 <span class="kbd">https://主机名.local:9443</span>，
+      首次会提示"证书不安全"，点「继续访问」即可。</li>
+</ol>
+
+<h3>2.3 主页长什么样</h3>
+<figure class="shot" ><img src="使用说明-图片/01_home.png" alt="">
+  <figcaption><ul class="steps">
+    <li>左边是<b>叫号区</b>：小键盘输学号、备注栏、叫号按钮。</li>
+    <li>中间是<b>学生名单</b>：点一下即可选中要叫的人，可用搜索框快速找人。</li>
+    <li>下面是<b>叫号记录</b>：每叫一次自动记一条，可刷新或清空。</li>
+  </ul><p class="note">图中为演示数据（示例名条），实际使用换成你班里的名单即可。</p></figcaption>
+</figure>
+
+<h3>2.4 顶部工具栏每个按钮是干什么的</h3>
+<figure class="shot" ><img src="使用说明-图片/01b_toolbar.png" alt="">
+  <figcaption><ol class="steps">
+    <li>填<b>老师姓名</b>：叫号时会念"请3号张子墨到王老师办公室"，改完记得点保存。</li>
+    <li>点「保存」把老师姓名记下来。</li>
+    <li>「📷 监控对讲」：看摄像头画面、听声音、对讲。</li>
+    <li>「🖥 远程控制」：手机遥控这台电脑。</li>
+    <li>「📁 文件传输」：手机和电脑互传文件。</li>
+    <li>「🔄 软件更新」：检查并安装新版本。</li>
+    <li>「⚙️ 设置」：叫号语、提示音、端口、HTTPS、开机自启等都在这里。</li>
+    <li>「📥 导入CSV」：批量导入班级名单。</li>
+    <li>「👥 名条管理」：手工增删学生名条。</li>
+  </ol></figcaption>
+</figure>
+
+<h3>2.5 第一次启动：7 步设置向导</h3>
+<p>软件第一次运行时会自动弹出设置向导（判断依据：<span class="kbd">data/state.json</span> 里还没有
+<span class="kbd">wizard_done</span> 标记）。没设置完之前，打开任何页面都会被拉回向导；设置完成后再也进不去，
+想改设置请到「⚙️ 设置」。</p>
+<figure class="shot" ><img src="使用说明-图片/20_wizard_welcome.png" alt="">
+  <figcaption><ul class="steps">
+    <li>第 1 步<b>欢迎页</b>：背景会放烟花，下面 7 个圆点表示进度；一路点「下一步 →」，随时可以「上一步」回去改。</li>
+  </ul></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/21_wizard_license.png" alt="">
+  <figcaption><ol class="steps">
+    <li><b>这是一份法律性资料</b>：GPL 协议页明确标注，并且有「中文译文 / English」两个标签，可随时对照原文；</li>
+    <li>必须把当前标签的内容<b>滚到底部</b>（勾选框才会解锁）；</li>
+    <li>滚到底后还要<b>停留 10 秒</b>（会显示倒计时），再勾选「我已阅读并同意」，「下一步」才能点。</li>
+  </ol></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/22_wizard_host.png" alt="">
+  <figcaption><ol class="steps">
+    <li>给电脑起个<b>主机名</b>（字母/数字/连字符），下面实时显示手机该访问的地址；</li>
+    <li>点<b>「下一步」时会立刻保存并切换 mDNS</b>，手机用 <b>http://新名字.local</b> <b>马上</b>就能打开，
+        后面几步（包括第 6 步的二维码）用的都是这个新名字；</li>
+    <li>但 <b>https://新名字.local</b>（手机里的监控、文件、更新）要<b>重启一次程序</b>才会换上新名字的证书——
+        最后一步会给你一个「🔄 现在重启」按钮，点它就行。</li>
+  </ol><p class="note">名字没改就不用管这一步，不影响使用。</p></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/23_wizard_roster.png" alt="">
+  <figcaption><ol class="steps">
+    <li>第 4 步填<b>名条</b>：每行「学号,姓名」，也可以点「从 CSV 文件导入」或「填入示例名条」；</li>
+    <li>不想现在填就留空，之后在「👥 名条管理」里加（已有名条不会被清空）。</li>
+  </ol></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/24_wizard_pair.png" alt="">
+  <figcaption><ol class="steps">
+    <li>第 6 步<b>扫码即自动激活</b>：进入这一步会自动生成一张<b>一次性二维码</b>（30 分钟有效），用手机扫一下，浏览器会打开并 <b>自动完成绑定</b>，不用手输密码；</li>
+    <li>扫完手机会自己跳到首页；想换一台手机就点「🔄 重新生成二维码」，旧的立刻作废；</li>
+    <li>扫码不方便时，也可以让手机打开地址后点「🔑 激活」，输入界面上的<b>备用配对码</b>。</li>
+  </ol><p class="note">手机首次打开 https 会提示「证书不安全」，点「高级 → 继续访问」即可——激活必须要 https，http 下浏览器不给加密能力。</p></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/25_wizard_done.png" alt="">
+  <figcaption><ol class="steps">
+    <li>最后一步是<b>设置完成</b>页：列出主机地址、名条数量、自启与更新策略、配对密码；</li>
+    <li>点「🚀 立即使用」进入叫号主页，同时后台会把设置写入 <span class="kbd">data/</span>；</li>
+    <li>如果前面<b>改过主机名</b>，这里会多一条橙色的「设备名改过了」提示和一个「🔄 现在重启」按钮：
+        mDNS 名字已经生效（http 可用），重启一次让 https 也用上新名字的证书。也可以先点「先这样，进入使用」，
+        之后在「设置 → 重启软件」里再重启。</li>
+  </ol><p class="note">每一步背景都会换一种卡通场景（森林 / 沙漠 / 海洋 / 雪山 / 星夜 / 草原 / 樱花），切换时带入场动画。</p></figcaption>
+</figure>
+
+<h3>2.6 卸载</h3>
+<p>打开「控制面板 → 卸载程序」（或 设置 → 应用 → 已安装的应用），找到
+<b>班级叫号器</b>（发布者 xiaoli，版本号与安装包一致）点卸载即可；也可以点开始菜单里
+「班级叫号器 → 卸载 班级叫号器」。卸载会先关掉正在运行的程序，再问是否<b>保留名单与记录</b>：
+选"是"会把 <span class="kbd">data</span> 文件夹备份到「文档\班级叫号器数据」，重装后拷回安装目录就能恢复；
+选"否"则程序、名单、叫号记录和配对密码一起删除。程序文件、桌面与开始菜单快捷方式、卸载项都会清理干净。</p>
+
+<h2 id="s3">三、叫号</h2>
+<h3>3.1 叫一个人</h3>
+<figure class="shot" ><img src="使用说明-图片/02_call.png" alt="">
+  <figcaption><ol class="steps">
+    <li>在名单里<b>点一下学生</b>（也可以用小键盘直接打学号）；</li>
+    <li>需要的话在<b>备注</b>里写一句，比如"带上作业"，会一起念出来；</li>
+    <li>点<b>「📢 叫号」</b>，本机会播放提示音并朗读"请 X 号 XXX 到 X 老师办公室…"。</li>
+  </ol></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/03_called.png" alt="">
+  <figcaption><ol class="steps">
+    <li>上方横幅显示刚才叫了谁；</li>
+    <li>下方叫号记录自动新增一条（学号、姓名、时间）。</li>
+  </ol></figcaption>
+</figure>
+<figure class="shot" ><img src="使用说明-图片/02b_search.png" alt="">
+  <figcaption><ol class="steps">
+    <li>名单人多时，在<b>搜索框</b>输入学号或姓名的一部分，名单会实时过滤。</li>
+  </ol></figcaption>
+</figure>
+
+<h2 id="s4">四、发送语音消息</h2>
+<p>不叫号、只想通知一件事时用它：电脑会用语音把这句话念出来。</p>
+<figure class="shot" ><img src="使用说明-图片/04_message.png" alt="">
+  <figcaption><ol class="steps">
+    <li>在输入框里写要播报的内容，比如"下课后请把作业交到讲台"；</li>
+    <li>点<b>「📨 发送消息」</b>，电脑立刻朗读。</li>
+  </ol></figcaption>
+</figure>
+
+<h2 id="s5">五、名单管理</h2>
+<h3>5.1 导入 CSV 名单</h3>
+<figure class="shot" ><img src="使用说明-图片/05_import.png" alt="">
+  <figcaption><ol class="steps">
+    <li>选择 CSV / TXT 文件（一列放学号、一列放姓名即可）；</li>
+    <li>文件带"学号""姓名"这类标题行时，勾上「首行为表头」；</li>
+    <li>选完后会自动识别列，确认无误点「确认导入」；不想导入了就点右上角 ✕ 关闭。</li>
+  </ol><p class="note">CSV 用 Excel 另存为"CSV UTF-8"最稳；学号列/姓名列可以自己选，导入方式支持追加或覆盖。</p></figcaption>
+</figure>
+
+<h3>5.2 手工增删名条</h3>
+<figure class="shot" ><img src="使用说明-图片/06_manage.png" alt="">
+  <figcaption><ol class="steps">
+    <li>输入<b>学号</b>；</li>
+    <li>输入<b>姓名</b>；</li>
+    <li>点<b>「添加」</b>即可加入名单；</li>
+    <li>要一次性清空名单，点「清空全部名条」（会二次确认）。</li>
+  </ol></figcaption>
+</figure>
+
+<h2 id="s6">六、设置</h2>
+<h3>6.1 叫号语与声音</h3>
+<figure class="shot" ><img src="使用说明-图片/07_settings_a.png" alt="">
+  <figcaption><ol class="steps">
+    <li>叫号语模板：可用 <b>%number%</b> 学号、<b>%name%</b> 姓名、<b>%note%</b> 备注、<b>%teacher%</b> 老师，下面会实时显示预览；</li>
+    <li>播放次数：一句话重复念几遍；</li>
+    <li>勾选「叫号前播放提示音」会先"叮"一声；</li>
+    <li>勾选「开机自启」：以后开机自动在托盘待命（需要一次管理员授权）；</li>
+    <li>语音合成：<b>自动</b>（有网用自然语音、没网自动转离线）、自然语音（需联网）、离线语音（不联网也能念）。</li>
+  </ol></figcaption>
+</figure>
+
+<h3>6.2 局域网访问与安全端口</h3>
+<figure class="shot" ><img src="使用说明-图片/07_settings_b.png" alt="">
+  <figcaption><ol class="steps">
+    <li>勾选启用 mDNS 局域网访问，手机才能用 <b>主机名.local</b> 访问；</li>
+    <li>端口：默认 8000，改了要重启软件生效；</li>
+    <li>主机名：改了之后手机用 <b>http://新名字.local</b> 立刻可用，但 <b>https 要用新名字必须重启一次</b>
+        （设置页下方有「🔄 重启软件」按钮，重启时会自动按新名字重签证书）；</li>
+    <li>勾选启用 HTTPS 安全端口：手机上的监控 / 远控 / 文件 / 激活都走加密端口；</li>
+    <li>安全端口：默认 9443；</li>
+    <li>改完点<b>「保存设置」</b>。</li>
+  </ol><p class="note">如果 9443 被 Windows 保留端口段占用导致打不开，可勾选上面的"自动抢占系统保留端口"（需管理员），
+  软件会释放该端口并持久保存，下次启动仍用同一个端口。</p></figcaption>
+</figure>
+
+<h2 id="s7">七、监控与对讲</h2>
+<figure class="shot" ><img src="使用说明-图片/08_monitor.png" alt="">
+  <figcaption><ol class="steps">
+    <li>选择<b>摄像头</b>（列表是电脑上真实的设备名，不是"摄像头1/2"这种猜测）；</li>
+    <li>点<b>「开始」</b>看画面；</li>
+    <li>选择<b>麦克风</b>可听教室里的声音；</li>
+    <li>点<b>「对讲」</b>可以对着手机说话，由电脑音箱放出来。</li>
+  </ol><p class="note">说明文档里的画面区域已打码，实际显示的是摄像头实时画面。长时间观看也不会越来越卡
+  （采用"手机确认收到上一帧，电脑再推下一帧"的方式，不会堆积延迟）。</p></figcaption>
+</figure>
+
+<h2 id="s8">八、文件传输</h2>
+<figure class="shot" ><img src="使用说明-图片/09_files.png" alt="">
+  <figcaption><ol class="steps">
+    <li>选择<b>磁盘</b>（C/D/E…）；双击文件夹进入下一层；</li>
+    <li>「新建文件夹」；</li>
+    <li>「上传文件」：从手机里选文件传到电脑，会显示上传进度条；</li>
+    <li>「刷新」重新读取当前目录。</li>
+  </ol><p class="note">每个文件后面有「下载 / 重命名 / 复制 / 移动 / 删除」按钮。图中为演示文件夹，不涉及任何个人文件。</p></figcaption>
+</figure>
+
+<h2 id="s9">九、远程控制</h2>
+<figure class="shot" ><img src="使用说明-图片/10_remote.png" alt="">
+  <figcaption><ol class="steps">
+    <li>右上角「📱 手机模式 / 🖥 电脑模式」按钮可来回切换：<b>手机模式</b>=手指直接触控，等同在被控电脑上触摸（支持多指）；<b>电脑模式</b>=鼠标直接控制，键盘按键直接发送到被控电脑；</li>
+    <li>「屏幕键盘」：弹出手机输入法，给电脑打字；</li>
+    <li>「全屏」：把画面铺满手机屏幕。</li>
+  </ol><p class="note">主控端（正在操作的那个浏览器窗口）会自动隐藏鼠标指针，避免"指针漂移"；
+  <b>被控电脑本身的鼠标指针照常显示</b>，方便旁边的人知道点到哪里。
+  手机端支持<b>多指触屏</b>：两根手指同时按住可以双指缩放、拖动等。
+  画面区域已打码，实际显示被控电脑的桌面。</p></figcaption>
+</figure>
+
+<h2 id="s10">十、手机怎么用</h2>
+<figure class="shot"  data-width="380px"><img src="使用说明-图片/13_mobile.png" alt="" style="width:380px">
+  <figcaption><ol class="steps">
+    <li>手机上打开 <b>http://主机名.local:8000</b>，界面会自动变成竖屏单列，小键盘和叫号按钮就在手边；</li>
+    <li>点「📢 叫号」即可让电脑播报，手机就相当于一个无线遥控器。</li>
+  </ol><p class="note">手机第一次使用监控 / 远控 / 文件 / 更新前，需要在本机点「密码管理」创建一个密码，
+  再在手机上点「🔑 激活」输入该密码。激活是<b>一次性</b>的：浏览器会生成一对密钥，
+  私钥只存在这个浏览器里，密码用完立刻作废。</p></figcaption>
+</figure>
+
+<h2 id="s11">十一、密码与授权</h2>
+<figure class="shot" ><img src="使用说明-图片/11_password.png" alt="">
+  <figcaption><ol class="steps">
+    <li>给这次授权起个名字（例如"我的手机"），方便以后识别；</li>
+    <li>点「随机」自动生成一个强密码；</li>
+    <li>设置激活有效期（分钟，过期作废，避免密码泄漏）；</li>
+    <li>点「创建」后，把密码在手机上输入一次即可。</li>
+  </ol><p class="note">密码是<b>一次性</b>的：激活成功后立即失效，之后靠浏览器本地密钥验证。
+  密码列表里可以随时"吊销"某台设备。</p></figcaption>
+</figure>
+
+<h2 id="s12">十二、软件更新（OTA）</h2>
+<h3>12.1 检查并下载</h3>
+<figure class="shot" ><img src="使用说明-图片/12_update.png" alt="">
+  <figcaption><ol class="steps">
+    <li>右上角「⋮」可以选更新通道与策略：稳定 / 内测 / 开发（高通道能收到低通道的版本）；</li>
+    <li>点<b>「🔍 检查更新」</b>，有新版才会出现「下载更新」按钮；</li>
+    <li>点<b>「⬇ 下载更新」</b>开始下载。</li>
+  </ol><p class="note">也可以「手动上传更新包」：选择一个本地 zip 直接安装。</p></figcaption>
+</figure>
+
+<h3>12.2 下载时界面会被锁住</h3>
+<figure class="shot" ><img src="使用说明-图片/12b_locked.png" alt="">
+  <figcaption><ul class="steps">
+    <li>下载 / 解压期间整页被蒙层锁住，只显示进度：阶段、百分比、实时速度、已下载 / 总大小；</li>
+    <li>其它按钮点不到，所以<b>连点多少次也只会下载一次</b>；就算绕过网页直接调用接口，
+        服务端也会返回 409「更新已在进行中」，并保留正在运行的那个任务。</li>
+  </ul></figcaption>
+</figure>
+
+<h3>12.3 下载完成 → 安装并重启</h3>
+<ol>
+  <li>下载解压完成后蒙层自动消失，出现「✅ 安装并重启（版本号）」按钮，点它才开始真正切换版本。</li>
+  <li>安装前会先自检运行环境（依赖库是否齐全），检查不通过就<b>不切换版本</b>，原版本继续可用，
+      不会出现"更新完起不来"。</li>
+  <li>重启期间网页会短暂断开，几秒后刷新即可。</li>
+</ol>
+<div class="tip"><b>更新的机制（和"环境"有关）</b>：更新包分两部分——"代码包"很小（约 0.14 MB，秒下）；
+"运行环境包"约 230 MB。软件先只下代码包，再对比新版本要求的依赖版本：
+<ul>
+  <li>依赖都满足 → 只下代码包，<b>不下载环境包</b>（几秒钟搞定）；</li>
+  <li>有依赖缺失或版本不符 → 才去下载环境包补上。</li>
+</ul>
+下载前会同时向 31 个 CDN 镜像发请求测速，<b>4 秒内</b>选出最快线路；下载支持断点续传，
+网断了自动续传，不会从 0 重来。</div>
+
+<h3>12.4 右下角的更新提示气泡</h3>
+<figure class="shot"  data-width="470px"><img src="使用说明-图片/toast.png" alt="" style="width:470px">
+  <figcaption><ol class="steps">
+    <li>点气泡<b>正文</b> → 打开更新界面看详细进度；</li>
+    <li>点右上角 <b>✕</b> → 直接关掉；不点的话 <b>10 秒后自动消失</b>（后台下载不受影响）。</li>
+  </ol><p class="note">开始下载、下载完成时各提示一次，平时不打扰上课；不会弹大窗口挡住屏幕。</p></figcaption>
+</figure>
+
+<h2 id="s13">十三、常见问题</h2>
+<dl class="faq">
+<dt>Q1. 手机打不开 / 提示证书不安全？</dt>
+<dd>① 手机和电脑要在同一个 Wi-Fi；② 敏感功能必须用 <span class="kbd">https://主机名.local:9443</span>，
+自签名证书首次会警告，点「高级 → 继续访问」；③ 还不行就在 Windows 防火墙放行该端口的入站。</dd>
+
+<dt>Q2. 9443 端口启动失败？</dt>
+<dd>Windows 会把一段端口"保留"起来（Hyper-V / WinNAT 用），9443 正好落在保留段里时会报 WinError 10013。
+软件会自动跳到未被保留的端口并记住它；也可以在设置里勾选「自动抢占系统保留端口」（需管理员）把 9443 抢回来。</dd>
+
+<dt>Q3. 监控页摄像头列表是空的，或者画面和名字对不上？</dt>
+<dd>列表按 Windows DirectShow 枚举到的真实设备顺序生成，和实际设备一一对应。
+刚插上摄像头时刷新页面即可；个别虚拟摄像头（如 OBS）需要先启动它的虚拟设备。</dd>
+
+<dt>Q4. 叫号没有声音？</dt>
+<dd>设置里把「语音合成」改成离线语音试试（不依赖网络）；检查「叫号音量」是不是 0；系统音量是否静音。</dd>
+
+<dt>Q5. 更新很慢或一直失败？</dt>
+<dd>软件会并发测速 31 条线路并自动选最快的，下载中断会自动断点续传。
+网络实在差时，可以在电脑上手动下载 release 里的 zip，用「手动上传更新包」安装。</dd>
+
+<dt>Q6. 更新后想退回旧版本？</dt>
+<dd>把 <span class="kbd">version.json</span> 里的 version 改回旧版本号（旧版本目录还在）即可；
+学生数据和叫号记录都存在 <span class="kbd">data/</span> 里，不会丢。</dd>
+
+<dt>Q7. 数据存在哪？换电脑怎么办？</dt>
+<dd>名单、记录、密码、配置全部在 <span class="kbd">data/</span> 目录，整个文件夹拷到新电脑的同名目录即可。</dd>
+
+<dt>Q8. iPhone / iPad 打开一片白，什么提示都没有？</dt>
+<dd>这是自签证书的问题：iPhone 上的 Chrome / Edge 没有"继续访问"按钮，所以直接白屏。
+用 Safari 打开 <span class="kbd">https://电脑IP:9443/cert</span> 装一次证书并开启"完全信任"即可，
+详见 <a href="#s14">第十四章 14.3</a>。</dd>
+
+<dt>Q9. 手机输"名字.local"打不开，输 IP 就能开？</dt>
+<dd>那是这台设备/系统不解析 <span class="kbd">.local</span>（例如鸿蒙 3.0 的荣耀 30S），
+与浏览器无关。手机一律用 IP，详见 <a href="#s14">第十四章 14.2</a>。</dd>
+
+<dt>Q10. 昨天还能用，今天手机就连不上了？</dt>
+<dd>最常见两种：电脑 IP 变了（旧二维码失效）、或校园 AP 限制多播 / 开了客户端隔离。
+见 <a href="#s14">第十四章 14.5</a>；电脑上的 <span class="kbd">/logs</span> 能看到换网与重新注册的记录。</dd>
+</dl>
+
+<h2 id="s14">十四、连不上的原因（环境限制）</h2>
+<p>这一章只写<b>软件改不了、只能靠现场设置或换方式</b>的问题。凡是能在程序里解决的，都已经解决了，
+不在此列。遇到打不开时，先照 14.1 的表找症状，再看对应小节。</p>
+
+<h3>14.1 症状速查表</h3>
+<table>
+  <tr><th style="width:33%">你看到的症状</th><th style="width:34%">真正的原因</th><th>只能这样解决</th></tr>
+  <tr><td>手机输 <span class="kbd">http://名字.local:8000</span> 提示"找不到服务器"</td>
+      <td>这台设备/系统<b>不解析</b> <span class="kbd">.local</span>（见 14.2）</td>
+      <td>改用 <span class="kbd">http://电脑IP:8000</span></td></tr>
+  <tr><td>iPhone / iPad 打开就<b>白屏、没有任何报错</b></td>
+      <td>自签证书 + 第三方浏览器没有"继续访问"按钮（见 14.3）</td>
+      <td>用 Safari，或装证书并开启「完全信任」</td></tr>
+  <tr><td>Safari 能开、Chrome / Edge 白屏</td><td>同上，不是权限问题</td><td>同上</td></tr>
+  <tr><td>昨天能开，今天打不开（IP 没变）</td>
+      <td>校园 AP 关了多播 / 开了客户端隔离（见 14.4）</td>
+      <td>用 IP；换网络；或手机热点</td></tr>
+  <tr><td>二维码突然失效</td><td>电脑 IP 变了（DHCP 租约，见 14.5）</td>
+      <td>路由器做 DHCP 保留；或重新生成二维码</td></tr>
+  <tr><td>手机连得上电脑，但电脑收不到请求</td>
+      <td>Windows 防火墙"公用网络"拦入站（见 14.6）</td><td>首次运行点"允许访问"；或放行端口</td></tr>
+  <tr><td>在线更新一直失败</td><td>学校网络屏蔽 GitHub</td><td>用安装包手动更新</td></tr>
+</table>
+
+<h3>14.2 手机打不开 <span class="kbd">名字.local</span>：取决于系统，不是浏览器</h3>
+<p><span class="kbd">.local</span> 这种名字要靠设备自己用 mDNS 解析。能不能解析，看的是
+<b>操作系统/ROM</b> —— 同一个 Edge，在不同设备上结果就不同：</p>
+<table>
+  <tr><th style="width:34%">设备</th><th style="width:36%">系统</th><th>能否解析 .local</th></tr>
+  <tr><td>荣耀 30S</td><td>鸿蒙 3.0（AOSP 10 底子）</td><td>不能</td></tr>
+  <tr><td>Lenovo TB310FU</td><td>LineageOS 23 GSI（Android 16）</td><td>能</td></tr>
+  <tr><td>iPhone / iPad / Mac</td><td>iOS / iPadOS / macOS</td><td>能</td></tr>
+  <tr><td>Windows 10 / 11 电脑</td><td>系统自带 mDNS</td><td>能</td></tr>
+</table>
+<p>所以"换浏览器能解决"是错觉：Chrome、Edge、夸克在安卓上都走同一个系统解析器。</p>
+<p class="tip"><b>结论：手机一律用 IP。</b>软件里的二维码、配对地址、向导里的手机地址
+<b>默认已经都用 IP</b>，<span class="kbd">.local</span> 只作为文字备选。
+想确认某台设备行不行：让它分别打开 <span class="kbd">http://电脑IP:8000/plain</span> 与
+<span class="kbd">http://名字.local:8000/plain</span>，能出同一页就是支持。</p>
+
+<h3>14.3 iPhone / iPad 白屏：装一次证书就彻底解决</h3>
+<p><b>原因有两个，叠在一起：</b>① 软件用的是自签名证书，苹果默认不信任；② Safari 遇到证书问题会弹
+"显示详细信息 → 访问此网站"，而 iPhone 上的 Chrome / Edge / 夸克<b>没有这个界面</b>，
+于是请求直接失败 —— 表现就是<b>白屏、没有任何错误提示</b>。</p>
+<p>另外苹果有硬性规定：<b>手动安装的证书不会自动受信任</b>，必须在「证书信任设置」里手动打开「完全信任」。</p>
+<p><b>操作（一次就好）：</b></p>
+<ol class="steps">
+  <li>iPhone 用 <b>Safari</b> 打开 <span class="kbd">https://电脑IP:安全端口/cert</span>
+      （例如 <span class="kbd">https://192.168.1.19:9443/cert</span>）</li>
+  <li>点「① 下载描述文件（iPhone / iPad 推荐）」→ 弹窗选<b>允许</b></li>
+  <li>设置 → 已下载描述文件（或：通用 → VPN 与设备管理）→ <b>安装</b> → 输锁屏密码</li>
+  <li><b>设置 → 通用 → 关于本机 → 证书信任设置</b> → 打开
+      「班级叫号器本机根证书」的<b>完全信任</b></li>
+</ol>
+<p class="tip">做完这四步，Safari、Chrome、Edge、夸克<b>都不会再白屏</b>，也不用每次点"继续"。
+装完记得<b>完全关掉浏览器再重开</b>；还在白屏就是第 4 步没开。</p>
+<p class="note">说明：<span class="kbd">/cert</span>、<span class="kbd">/cert.mobileconfig</span>、
+<span class="kbd">/cert.crt</span> 是 <b>2.0.30 新增</b>的入口。2.0.29 及更早版本打开会是 404，
+请先更新。安卓 / 鸿蒙装证书的方法在同一页里也有。</p>
+
+<h3>14.4 「本地网络」权限：找不到 Safari 是正常的</h3>
+<p>「设置 → 隐私与安全性 → 本地网络」管的是<b>第三方 App</b> 访问局域网（iOS 14 起的隐私机制）。
+Safari 是系统浏览器，不走这套权限模型，<b>永远不会出现在列表里</b>。</p>
+<p>列表里只会出现：① 你装过的第三方 App；② 它<b>已经尝试过一次</b>局域网访问
+（弹过"想查找并连接本地网络上的设备"之后）。所以列表里没有 Chrome / Edge 时：
+先用它打开一次 <span class="kbd">http://电脑IP:8000</span>，弹窗选允许，再回来看。</p>
+<p>另外三个会干扰局域网访问的手机开关，建议关掉：</p>
+<table>
+  <tr><th style="width:32%">开关</th><th style="width:40%">路径</th><th>建议</th></tr>
+  <tr><td>iCloud <b>私密中继</b></td><td>设置 → 顶部 Apple ID → iCloud → 私密中继</td><td>关闭</td></tr>
+  <tr><td><b>限制 IP 地址跟踪</b></td><td>设置 → 无线局域网 → 当前 Wi-Fi 右侧 ⓘ</td><td>关闭</td></tr>
+  <tr><td><b>私有无线局域网地址</b></td><td>同上</td><td>关闭（会重连一次 Wi-Fi）</td></tr>
+</table>
+<p class="note">还有一条硬限制：<b>iOS 拒绝有效期超过 825 天的服务器证书</b>。旧版本签过 10 年证书，
+在 iPhone 上就是"打不开 / 服务器已停止响应"。2.0.30 起改为"根证书 10 年 + 服务器证书 365 天"，
+从很旧版本升级上来的电脑第一次启动会自动重签，<b>手机端需要重新装一次证书</b>。</p>
+
+<h3>14.5 网络与路由器：多播、隔离、网段、IP 变化</h3>
+<table>
+  <tr><th style="width:30%">情况</th><th style="width:36%">现象</th><th>处理</th></tr>
+  <tr><td>校园 AP 过滤多播（UDP 5353）</td>
+      <td>名字时好时坏，重启手机又好一会儿</td>
+      <td>这类网络里 <span class="kbd">.local</span> 永远不可靠，直接用 IP</td></tr>
+  <tr><td>客户端隔离 / 无线隔离</td><td>手机能上网，但连教室电脑也不行（IP 也不行）</td>
+      <td>换不做隔离的网络（办公室网 / 自建路由器 / 手机热点）</td></tr>
+  <tr><td>不同网段 / VLAN</td><td>IP 和名字都打不开</td><td>让手机与电脑在同一网段</td></tr>
+  <tr><td>电脑 IP 变了（DHCP 租约）</td><td>之前生成的二维码失效</td>
+      <td>见下面"固定 IP"的三种做法</td></tr>
+</table>
+<p><b>固定 IP 的三种做法：</b></p>
+<ul>
+  <li><b>路由器里做 DHCP 保留（MAC 绑定）——最推荐。</b>电脑仍用"自动获取"，路由器每次发同一个 IP，
+      <b>零冲突风险</b>，换网络也不影响。</li>
+  <li><b>静态 IP，且必须选在 DHCP 池外</b>（例如池是 100–199，就用 .50 或 .240），
+      掩码 / 网关 / DNS 都要填对。Windows 的静态 IP 是绑在<b>网卡</b>上的，不是绑 Wi-Fi 名，
+      白天连学校网、晚上连热点的电脑会有一边不通。</li>
+  <li><b>什么都不改</b>：每次用面板上显示的当前 IP，或当场重新生成二维码。</li>
+</ul>
+<p class="tip">⚠️ <b>静态 IP 千万不要填在 DHCP 池里</b>：路由器不知道你手动占了它，会把同一地址发给别人，
+两台设备轮流掉线（Windows 会提示"IP 地址冲突"并跳到 169.254）。</p>
+<p>另外：学校网络屏蔽 GitHub 时，软件内置的四个镜像全部不通 → 在线更新必然失败，改用安装包手动更新即可；
+系统时间不准也会导致证书校验和更新校验失败，把电脑和手机都设为自动对时。</p>
+
+<h3>14.6 电脑端：防火墙与网卡</h3>
+<ul>
+  <li><b>防火墙"公用网络"拦入站。</b>软件第一次运行会弹"是否允许访问"，必须允许（专用 + 公用都勾）。
+      坑在于<b>规则是按当时的网络类型记的</b>：之后连上一个被判为"公用"的网络（学校 Wi-Fi 常被判公用），
+      规则就不生效 → 手机又连不上，重新允许一次即可。</li>
+  <li><b>多网卡 / 虚拟网卡。</b>电脑常有 Hyper-V 的 <span class="kbd">vEthernet</span>、WSL、VMware、
+      VPN、Wi-Fi Direct（<span class="kbd">本地连接* 2</span>），这些 IP 手机永远连不上。
+      2.0.30 起用系统原生 API 判断"是否有默认网关 / 是否虚拟"，默认只广播真实网卡，
+      设置里的<b>「mDNS 诊断」</b>会列出每块网卡被跳过的原因。</li>
+  <li><b>组策略禁用 PowerShell。</b>2.0.29 及更早版本靠 PowerShell 枚举网卡，被禁用时会退化成
+      "所有 IP 一起广播"；<b>2.0.30 起不再依赖 PowerShell</b>。</li>
+  <li><b>没有管理员权限 / 禁止安装。</b>用绿色版（zip 解压即用），或安装包的测试模式
+      （装到当前用户目录，不提权）。</li>
+  <li><b>Edge 弹「现有实例正在以提升的权限运行」。</b>与软件无关：软件以管理员启动后拉起的 Edge
+      继承了管理员权限，之后普通权限再开 Edge 就会问。点是（Y），或把那个 Edge 全部关掉。</li>
+  <li><b>摄像头 / 麦克风被占用。</b>监控、对讲、远控需要它们；被钉钉、腾讯会议、希沃占用或被隐私设置
+      禁止时不可用，关掉占用程序再试。</li>
+</ul>
+
+<h3>14.7 应急四招（改程序之外）</h3>
+<ol class="steps">
+  <li><b>用 IP</b>：手机打开 <span class="kbd">http://电脑IP:8000</span>（叫号全功能）；
+      <span class="kbd">https://电脑IP:9443</span>（激活 / 监控 / 远控）。</li>
+  <li><b>先开 <span class="kbd">/plain</span></b>：不含脚本的极简页，能打开就说明网络与服务正常，
+      白屏是浏览器/证书的问题。</li>
+  <li><b>再看 <span class="kbd">/api/health</span></b>：返回 JSON，能看出你连到的是哪台电脑、
+      走的 http 还是 https、你的 IP 和浏览器。</li>
+  <li><b>电脑上看 <span class="kbd">/logs</span></b>：实时运行日志，可一键导出 txt
+      （稳定版主页不显示入口，直接输网址可进）。</li>
+</ol>
+<p class="tip"><b>讲台贴纸版（可直接打印）：</b><br>
+手机打不开时按顺序试：① 地址换成 IP <span class="kbd">http://电脑IP:8000</span>；
+② 打开 <span class="kbd">http://电脑IP:8000/plain</span>，能出页面说明电脑没问题；
+③ iPhone 白屏：Safari 打开 <span class="kbd">https://电脑IP:9443/cert</span> → 下载描述文件 → 安装 →
+设置/通用/关于本机/证书信任设置 → 打开"完全信任"；
+④ 还是不行：看电脑上的 <span class="kbd">/logs</span>，把内容发给管理员。</p>
+<p class="note">完整版（含 25 条明细、为什么改程序解决不了、逐条对策）见仓库
+<span class="kbd">docs/环境与设备限制.md</span>。</p>
+
+<h2 id="s15">十五、开源与致谢</h2>
+<p>本项目以 <b>GNU 通用公共许可证第 3 版，或（由你选择）任何更高版本（GPL-3.0-or-later）</b> 开源发布：</p>
+<ul>
+  <li>许可证全文见仓库根目录 <span class="kbd">LICENSE</span>（自由软件基金会官方原文，未做修改）；
+      版权与"或更高版本"声明见 <span class="kbd">NOTICE</span>。</li>
+  <li>源码仓库：<span class="kbd">https://github.com/github-xiaoli/class-call-system</span></li>
+  <li>用到的开源库：Flask、flask-sock、cryptography、zeroconf、opencv-python-headless、sounddevice、
+      comtypes、pycaw、pywin32、edge-tts、psutil 等，均遵循各自许可证。</li>
+</ul>
+<div class="footer">
+  本文档由软件作者编写 · 版本 2.0.30 · 为避免泄漏学生真实信息，文中出现的任何姓名均为随机姓名，截图取自演示实例，摄像头画面与电脑桌面已打码，不含任何个人隐私信息
+</div>
+</div>
+
+</body>
+</html>

@@ -32,6 +32,9 @@ ASSET_EXE = "ClassCaller-Setup-v%s.exe" % VERSION
 EXE = os.path.join(ROOT, "build", "out", "班级叫号器_安装包_v%s.exe" % VERSION)
 
 NOTES = """- 【内测版】%(ver)s
+- 图文说明书随代码一起下发：通过在线更新升级的电脑也能打开完整图文
+- 托盘「📖 使用说明」打开软件内置说明书；安装包仍带 PDF（安装根目录）
+- 说明书新增「十四、连不上的原因（环境限制）」（安卓/鸿蒙 .local、iPhone 白屏与装证书、校园网多播与隔离、DHCP 换 IP、防火墙等 25 条）
 - mDNS 重写（根治"有时能解析有时不能"）：
   · 网卡枚举改用系统原生 GetAdaptersAddresses，不再依赖 PowerShell（学校禁 PowerShell 也能用）
   · 一个域名只广播一个 IP：不再把 Hyper-V / WSL / Wi-Fi Direct 等虚拟网卡地址混进 A 记录

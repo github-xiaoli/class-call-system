@@ -28,9 +28,10 @@ WS = r"C:\Users\李语晨\Desktop\班级叫号器"
 SRC = os.path.join(WS, "2.0.0")
 PY = os.path.join(WS, "build", "zip", "班级叫号器", "python", "python.exe")
 WORK = os.path.join(WS, "_qa30_manual")
-PA, PB = 8780, 8781
+PA, PB, PC = 8780, 8781, 8782
 BASE_A = "http://127.0.0.1:%d" % PA
 BASE_B = "http://127.0.0.1:%d" % PB
+BASE_C = "http://127.0.0.1:%d" % PC
 results = []
 procs = {}
 
@@ -154,6 +155,27 @@ def main():
         check("页面上能看到第十四章", bool(has14))
         pg.screenshot(path=os.path.join(WORK, "shot-manual.png"), full_page=False)
         br.close()
+
+    print("== 实例 C：说明书只在版本目录（2.0.31 起 OTA 下发的布局）==")
+    start("c", PC, with_manual=False)
+    check("实例 C 启动成功", wait_ok(BASE_C + "/api/status"))
+    body3, hdr3, _ = get(BASE_C + "/manual")
+    t3 = body3.decode("utf-8", "replace")
+    check("只在版本目录时 /manual 仍是完整图文（不是兜底页）",
+          "十四、连不上的原因" in t3 and "没有放图文说明书文件" not in t3)
+    check("图片路径可用 /manual-img/", "/manual-img/" in t3)
+    body3 = None
+    m3 = None
+    import re as _re
+    m3 = _re.search(r'src="/manual-img/([^"]+)"', t3)
+    if m3:
+        try:
+            raw3, ih3, _ = get(BASE_C + "/manual-img/" + urllib.parse.quote(m3.group(1)))
+            check("版本目录里的图片能取到",
+                  (ih3.get("Content-Type") or "").startswith("image/") and len(raw3) > 1000,
+                  "%s %d bytes" % (ih3.get("Content-Type"), len(raw3)))
+        except Exception as exc:
+            check("版本目录里的图片能取到", False, repr(exc))
 
     print("== 实例 B：安装目录里没有说明书文件（旧版升级 / OTA 场景）==")
     start("b", PB, with_manual=False)

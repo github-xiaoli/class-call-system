@@ -90,16 +90,11 @@ def stage_payload():
 
     for name in ("start.bat", "启动-隐藏窗口.vbs", "示例名条.csv", "使用说明.txt", "README.md",
                  "LICENSE", "NOTICE", "LICENSE-中文全文译文.txt", "LICENSE-中文参考译文.txt",
-                 # 图文说明书：托盘「📖 使用说明」直接打开，所以必须随安装包一起装
-                 "使用说明-图文版.html", "使用说明-图文版.pdf"):
+                 # 图文说明书的 PDF 放安装根目录（HTML 与截图随版本目录一起装，见下）
+                 "使用说明-图文版.pdf"):
         src = os.path.join(ROOT, name)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(PAYLOAD, name))
-
-    # 说明书用到的截图（/manual-img/ 提供）
-    img_src = os.path.join(ROOT, "使用说明-图片")
-    if os.path.isdir(img_src):
-        copy_tree(img_src, os.path.join(PAYLOAD, "使用说明-图片"))
 
     icon = os.path.join(ROOT, "data", "icon.ico")
     os.makedirs(os.path.join(PAYLOAD, "data"), exist_ok=True)

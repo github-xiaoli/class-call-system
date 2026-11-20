@@ -1,6 +1,6 @@
 {
     "app_name":  "班级叫号器",
-    "version":  "2.0.30",
+    "version":  "2.0.31",
     "edition":  "beta",
     "entry":  "app.py",
     "data_dir":  "data",
