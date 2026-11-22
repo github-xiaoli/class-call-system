@@ -104,7 +104,9 @@ function playPcm16(bytes) {
 
   pcmChunks.push(int16);
   pcmTotal += int16.length;
-  if (pcmTotal < 4096) return;
+  // 按 40ms 聚合（16k 采样时 640 样本；原来固定 4096 在 16k 下是 256ms！）
+  const needPcm = Math.max(320, Math.round((playRate || 48000) * 0.04));
+  if (pcmTotal < needPcm) return;
   const all = new Int16Array(pcmTotal);
   let off = 0;
   for (const c of pcmChunks) { all.set(c, off); off += c.length; }
@@ -114,7 +116,7 @@ function playPcm16(bytes) {
     nextTime = audioCtx.currentTime + 0.03;
   }
   // 只累积不追：落后太多就直接跳到"现在"，避免越积越多（听感上就是几十秒延迟）
-  if (audioCtx && nextTime > audioCtx.currentTime + 0.35) {
+  if (audioCtx && nextTime > audioCtx.currentTime + 0.15) {
     nextTime = audioCtx.currentTime + 0.05;
   }
   const f32 = new Float32Array(all.length);
@@ -129,10 +131,29 @@ function playPcm16(bytes) {
   nextTime = t + buf.duration;
 }
 
-function camAck() {
-  if (camWs && camWs.readyState === 1) {
-    try { camWs.send("1"); } catch (e) { /* 忽略 */ }
-  }
+/* 2.0.32：服务端给每帧加 4 字节大端序号，客户端逐帧回执 "a<序号>"。
+   服务端据此用「有限窗口流水线 + 自适应码率」推流：
+   隧道下不再每帧等一个 RTT（原来 150ms RTT 只能跑到 6fps），
+   同时按回执延迟/吞吐自动调分辨率与质量（收不到就降速）。 */
+let camSeqMode = false;   // 是否已和服务端握手成功（新协议）
+let camPaused = false;    // 页面切后台时暂停发送
+let lastRxSeq = 0;        // 最近收到的帧序号（唤醒后立刻回执用）
+
+function camAck(seq) {
+  if (!camWs || camWs.readyState !== 1) return;
+  try {
+    camWs.send(camSeqMode ? ("a" + (seq >>> 0)) : "1");
+  } catch (e) { /* 忽略 */ }
+}
+
+function camCtl(text) {
+  // 服务端下发的控制消息：{"type":"rate","fps":..,"quality":..,"width":..}
+  try {
+    const m = JSON.parse(text);
+    if (m && m.type === "rate") {
+      console.log("[监控] 自适应档位", m.width + "x? q=" + m.quality + " fps=" + m.fps);
+    }
+  } catch (e) { /* 忽略 */ }
 }
 
 async function startMonitor() {
@@ -147,11 +168,27 @@ async function startMonitor() {
     const cUrl = await Auth.urlWithToken("/ws/monitor/camera?cam=" + encodeURIComponent(cam));
     camWs = openWs(cUrl);
     camWs.binaryType = "arraybuffer";
+    camWs.onopen = () => {
+      // 告诉服务端“我支持新协议”（序号前缀帧 + 逐帧回执）。
+      // 老页面不发这条，服务端自动退回 2.0.31 的停等协议，不会黑屏。
+      camSeqMode = true;
+      try { camWs.send("hi2"); } catch (e) { /* 忽略 */ }
+    };
     camWs.onmessage = (e) => {
-      // 服务端按“回执”节流：解码忙时立刻回执并丢弃这一帧，避免画面越拖越卡
-      if (videoBusy) { camAck(); return; }
+      if (typeof e.data === "string") { camCtl(e.data); return; }
+      let seq = 0;
+      let payload = e.data;
+      if (camSeqMode) {
+        try {
+          seq = new DataView(e.data, 0, 4).getUint32(0);
+          payload = e.data.slice(4);
+        } catch (err) { seq = 0; }
+      }
+      if (seq) lastRxSeq = seq;
+      // 解码忙时立刻回执并丢弃这一帧：既不积压，也让服务端知道我们活着
+      if (videoBusy) { camAck(seq); return; }
       videoBusy = true;
-      const blob = new Blob([e.data], { type: "image/jpeg" });
+      const blob = new Blob([payload], { type: "image/jpeg" });
       const canvas = $("video");
       const cctx = canvas.getContext("2d");
       if (window.createImageBitmap) {
@@ -163,8 +200,8 @@ async function startMonitor() {
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
           videoBusy = false;
-          camAck();
-        }).catch(() => { videoBusy = false; camAck(); });
+          camAck(seq);
+        }).catch(() => { videoBusy = false; camAck(seq); });
       } else {
         const u = URL.createObjectURL(blob);
         const img = new Image();
@@ -176,9 +213,9 @@ async function startMonitor() {
           canvas.classList.remove("hidden");
           $("video-hint").classList.add("hidden");
           videoBusy = false;
-          camAck();
+          camAck(seq);
         };
-        img.onerror = () => { URL.revokeObjectURL(u); videoBusy = false; camAck(); };
+        img.onerror = () => { URL.revokeObjectURL(u); videoBusy = false; camAck(seq); };
         img.src = u;
       }
     };
@@ -327,5 +364,14 @@ $("btn-stop").addEventListener("click", stopMonitor);
 $("btn-talk").addEventListener("click", () => { talking ? stopTalk() : startTalk(); });
 
 window.addEventListener("beforeunload", () => { stopMonitor(); stopTalk(); });
+
+/* 页面切后台 / 手机锁屏：主动告诉服务端暂停推流，别白烧流量；
+   回到前台立刻回一个回执，避免服务端的“收不到就降速”保险丝一直压着档位。 */
+document.addEventListener("visibilitychange", () => {
+  camPaused = document.hidden;
+  if (!camWs || camWs.readyState !== 1) return;
+  try { camWs.send(document.hidden ? "p" : "r"); } catch (e) { /* 忽略 */ }
+  if (!document.hidden && camSeqMode) camAck(lastRxSeq);
+});
 
 loadDevices();

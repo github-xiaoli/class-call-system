@@ -23,6 +23,8 @@ from flask import Blueprint, Response, jsonify, request
 
 from auth import check_access
 
+import abr
+
 remote_bp = Blueprint("remote", __name__)
 
 try:
@@ -1202,8 +1204,129 @@ def remote_shutdown():
     _close_osk()
 
 
+def ws_remote_input(ws):
+    """触控 / 键盘专用通道。
+
+    为什么单独开一条：画面帧有 30~40KB，和 100 字节的触控包挤在同一条 TCP 流
+    上时，大帧正在发的时候触控包只能排在后面，表现为“手指动了电脑没反应”。
+    Cloudflare 隧道内部同样是有序流，一样会堵。
+    """
+    global _last_activity
+    err = check_access()
+    if err:
+        try:
+            ws.send(json.dumps({"ok": False, "error": "需要密码激活后才能使用该功能"},
+                               ensure_ascii=False))
+            ws.close()
+        except Exception:
+            pass
+        return
+    try:
+        abr.tune_socket(ws)
+    except Exception:
+        pass
+    try:
+        while True:
+            try:
+                data = ws.receive()
+            except Exception:
+                break
+            if data is None:
+                break
+            if isinstance(data, (bytes, bytearray)):
+                continue
+            s = str(data).strip()
+            if not s:
+                continue
+            if s == "hi2":
+                try:
+                    ws.send(json.dumps({"ok": True, "type": "hello"},
+                                       ensure_ascii=False))
+                except Exception:
+                    pass
+                continue
+            try:
+                handle_input(json.loads(s))
+            except Exception:
+                continue
+            with _LOCK:
+                _last_activity = time.time()
+    finally:
+        pass
+
+
+def _grab_raw():
+    """只抓图不编码（抓图 30~60ms，放到独立线程里做）。"""
+    try:
+        img = ImageGrab.grab(all_screens=False)
+        if img.width > 2048:
+            img = img.reduce(2)          # C 实现，比 resize 快几倍；也省内存
+        return img
+    except Exception:
+        return None
+
+
+def _encode_frame(img, quality=40, max_width=1024):
+    """把 PIL 图缩到目标宽度并编码成 JPEG bytes。"""
+    if img is None:
+        return b""
+    try:
+        w, h = img.size
+        while w > max_width * 2:
+            img = img.reduce(2)
+            w, h = img.size
+        if w > max_width:
+            scale = float(max_width) / w
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                             resample=1)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=int(quality))
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
+def _grab_raw():
+    """只抓图不编码（抓图 30~60ms，放到独立线程里做）。"""
+    try:
+        img = ImageGrab.grab(all_screens=False)
+        if img.width > 2048:
+            img = img.reduce(2)          # C 实现，比 resize 快几倍；也省内存
+        return img
+    except Exception:
+        return None
+
+
+def _encode_frame(img, quality=40, max_width=1024):
+    """把 PIL 图缩到目标宽度并编码成 JPEG bytes。"""
+    if img is None:
+        return b""
+    try:
+        w, h = img.size
+        while w > max_width * 2:
+            img = img.reduce(2)
+            w, h = img.size
+        if w > max_width:
+            scale = float(max_width) / w
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                             resample=1)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=int(quality))
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 def ws_remote(ws):
-    """远程控制 WebSocket：电脑持续发送屏幕帧，浏览器发送鼠标/键盘指令。"""
+    """远程控制 WebSocket：电脑持续发送屏幕帧，浏览器发送鼠标/键盘指令。
+
+    2.0.32 起：
+    - 帧改为「4 字节序号 + JPEG」，客户端逐帧回执 → 有限窗口流水线推流，
+      并据此做自适应码率（不再每帧等一个 RTT）；
+    - 帧率不再硬编码 8fps；
+    - 抓屏与收回执都放到独立线程，发送节奏与帧 RTT 不再被自己的耗时污染；
+    - 触控/键盘建议走 /ws/remote/input 单独通道（老客户端仍可用本通道文本帧）。
+    """
     global _remote_active, _remote_teacher, _last_activity
     err = check_access()
     if err:
@@ -1232,33 +1355,162 @@ def ws_remote(ws):
             _desktop.show_remote_popup(teacher)
         except Exception:
             pass
+
+    cfg = (_config_getter or (lambda: {}))() or {}
+    seq_mode = False
     try:
+        hello = ws.receive(timeout=1.5)
+    except Exception:
+        hello = None
+    if isinstance(hello, str) and hello.strip() == "hi2":
+        seq_mode = True
+    try:
+        abr.tune_socket(ws)
+    except Exception:
+        pass
+    abr_on = abr.enabled(cfg)
+    # 远控保持低延迟：触控要跟手（0.5 秒预算 = 2.0.32 的行为）
+    budget = abr.budget_of(cfg, "remote")
+    qf = abr.is_quality_first(budget)
+    ctrl = None
+    acks = None
+    if seq_mode:
+        _lv = abr.levels_for_mode(1024, 40, 15, "remote", budget)
+        ctrl = abr.register(abr.Controller(
+            "remote", _lv,
+            window=cfg.get("video_window", abr.DEFAULT_WINDOW),
+            start=(len(_lv) - 1) if qf else 1, budget=budget))
+        acks = abr.AckReader(ws, ctrl, auto=abr_on)
+        acks.start()
+
+    # 抓屏线程：保持“最新一张”，发送线程只做缩放+编码（约 5~10ms）
+    raw = {"img": None, "ts": 0.0, "stop": False}
+
+    def grabber():
+        while not raw["stop"]:
+            t0 = time.time()
+            img = _grab_raw()
+            if img is not None:
+                raw["img"] = img
+                raw["ts"] = time.time()
+            dt = time.time() - t0
+            time.sleep(max(0.005, 0.05 - dt))     # 最多约 20 次/秒，够 15fps 用
+
+    grab_th = threading.Thread(target=grabber, daemon=True, name="screen-grabber")
+    grab_th.start()
+
+    try:
+        last_src_ts = 0.0
         last_frame = 0.0
-        interval = 0.066           # 目标帧间隔（约 15fps）
+        interval = 1.0 / 15.0      # 目标帧间隔（15fps）
         quality = 40
+        max_width = 1024
+        paused = False
+        seq = 0
+        t_next = 0.0
+        last_log = 0.0
         while True:
             now = time.time()
-            if now - last_frame >= 0.125:  # 约 8 帧/秒，降低带宽与卡顿
-                last_frame = now
-                data = _grab_frame(quality=quality)
+
+            # ---------- 新通道：回执由独立读线程收（不阻塞） ----------
+            if seq_mode:
+                for _ts, m in acks.drain():
+                    if m == "p":
+                        paused = True
+                    elif m == "r":
+                        paused = False
+                    else:
+                        try:
+                            handle_input(json.loads(m))   # 老客户端把触控发在本通道
+                        except Exception:
+                            pass
+                if acks.closed:
+                    break
+                if ctrl is not None:
+                    if abr_on and ctrl.starved(now):
+                        ctrl.fuse(now)
+                    if abr_on:
+                        lvl = ctrl.tick(now)
+                    else:
+                        lvl = ctrl.level()
+                else:
+                    lvl = {"width": max_width, "quality": quality,
+                           "fps": 15, "window": 2}
+                if paused:
+                    time.sleep(0.03)
+                    with _LOCK:
+                        _last_activity = time.time()
+                    continue
+                if ctrl is not None and ctrl.pause_left(now) > 0:
+                    time.sleep(0.05)             # 排空暂停
+                    with _LOCK:
+                        _last_activity = time.time()
+                    continue
+                if ctrl is not None and ctrl.window_used() >= int(lvl.get("window") or 1):
+                    time.sleep(0.004)
+                    with _LOCK:
+                        _last_activity = time.time()
+                    continue
+                if now < t_next:
+                    time.sleep(0.004)
+                    with _LOCK:
+                        _last_activity = time.time()
+                    continue
+                img = raw["img"]
+                if img is None or raw["ts"] <= last_src_ts:
+                    time.sleep(0.01)
+                    with _LOCK:
+                        _last_activity = time.time()
+                    continue
+                last_src_ts = raw["ts"]
+                t0 = time.time()
+                data = _encode_frame(img, quality=int(lvl["quality"]),
+                                     max_width=int(lvl["width"]))
                 if data:
-                    t_send = time.time()
+                    seq = (seq + 1) & 0xFFFFFFFF
+                    if ctrl is not None:
+                        ctrl.note_send(seq, len(data))
                     try:
-                        ws.send(data)
+                        ws.send(seq.to_bytes(4, "big") + data)
                     except Exception:
                         break
-                    cost = time.time() - t_send
-                    # 网络/手机跟不上就自动降帧降质，避免"卡一下再追上"的周期性停顿
-                    if cost > 0.3:
-                        interval = min(0.2, interval + 0.02)
-                        quality = max(32, quality - 2)
-                    elif cost < 0.1:
-                        interval = max(0.05, interval - 0.005)
-                        quality = min(48, quality + 1)
-            # 非阻塞接收输入指令
+                    # 节流：帧率上限 + 速率预算（大帧在窄上行上最容易把回执堵死）
+                    if ctrl is not None and abr_on:
+                        gap = ctrl.pace_interval(len(data) / 1024.0,
+                                                 lvl.get("base_fps") or lvl["fps"])
+                    else:
+                        gap = 1.0 / max(1, int(lvl.get("base_fps") or lvl["fps"]))
+                    t_next = t0 + gap
+                with _LOCK:
+                    _last_activity = time.time()
+                if ctrl is not None and now - last_log >= 3.0:
+                    last_log = now
+                    ctrl.log()
+                continue
+
+            # ---------- 旧通道（2.0.31 行为 + 帧率修正） ----------
+            if now - last_frame >= interval:
+                img = raw["img"]
+                if img is not None and raw["ts"] > last_src_ts:
+                    last_src_ts = raw["ts"]
+                    last_frame = now
+                    data = _encode_frame(img, quality=quality, max_width=max_width)
+                    if data:
+                        t_send = time.time()
+                        try:
+                            ws.send(data)
+                        except Exception:
+                            break
+                        cost = time.time() - t_send
+                        if cost > 0.3:
+                            interval = min(0.2, interval + 0.02)
+                            quality = max(32, quality - 2)
+                        elif cost < 0.1:
+                            interval = max(0.05, interval - 0.005)
+                            quality = min(48, quality + 1)
             for _ in range(4):
                 try:
-                    msg = ws.receive(timeout=0.001)
+                    msg = ws.receive(timeout=0)
                 except Exception:
                     msg = None
                 if msg is None:
@@ -1273,6 +1525,11 @@ def ws_remote(ws):
                 _last_activity = time.time()
             time.sleep(0.01)
     finally:
+        raw["stop"] = True
+        if acks is not None:
+            acks.stop = True
+        if ctrl is not None:
+            abr.unregister(ctrl.name)
         with _LOCK:
             _remote_active = False
         if _desktop is not None:

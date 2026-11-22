@@ -168,7 +168,7 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/release-info.json"
   },
   "beta": {
-    "version": "2.0.31",
+    "version": "2.0.34",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -329,14 +329,14 @@
       ]
     ],
     "channel": "beta",
-    "notes": "- 【内测版】2.0.31\n- 图文说明书随代码一起下发：通过在线更新升级的电脑也能打开完整图文\n- 托盘「📖 使用说明」打开软件内置说明书；安装包仍带 PDF（安装根目录）\n- 说明书新增「十四、连不上的原因（环境限制）」（安卓/鸿蒙 .local、iPhone 白屏与装证书、校园网多播与隔离、DHCP 换 IP、防火墙等 25 条）\n- mDNS 重写（根治\"有时能解析有时不能\"）：\n  · 网卡枚举改用系统原生 GetAdaptersAddresses，不再依赖 PowerShell（学校禁 PowerShell 也能用）\n  · 一个域名只广播一个 IP：不再把 Hyper-V / WSL / Wi-Fi Direct 等虚拟网卡地址混进 A 记录\n  · 只绑定真实网卡收发；同机房多台电脑不再抢同一个服务名（撞名自动改名）\n  · 新增网卡监听：换网 / 插网线 / Wi-Fi 连上 / IP 变化会自动重新注册\n- 新增运行日志：/logs 实时查看 + 一键导出（写入 data/logs/，保留 7 天）；稳定版主页不显示入口，直接输网址可进\n- mDNS 失败会提示：设置页红字写明原因，并附「mDNS 诊断 / 重新注册 / 查看日志」按钮\n- 手机接入改用 IP：二维码、配对地址默认用 http(s)://电脑IP，安卓/鸿蒙也能打开（.local 只作备选）\n- iOS 白屏根治：自动生成「本机根证书」并签发服务器证书（含 DNS 名字与局域网 IP），\n  新增 /cert 引导页 + /cert.mobileconfig 描述文件 + /cert.crt，装一次并开启「完全信任」后所有浏览器都不白屏\n- 新增排障入口：/plain（极简页）、/ping、/api/health（返回协议/服务器IP/客户端IP/UA）、主页白屏兜底提示\n- 托盘新增「📖 使用说明」，直接打开软件内置的图文说明书（/manual）；安装包自带 PDF 与截图\n- 图文使用说明新增「十四、连不上的原因（环境限制）」：安卓/鸿蒙不解析 .local、iPhone 白屏与装证书、\n  校园 AP 多播过滤与客户端隔离、DHCP 换 IP、防火墙按网络类型生效等 25 条现场问题\n- 向下兼容：旧版自签名证书启动时自动升级为\"根证书 + 服务器证书\"；旧配置/名单/记录无需迁移",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.31-beta/classcaller-2.0.31.zip",
-    "zip_asset": "classcaller-2.0.31.zip",
-    "tag": "v2.0.31-beta",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.31-beta/release-info.json"
+    "notes": "- 【内测版】2.0.34\n- 修：公网图传在「连接建立时链路已经在排队」的情况下会卡在高画质不降档（实测只有 1~2fps）\n  · RTT 基线加上限（最多按 1.5 秒算）：基线被污染成 2~3 秒时，「超过延迟预算」判定永远不成立，控制器成了瞎子\n  · 新增丢包降档：有一批帧拿不到回执（被当过期清掉）就降一档并收速率预算\n  · 在途帧的超时窗口随延迟预算放大（5s 预算 → 10s 才判过期），回执不再被误拒\n  · 保险丝最长等 6 秒（预算再大也不会等到 8 秒才判断对方掉线）\n- 2.0.33 的「监控 5 秒预算 / 远控 0.5 秒」策略本身不变",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.34-beta/classcaller-2.0.34.zip",
+    "zip_asset": "classcaller-2.0.34.zip",
+    "tag": "v2.0.34-beta",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.34-beta/release-info.json"
   },
   "dev": {
-    "version": "2.0.31",
+    "version": "2.0.34",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -497,10 +497,10 @@
       ]
     ],
     "channel": "dev",
-    "notes": "- 【内测版】2.0.31\n- 图文说明书随代码一起下发：通过在线更新升级的电脑也能打开完整图文\n- 托盘「📖 使用说明」打开软件内置说明书；安装包仍带 PDF（安装根目录）\n- 说明书新增「十四、连不上的原因（环境限制）」（安卓/鸿蒙 .local、iPhone 白屏与装证书、校园网多播与隔离、DHCP 换 IP、防火墙等 25 条）\n- mDNS 重写（根治\"有时能解析有时不能\"）：\n  · 网卡枚举改用系统原生 GetAdaptersAddresses，不再依赖 PowerShell（学校禁 PowerShell 也能用）\n  · 一个域名只广播一个 IP：不再把 Hyper-V / WSL / Wi-Fi Direct 等虚拟网卡地址混进 A 记录\n  · 只绑定真实网卡收发；同机房多台电脑不再抢同一个服务名（撞名自动改名）\n  · 新增网卡监听：换网 / 插网线 / Wi-Fi 连上 / IP 变化会自动重新注册\n- 新增运行日志：/logs 实时查看 + 一键导出（写入 data/logs/，保留 7 天）；稳定版主页不显示入口，直接输网址可进\n- mDNS 失败会提示：设置页红字写明原因，并附「mDNS 诊断 / 重新注册 / 查看日志」按钮\n- 手机接入改用 IP：二维码、配对地址默认用 http(s)://电脑IP，安卓/鸿蒙也能打开（.local 只作备选）\n- iOS 白屏根治：自动生成「本机根证书」并签发服务器证书（含 DNS 名字与局域网 IP），\n  新增 /cert 引导页 + /cert.mobileconfig 描述文件 + /cert.crt，装一次并开启「完全信任」后所有浏览器都不白屏\n- 新增排障入口：/plain（极简页）、/ping、/api/health（返回协议/服务器IP/客户端IP/UA）、主页白屏兜底提示\n- 托盘新增「📖 使用说明」，直接打开软件内置的图文说明书（/manual）；安装包自带 PDF 与截图\n- 图文使用说明新增「十四、连不上的原因（环境限制）」：安卓/鸿蒙不解析 .local、iPhone 白屏与装证书、\n  校园 AP 多播过滤与客户端隔离、DHCP 换 IP、防火墙按网络类型生效等 25 条现场问题\n- 向下兼容：旧版自签名证书启动时自动升级为\"根证书 + 服务器证书\"；旧配置/名单/记录无需迁移",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.31-beta/classcaller-2.0.31.zip",
-    "zip_asset": "classcaller-2.0.31.zip",
-    "tag": "v2.0.31-beta",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.31-beta/release-info.json"
+    "notes": "- 【内测版】2.0.34\n- 修：公网图传在「连接建立时链路已经在排队」的情况下会卡在高画质不降档（实测只有 1~2fps）\n  · RTT 基线加上限（最多按 1.5 秒算）：基线被污染成 2~3 秒时，「超过延迟预算」判定永远不成立，控制器成了瞎子\n  · 新增丢包降档：有一批帧拿不到回执（被当过期清掉）就降一档并收速率预算\n  · 在途帧的超时窗口随延迟预算放大（5s 预算 → 10s 才判过期），回执不再被误拒\n  · 保险丝最长等 6 秒（预算再大也不会等到 8 秒才判断对方掉线）\n- 2.0.33 的「监控 5 秒预算 / 远控 0.5 秒」策略本身不变",
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.34-beta/classcaller-2.0.34.zip",
+    "zip_asset": "classcaller-2.0.34.zip",
+    "tag": "v2.0.34-beta",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.34-beta/release-info.json"
   }
 }

@@ -21,6 +21,8 @@ from flask import Blueprint, Response, jsonify, request
 
 from auth import check_access
 
+import abr
+
 monitor_bp = Blueprint("monitor", __name__)
 
 try:
@@ -722,6 +724,29 @@ def _ws_fail(ws, msg):
         pass
 
 
+def _acquire_cam(index, timeout=2.0):
+    """占用某个摄像头索引。
+
+    上一个会话刚断开时，DirectShow 驱动往往要再过一会儿才真正放开设备，
+    这段时间里新请求会看到"还在占用"。手机用户点「停止→开始」几乎必然撞上，
+    所以这里等一下再判断，而不是立刻报"正在被占用"。
+    """
+    end = time.time() + max(0.0, float(timeout))
+    while True:
+        with _CAM_LOCK:
+            if index not in _CAMS_IN_USE:
+                _CAMS_IN_USE.add(index)
+                return True
+        if time.time() >= end:
+            return False
+        time.sleep(0.12)
+
+
+def _release_cam(index):
+    with _CAM_LOCK:
+        _CAMS_IN_USE.discard(index)
+
+
 def ws_monitor_camera(ws):
     err = check_access()
     if err:
@@ -734,87 +759,267 @@ def ws_monitor_camera(ws):
         index = int(request.args.get("cam", "0"))
     except Exception:
         index = 0
-    with _CAM_LOCK:
-        if index in _CAMS_IN_USE:
-            _ws_fail(ws, "该摄像头正在被占用")
-            return
-        _CAMS_IN_USE.add(index)
+    if not _acquire_cam(index, 2.0):
+        _ws_fail(ws, "该摄像头正在被占用")
+        return
 
     qp = _quality_params()      # 画质参数在整条推流里都要用，提到函数作用域
+    cfg = _cfg() or {}
+    # 延迟预算（监控默认 5 秒 = 画质优先）：此时按 720p 采集，宁可排队也不降画质
+    budget = abr.budget_of(cfg, "monitor")
+    qf = abr.is_quality_first(budget)
+    cap_w = max(qp["width"], 1280) if qf else qp["width"]
+    cap_h = max(qp["height"], 720) if qf else qp["height"]
 
-    def open_cam():
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            return None
-        try:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, qp["width"])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, qp["height"])
-            cap.set(cv2.CAP_PROP_FPS, qp["fps"])
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 只保留最新一帧，避免越读越旧
-        except Exception:
-            pass
-        return cap
+    def open_cam(tries=3):
+        """打开摄像头；驱动刚释放时常失败，重试几次（每次 0.35s）。"""
+        cap = None
+        for _i in range(max(1, tries)):
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                try:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cap_w)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_h)
+                    cap.set(cv2.CAP_PROP_FPS, qp["fps"])
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 只留最新一帧
+                except Exception:
+                    pass
+                return cap
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.35)
+        return None
 
     cap = open_cam()
     if cap is None:
-        with _CAM_LOCK:
-            _CAMS_IN_USE.discard(index)
+        _release_cam(index)
         _ws_fail(ws, "无法打开摄像头 %d" % (index + 1))
         return
 
-    quality = qp["quality"]                 # 初始质量跟用户选择走
+    # 握手：新客户端连上先发 "hi2"，表示支持「序号前缀帧 + 回执 + 自适应码率」。
+    # 老客户端（标签页没刷新、缓存了旧 JS）什么都不发 → 继续走 2.0.31 的停等
+    # 协议，保证不会因为前端没更新就黑屏。
+    seq_mode = False
+    try:
+        hello = ws.receive(timeout=1.5)
+    except Exception:
+        hello = None
+    if isinstance(hello, str) and hello.strip() == "hi2":
+        seq_mode = True
+    try:
+        abr.tune_socket(ws)      # 关 Nagle：小帧/控制消息不再等凑包
+    except Exception:
+        pass
+
+    abr_on = abr.enabled(cfg)
+    ctrl = None
+    acks = None
+    if seq_mode:
+        _lv = abr.levels_for_mode(qp["width"], qp["quality"], qp["fps"], "cam", budget)
+        ctrl = abr.register(abr.Controller(
+            "cam%d" % index, _lv,
+            window=cfg.get("video_window", abr.DEFAULT_WINDOW),
+            start=(len(_lv) - 1) if qf else 1, budget=budget))
+        # 回执由独立线程收：时间戳准，发送线程被 send 挡住时也能及时降档
+        acks = abr.AckReader(ws, ctrl, auto=abr_on)
+        acks.start()
+
+    # 摄像头读取线程：DShow 的 read() 会阻塞 40~110ms（暗光下更久）。
+    # 放在独立线程里，发送线程才能按目标帧率走，帧 RTT 也不会被自己的耗时污染。
+    # 摄像头的打开/释放都由这个线程负责（read 进行中释放会直接把进程带崩）。
+    state = {"frame": None, "ts": 0.0, "stop": False, "cap": cap}
+
+    def cam_reader():
+        fails = 0
+        try:
+            while not state["stop"]:
+                c = state["cap"]
+                if c is None:
+                    time.sleep(0.05)
+                    continue
+                try:
+                    ok, frame = c.read()
+                except Exception:
+                    ok, frame = False, None
+                if not ok:
+                    fails += 1
+                    if fails >= 20:
+                        # 长时间读不到画面：重开一次（USB 相机偶发掉帧）
+                        try:
+                            c.release()
+                        except Exception:
+                            pass
+                        time.sleep(0.3)
+                        state["cap"] = open_cam()
+                        fails = 0
+                    time.sleep(0.02)
+                    continue
+                fails = 0
+                state["frame"] = frame
+                state["ts"] = time.time()
+        finally:
+            c = state.get("cap")
+            if c is not None:
+                try:
+                    c.release()
+                except Exception:
+                    pass
+            state["cap"] = None
+
+    cam_th = threading.Thread(target=cam_reader, daemon=True, name="cam-reader")
+    cam_th.start()
+
+    quality = qp["quality"]                 # 旧通道的初始质量（跟用户选择走）
     qmax = qp["quality"]
     qmin = max(45, qp["quality"] - 30)      # 最低也不至于糊成马赛克
     slow = 0
-    fails = 0
+    paused = False
+    seq = 0
+    t_next = 0.0
+    last_log = 0.0
+    last_frame_ts = 0.0
     try:
         while True:
-            t0 = time.time()
-            ok, frame = cap.read()
-            if not ok:
-                fails += 1
-                if fails == 20:
-                    # 长时间读不到画面：重开一次（USB 相机偶发掉帧）
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    time.sleep(0.3)
-                    cap = open_cam()
-                    if cap is None:
-                        break
-                time.sleep(0.05)
+            now = time.time()
+
+            # ---------------- 新通道：回执由独立读线程收（不阻塞） ----------------
+            if seq_mode:
+                for _ts, m in acks.drain():
+                    if m == "p":
+                        paused = True        # 页面切后台：暂停推流
+                    elif m == "r":
+                        paused = False
+                if acks.closed:
+                    break                    # 对端已断开
+                if ctrl is not None:
+                    if abr_on and ctrl.starved(now):
+                        ctrl.fuse(now)           # 收不到回执 → 压到最低档探活
+                    if abr_on:
+                        lvl = ctrl.tick(now)
+                    else:
+                        lvl = ctrl.level()
+                else:
+                    lvl = {"width": qp["width"], "quality": quality,
+                           "fps": qp["fps"], "window": 2}
+                if paused:
+                    time.sleep(0.03)
+                    continue
+                if ctrl is not None and ctrl.pause_left(now) > 0:
+                    time.sleep(0.05)             # 排空暂停：别往积压队列里再塞帧
+                    continue
+                if ctrl is not None and ctrl.window_used() >= int(lvl.get("window") or 1):
+                    time.sleep(0.004)            # 窗口已满：等回执，不积压
+                    continue
+                if now < t_next:
+                    time.sleep(0.004)
+                    continue
+            else:
+                lvl = {"width": qp["width"], "quality": quality,
+                       "fps": qp["fps"], "window": 1}
+
+            frame = state["frame"]
+            fts = state["ts"]
+            if frame is None:
+                time.sleep(0.02)                 # 摄像头还没出第一帧
                 continue
-            fails = 0
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            if ok:
-                try:
-                    ws.send(buf.tobytes())
-                except Exception:
-                    break
-            # 等客户端“已渲染”回执：客户端慢就自然降帧，防止积压导致越来越卡
+            if fts <= last_frame_ts:
+                time.sleep(0.004)                # 没有新画面：别发重复帧占带宽
+                continue
+            last_frame_ts = fts
+
+            t0 = time.time()
+            # 降档时先缩图再编码：分辨率是可调的，不能只调 JPEG 质量
+            target_w = int(lvl.get("width") or 0)
             try:
-                ws.receive(timeout=0.4)
+                if target_w and frame.shape[1] > target_w:
+                    th = max(1, int(round(frame.shape[0] * target_w /
+                                          float(frame.shape[1]))))
+                    frame = cv2.resize(frame, (target_w, th),
+                                       interpolation=cv2.INTER_AREA)
             except Exception:
                 pass
-            cost = (time.time() - t0) * 1000
-            if cost > 180:
-                slow += 1
-                if slow >= 12 and quality > qmin:
-                    quality = max(qmin, quality - 10)
-                    slow = 0
-            elif cost < 80:
-                slow = 0
-                if quality < qmax:
-                    quality = min(qmax, quality + 5)
-            time.sleep(0.01)
+            ok, buf = cv2.imencode(".jpg", frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, int(lvl["quality"])])
+            if ok:
+                data = buf.tobytes()
+                if seq_mode:
+                    seq = (seq + 1) & 0xFFFFFFFF
+                    if ctrl is not None:
+                        ctrl.note_send(seq, len(data))
+                    try:
+                        ws.send(seq.to_bytes(4, "big") + data)
+                    except Exception:
+                        break
+                    # 节流：帧率上限 + 速率预算两道闸（隧道/校园网上行很窄，
+                    # 推超了会把回执一起堵在后面，延迟直接涨到几百毫秒）
+                    if ctrl is not None and abr_on:
+                        gap = ctrl.pace_interval(len(data) / 1024.0,
+                                                 lvl.get("base_fps") or lvl["fps"])
+                    else:
+                        gap = 1.0 / max(1, int(lvl.get("base_fps") or lvl["fps"]))
+                    t_next = t0 + gap
+                else:
+                    try:
+                        ws.send(data)
+                    except Exception:
+                        break
+                    # 旧客户端：等“已渲染”回执（2.0.31 行为，保持兼容）
+                    try:
+                        ws.receive(timeout=0.4)
+                    except Exception:
+                        pass
+                    cost = (time.time() - t0) * 1000
+                    if cost > 180:
+                        slow += 1
+                        if slow >= 12 and quality > qmin:
+                            quality = max(qmin, quality - 10)
+                            slow = 0
+                    elif cost < 80:
+                        slow = 0
+                        if quality < qmax:
+                            quality = min(qmax, quality + 5)
+                    time.sleep(0.01)
+
+            if seq_mode and ctrl is not None and now - last_log >= 3.0:
+                last_log = now
+                ctrl.log()                   # 每 3 秒一条，网页 /logs 可查
     finally:
+        state["stop"] = True
+        if acks is not None:
+            acks.stop = True
+        if ctrl is not None:
+            abr.unregister(ctrl.name)
         try:
-            cap.release()
+            cam_th.join(timeout=3.0)     # 等读线程退出并自己释放摄像头
         except Exception:
             pass
-        with _CAM_LOCK:
-            _CAMS_IN_USE.discard(index)
+        _release_cam(index)
+
+
+def _decimate_s16(data, src_rate, dst_rate):
+    """int16 PCM 降采样（先 k 点平滑再抽取，语音够用，代价可忽略）。"""
+    if not data or np is None:
+        return data
+    try:
+        step = int(round(float(src_rate) / float(dst_rate)))
+    except Exception:
+        return data
+    if step <= 1:
+        return data
+    try:
+        a = np.frombuffer(data, dtype=np.int16)
+        if len(a) <= step * 2:
+            return b""
+        if step > 2:
+            k = np.ones(step, dtype=np.float32) / float(step)
+            sm = np.convolve(a.astype(np.float32), k, mode="same")
+        else:
+            sm = a.astype(np.float32)
+        return np.clip(sm[::step], -32768, 32767).astype(np.int16).tobytes()
+    except Exception:
+        return data
 
 
 def ws_monitor_audio(ws):
@@ -829,8 +1034,17 @@ def ws_monitor_audio(ws):
         device = int(request.args.get("mic", "-1"))
     except Exception:
         device = -1
+    cfg = _cfg() or {}
+    # 语音用 16k 足够，裸 PCM 从 768kbps 降到 256kbps，把上行让给视频
+    # （隧道/校园网的上行是共享的，音频多吃一口视频就少一口）
+    try:
+        want = int(cfg.get("monitor_audio_rate") or 16000)
+    except Exception:
+        want = 16000
+    if want not in (8000, 12000, 16000, 24000, 32000, 48000):
+        want = 16000
     cid = uuid.uuid4().hex
-    q = queue.Queue(maxsize=6)
+    q = queue.Queue(maxsize=3)   # 3 x 50ms ≈ 150ms 抖动缓冲（原来 6 = 300ms）
     with _AUDIO_LOCK:
         _AUDIO_CLIENTS[cid] = q
     if not _ensure_mic_stream(device):
@@ -839,9 +1053,16 @@ def ws_monitor_audio(ws):
         _ws_fail(ws, "无法打开麦克风")
         return
     try:
-        # 先告诉浏览器真实采样率，避免它用 48k 去解 44.1k 的数据
+        abr.tune_socket(ws)
+    except Exception:
+        pass
+    try:
+        send_rate = int(_MIC_RATE or SAMPLE_RATE)
+        if want < send_rate:
+            send_rate = want
+        # 先告诉浏览器真实采样率，避免它用 48k 去解 16k 的数据
         try:
-            ws.send(json.dumps({"ok": True, "type": "hello", "rate": int(_MIC_RATE),
+            ws.send(json.dumps({"ok": True, "type": "hello", "rate": int(send_rate),
                                 "channels": CHANNELS, "format": "s16le"},
                                ensure_ascii=False))
         except Exception:
@@ -854,12 +1075,28 @@ def ws_monitor_audio(ws):
                 continue          # 没数据就不发空包
             if not chunk:
                 continue
+            src = int(_MIC_RATE or SAMPLE_RATE)
+            rate = min(want, src)
+            if rate != send_rate:
+                send_rate = rate
+                try:
+                    ws.send(json.dumps({"ok": True, "type": "rate",
+                                        "rate": int(send_rate)},
+                                       ensure_ascii=False))
+                except Exception:
+                    break
             try:
-                ws.send(chunk)
+                payload = _decimate_s16(chunk, src, send_rate)
+            except Exception:
+                payload = chunk
+            if not payload:
+                continue
+            try:
+                ws.send(payload)
             except Exception:
                 break
             try:
-                rms = float(np.abs(np.frombuffer(chunk, dtype=np.int16)).mean())
+                rms = float(np.abs(np.frombuffer(payload, dtype=np.int16)).mean())
             except Exception:
                 rms = -1.0
             if 0 <= rms < 30:

@@ -45,7 +45,9 @@ from fsapi import fs_bp
 from monitor import (monitor_bp, monitor_shutdown, set_config_getter,
                      ws_monitor_audio, ws_monitor_camera, ws_monitor_intercom)
 from remote import (remote_bp, remote_shutdown, set_desktop, ws_remote,
+                    ws_remote_input,
                     set_config_getter as remote_set_config_getter)
+import abr                    # 自适应码率控制器
 import update as update_mod
 
 ROOT_DIR = os.path.dirname(BASE_DIR)   # 版本目录的上一级（程序根目录，含 data/ 与 version.json）
@@ -82,6 +84,11 @@ DEFAULT_CONFIG = {
     "remote_touch_mode": "auto",      # 手机触控：auto(触摸优先,失败降级鼠标) / touch / mouse
     "remote_gesture_mode": "zoom_scroll",  # 双指手势：zoom_scroll(缩放+滚动) / touch(真实触摸)
     "monitor_jpeg_quality": 0,       # 0=用预设；30~95 可直接指定 JPEG 质量
+    "abr_enabled": True,             # 自适应码率：按手机回执自动调分辨率/质量/帧率
+    "video_window": 8,               # 在途帧数上限（1=老式停等，越大上限越高，按需自动加）
+    "monitor_audio_rate": 16000,     # 监控音频采样率（16000 省上行，48000 最保真）
+    "latency_budget_monitor": 5.0,   # 监控/图传延迟预算（秒）：5=画质优先（宁晚几秒也不降画质）
+    "latency_budget_remote": 0.5,    # 远控延迟预算（秒）：0.5=触控跟手
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
     "secure_port_force": False,     # 目标端口被系统保留时，是否临时停止 WinNAT 抢占该端口（需管理员）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
@@ -126,6 +133,8 @@ runlog.install(LOGS_DIR)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB，支持文件传输上传
+# WebSocket 心跳：Cloudflare 隧道边缘约 100 秒无数据会断开，主动 ping 更稳
+app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 20}
 sock = Sock(app)
 
 app.register_blueprint(auth_bp)
@@ -139,6 +148,7 @@ sock.route("/ws/monitor/camera")(ws_monitor_camera)
 sock.route("/ws/monitor/audio")(ws_monitor_audio)
 sock.route("/ws/monitor/intercom")(ws_monitor_intercom)
 sock.route("/ws/remote")(ws_remote)
+sock.route("/ws/remote/input")(ws_remote_input)   # 触控/键盘独立通道（不被画面帧堵住）
 
 # 生成令牌签名密钥（首次运行自动写入 config.json）
 ensure_auth_secret()
@@ -1885,6 +1895,20 @@ def _safe_host(text):
     return "".join(ch for ch in text if ch.isalnum() or ch in ".:-[]")[:80]
 
 
+@app.route("/api/abr/stats")
+def api_abr_stats():
+    """当前所有实时流的自适应码率状态（排障/自动化测试用）。
+
+    返回每路流当前的档位（分辨率/质量/帧率）、在途帧数、帧 RTT、最小 RTT、
+    实测吞吐、目标码率、降档/升档次数等。手机卡的时候看这里最直接。
+    """
+    err = check_access()
+    if err:
+        return err
+    return jsonify({"ok": True, "streams": abr.snapshot(),
+                    "abr_enabled": bool(get_config().get("abr_enabled", True))})
+
+
 @app.route("/api/health")
 def api_health():
     """启动自检 / 手机排障接口：告诉调用者"你到底连到了谁"。
@@ -2245,6 +2269,26 @@ def api_settings():
         qv = str(data["monitor_quality"]).strip().lower()
         if qv in ("smooth", "standard", "hd"):
             cfg["monitor_quality"] = qv
+    if "abr_enabled" in data:
+        cfg["abr_enabled"] = bool(data["abr_enabled"])
+    for _k in ("latency_budget_monitor", "latency_budget_remote"):
+        if _k in data:
+            try:
+                cfg[_k] = max(0.2, min(8.0, float(data[_k])))
+            except Exception:
+                pass
+    if "video_window" in data:
+        try:
+            cfg["video_window"] = max(1, min(8, int(data["video_window"])))
+        except Exception:
+            pass
+    if "monitor_audio_rate" in data:
+        try:
+            rv = int(data["monitor_audio_rate"])
+        except Exception:
+            rv = 0
+        if rv in (8000, 12000, 16000, 24000, 32000, 48000):
+            cfg["monitor_audio_rate"] = rv
     if "phrase" in data:
         phrase = str(data["phrase"]).strip()
         if phrase:

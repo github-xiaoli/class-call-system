@@ -14,6 +14,9 @@ function getCookie(name) {
 }
 
 let ws = null;
+let inputWs = null;      // 触控/键盘专用通道（2.0.32）：不被大画面帧堵住
+let seqMode = false;     // 新协议：4 字节序号前缀 + 逐帧回执
+let lastSeq = 0;
 let started = false;
 let drawing = false;
 let pendingFrame = null;
@@ -55,13 +58,18 @@ $("btn-mode").addEventListener("click", () => { mode = (mode === "pc" ? "mobile"
 applyMode();
 
 function sendInput(payload) {
+  const text = JSON.stringify(payload);
+  // 优先走独立输入通道：画面帧（30~40KB）正在发的时候也不会把触控包堵在后面
+  if (inputWs && inputWs.readyState === 1) {
+    try { inputWs.send(text); return; } catch (e) { /* 回退主通道 */ }
+  }
   if (ws && ws.readyState === 1) {
-    try { ws.send(JSON.stringify(payload)); return; } catch (e) { /* 回退 HTTP */ }
+    try { ws.send(text); return; } catch (e) { /* 回退 HTTP */ }
   }
   Auth.fetchAuthed("/api/remote/input", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: text,
   }).then((res) => {
     if (!res.ok) res.json().then((d) => {
       if (!/远程控制未开启/.test(d.error || "")) toast(d.error || "输入失败");
@@ -69,15 +77,21 @@ function sendInput(payload) {
   }).catch((e) => { if (handleAuthError(e)) toast("发送失败：" + e.message); });
 }
 
-function drawFrame(buf) {
+function frameAck(seq) {
+  if (!ws || ws.readyState !== 1) return;
+  try { ws.send(seqMode ? ("a" + (seq >>> 0)) : "1"); } catch (e) { /* 忽略 */ }
+}
+
+function drawFrame(buf, seq) {
   drawing = true;
   const done = () => {
     drawing = false;
+    frameAck(seq);              // 回执：服务端据此算 RTT / 吞吐，决定升档还是降档
     // 有排队的帧就接着画最新的一张（只保留最新，避免越积越卡）
     if (pendingFrame) {
       const next = pendingFrame;
       pendingFrame = null;
-      drawFrame(next);
+      drawFrame(next.buf, next.seq);
     }
   };
   const blob = new Blob([buf], { type: "image/jpeg" });
@@ -118,15 +132,35 @@ async function startRemote() {
     const url = await Auth.urlWithToken("/ws/remote?teacher=" + encodeURIComponent(teacher));
     ws = openWs(url);
     ws.binaryType = "arraybuffer";
+    // 触控/键盘独立通道：大画面帧不再挤占触控包（隧道下触控延迟明显下降）
+    try {
+      const iUrl = await Auth.urlWithToken("/ws/remote/input");
+      inputWs = openWs(iUrl);
+      inputWs.onopen = () => { try { inputWs.send("hi2"); } catch (e) { /* 忽略 */ } };
+      inputWs.onerror = () => { inputWs = null; };
+      inputWs.onclose = () => { inputWs = null; };
+    } catch (e) { inputWs = null; }
     ws.onopen = () => {
       started = true;
       $("remote-state").textContent = "已连接";
+      // 声明支持新协议：4 字节序号前缀 + 逐帧回执
+      seqMode = true;
+      try { ws.send("hi2"); } catch (e) { /* 忽略 */ }
     };
     ws.onmessage = (e) => {
       if (typeof e.data === "string") return;
-      // 解码跟不上就直接丢帧（否则会积压，表现为每隔几秒卡一下）
-      if (drawing) { pendingFrame = e.data; return; }
-      drawFrame(e.data);
+      let seq = 0;
+      let buf = e.data;
+      if (seqMode) {
+        try {
+          seq = new DataView(e.data, 0, 4).getUint32(0);
+          buf = e.data.slice(4);
+        } catch (err) { seq = 0; }
+      }
+      if (seq) lastSeq = seq;
+      // 解码跟不上就直接丢帧（否则会积压，表现为每隔几秒卡一下），但仍要回执
+      if (drawing) { pendingFrame = { buf: buf, seq: seq }; frameAck(seq); return; }
+      drawFrame(buf, seq);
     };
     ws.onerror = () => { $("remote-state").textContent = "连接失败"; };
     ws.onclose = () => {
@@ -143,6 +177,7 @@ async function startRemote() {
 
 function stopRemote() {
   if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  if (inputWs) { try { inputWs.close(); } catch (e) {} inputWs = null; }
   started = false;
 }
 
@@ -274,5 +309,12 @@ $("btn-fullscreen").addEventListener("click", () => {
 
 window.addEventListener("beforeunload", stopRemote);
 window.addEventListener("pagehide", stopRemote);
+
+/* 手机锁屏/切后台：通知服务端暂停推屏（省流量），回前台立刻回执恢复 */
+document.addEventListener("visibilitychange", () => {
+  if (!ws || ws.readyState !== 1) return;
+  try { ws.send(document.hidden ? "p" : "r"); } catch (e) { /* 忽略 */ }
+  if (!document.hidden && seqMode) frameAck(lastSeq);
+});
 
 startRemote();
