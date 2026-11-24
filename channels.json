@@ -168,7 +168,7 @@
     "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.21/release-info.json"
   },
   "beta": {
-    "version": "2.0.35",
+    "version": "2.0.36",
     "env_asset": "env-2.0.11.zip",
     "env_tag": "v2.0.11",
     "env_files": 3366,
@@ -330,10 +330,10 @@
     ],
     "channel": "beta",
     "notes": "- 【内测版】2.0.35 —— 公网访问改造\n- 新增「公网访问」：设置里点「连接 GitHub」→ 自动开一条固定网址的微软隧道，手机在外网也能打开本软件（地址固定，重启不变）\n- 安全模型重做：新增账号登录（用户名+密码，scrypt 加盐存储、会话 Cookie），手机/公网访问必须登录\n- 公网专用端口（9444）只监听本机回环，该端口上的一切操作都要求登录；隧道转发进来的请求不再被误判成「本机管理员」\n- 补掉文件传输能下载 data/ssl.key、config.json（含令牌签名密钥）的漏洞；路径黑名单改为逐级比对，C:\\Windows\\System32 绕过已修复\n- 新增安全响应头（CSP+nonce / HSTS / nosniff / 禁止被 iframe 嵌套 / Referrer-Policy）\n- 新增登录失败锁定、接口限速、叫号 2 秒节流、审计日志、管理员后台（账号/在线设备/日志）\n- 首次运行会引导创建管理员账号；忘记密码只能在电脑本机上重置（公网不留入口）\n- 局域网用法不变：教室电脑本机仍然免登录直接用",
-    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.35-beta/classcaller-2.0.35.zip",
-    "zip_asset": "classcaller-2.0.35.zip",
-    "tag": "v2.0.35-beta",
-    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.35-beta/release-info.json"
+    "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.36-beta/classcaller-2.0.36.zip",
+    "zip_asset": "classcaller-2.0.36.zip",
+    "tag": "v2.0.36-beta",
+    "info_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.36-beta/release-info.json"
   },
   "dev": {
     "version": "2.0.36",
@@ -496,7 +496,7 @@
         "0.10.0"
       ]
     ],
-    "channel": "beta",
+    "channel": "dev",
     "notes": "- 【内测版】2.0.35 —— 公网访问改造\n- 新增「公网访问」：设置里点「连接 GitHub」→ 自动开一条固定网址的微软隧道，手机在外网也能打开本软件（地址固定，重启不变）\n- 安全模型重做：新增账号登录（用户名+密码，scrypt 加盐存储、会话 Cookie），手机/公网访问必须登录\n- 公网专用端口（9444）只监听本机回环，该端口上的一切操作都要求登录；隧道转发进来的请求不再被误判成「本机管理员」\n- 补掉文件传输能下载 data/ssl.key、config.json（含令牌签名密钥）的漏洞；路径黑名单改为逐级比对，C:\\Windows\\System32 绕过已修复\n- 新增安全响应头（CSP+nonce / HSTS / nosniff / 禁止被 iframe 嵌套 / Referrer-Policy）\n- 新增登录失败锁定、接口限速、叫号 2 秒节流、审计日志、管理员后台（账号/在线设备/日志）\n- 首次运行会引导创建管理员账号；忘记密码只能在电脑本机上重置（公网不留入口）\n- 局域网用法不变：教室电脑本机仍然免登录直接用",
     "zip_url": "https://github.com/github-xiaoli/class-call-system/releases/download/v2.0.36-beta/classcaller-2.0.36.zip",
     "zip_asset": "classcaller-2.0.36.zip",

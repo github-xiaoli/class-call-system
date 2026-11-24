@@ -55,6 +55,9 @@ _STATE = {
     "last_error": "",
     "started_at": 0,
     "restarts": 0,
+    "mode": "login",           # login = 本机登录托管；token = 教室端凭据托管
+    "token_expires": "",
+    "token_len": 0,
 }
 _LOCK = threading.Lock()
 _LOGIN_PROC = None
@@ -126,6 +129,18 @@ def binary_ready():
 # ---------------------------------------------------------------------------
 # 登录（GitHub 设备码）
 # ---------------------------------------------------------------------------
+def show_tunnel(tunnel_id):
+    """隧道详情（JSON）。名字是自定义的时候，靠它看端口和公网地址。"""
+    rc, out = _run(["show", tunnel_id, "-j"], timeout=60)
+    start = (out or "").find("{")
+    if rc != 0 or start < 0:
+        return {}
+    try:
+        return json.loads(out[start:out.rfind("}") + 1])
+    except Exception:
+        return {}
+
+
 def login_user():
     """已登录的账号（未登录返回空串）。"""
     if not binary_ready():
@@ -293,38 +308,129 @@ def _kill_stale_hosts(tunnel_id, log=None):
         log("[隧道] 已清理 %d 个上次残留的隧道进程" % killed)
 
 
+# ---------------------------------------------------------------------------
+# 教室端令牌模式：不登录账号，用"定时拉取"来的 host 令牌托管隧道
+# ---------------------------------------------------------------------------
+_TOKEN = {"token": "", "tunnel_id": "", "port": 0, "expires_ts": 0}
+_HOST_LOG = os.path.join(TOOL_DIR, "host.log")
+_HOST_LOG_FH = None
+
+
+def _clean_id(tunnel_id):
+    return re.sub(r"[^a-z0-9\-]", "", str(tunnel_id or "").split(".")[0].lower())[:32]
+
+
+def _token_usable(tunnel_id=""):
+    """当前令牌能不能用：要有、没过期（留 10 分钟余量）、隧道对得上。"""
+    with _LOCK:
+        tok = _TOKEN.get("token", "")
+        tid = _TOKEN.get("tunnel_id", "")
+        exp = _TOKEN.get("expires_ts") or 0
+    if not tok:
+        return ""
+    if exp and exp - time.time() < 600:
+        return ""
+    if tunnel_id and tid and tunnel_id != tid:
+        return ""
+    return tok
+
+
+def set_token(info, log=None):
+    """教室端拉到新令牌后交给这里。
+
+    * 令牌变了就重启 host，让它用新令牌重连（旧令牌 24 小时到期）
+    * 隧道 ID / 端口也一起带过来，第一次拿到时可直接启动托管
+    """
+    info = info or {}
+    tok = str(info.get("token", "") or "")
+    if not tok:
+        return False
+    changed = tok != _TOKEN.get("token")
+    with _LOCK:
+        _TOKEN.update({"token": tok,
+                       "tunnel_id": _clean_id(info.get("tunnel_id")),
+                       "port": int(info.get("port") or 0),
+                       "expires_ts": float(info.get("expires_ts") or 0)})
+        _STATE.update({"token_len": len(tok),
+                       "token_expires": str(info.get("expires", "") or "")})
+        want = dict(_WANT_RUN)
+    if changed and want.get("on"):
+        with _LOCK:
+            _STATE["host_state"] = "starting"
+        _spawn_host()
+        if log:
+            log("[隧道] 已用新令牌重连")
+    return True
+
+
+def _url_from_log(port):
+    """从 host 日志里读公网地址（每行形如 Connect via browser: https://…）。"""
+    try:
+        with open(_HOST_LOG, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except Exception:
+        return ""
+    best = ""
+    for m in _URL_RE.finditer(text or ""):
+        url = m.group(0).rstrip("/")
+        if "-inspect." in url:
+            continue
+        if ("-%d." % int(port)) in url:
+            return url
+        best = best or url
+    return best
+
+
 def start(port, tunnel_id="", expire_hours=720, log=None):
-    """启动（或重启）隧道托管。异步生效，用 status() 查结果。"""
+    """启动（或重启）隧道托管。异步生效，用 status() 查结果。
+
+    两种模式：
+      登录模式 —— 本机登录了隧道账号：建隧道、登记端口、开匿名访问，全都自己来；
+      令牌模式 —— 教室电脑没登录账号：这些准备动作发布机已经做过了，
+                  本机只负责用令牌把 host 拉起来（这正是"免登录部署"的关键）。
+    """
     ok, err = ensure_binary(log)
     if not ok:
         with _LOCK:
             _STATE.update({"host_state": "error", "last_error": err})
         return dict(_STATE)
-    if not login_user():
+
+    want_tid = _clean_id(tunnel_id) or _clean_id(_TOKEN.get("tunnel_id", ""))
+    token = _token_usable(want_tid)
+    logged = bool(login_user())
+    if not logged and not token:
         with _LOCK:
             _STATE.update({"host_state": "error",
-                           "last_error": "还没登录 GitHub，请先点「连接 GitHub」"})
+                           "last_error": "还没登录 GitHub，也没拿到教室凭据"})
         return dict(_STATE)
 
-    tid = _pick_tunnel_id(tunnel_id)
+    tid = _pick_tunnel_id(want_tid or (_TOKEN.get("tunnel_id", "") if token else ""))
     _kill_stale_hosts(tid, log=log)
-    created, cerr = _create_if_needed(tid, expire_hours, log=log)
-    if not created:
-        with _LOCK:
-            _STATE.update({"host_state": "error", "last_error": cerr})
-        return dict(_STATE)
-    if not _ensure_port(tid, int(port), log=log):
-        with _LOCK:
-            _STATE.update({"host_state": "error",
-                           "last_error": "端口 %d 登记失败" % int(port)})
-        return dict(_STATE)
-    _ensure_anonymous(tid, log=log)
+    # 有教室凭据就优先走令牌模式：教室电脑一般登录不上账号，
+    # 而且建隧道 / 登记端口 / 开匿名访问这些准备动作发布机都做过了。
+    use_token = bool(token)
+    if not use_token:
+        created, cerr = _create_if_needed(tid, expire_hours, log=log)
+        if not created:
+            with _LOCK:
+                _STATE.update({"host_state": "error", "last_error": cerr})
+            return dict(_STATE)
+        if not _ensure_port(tid, int(port), log=log):
+            with _LOCK:
+                _STATE.update({"host_state": "error",
+                               "last_error": "端口 %d 登记失败" % int(port)})
+            return dict(_STATE)
+        _ensure_anonymous(tid, log=log)
+    elif use_token and log:
+        log("[隧道] 令牌模式：隧道 %s 已由发布机准备，本机只负责托管" % tid)
 
     with _LOCK:
         _WANT_RUN.update({"on": True, "port": int(port), "tunnel_id": tid,
                           "expire_hours": int(expire_hours)})
         _STATE.update({"host_state": "starting", "tunnel_id": tid,
-                       "public_port": int(port), "last_error": ""})
+                       "public_port": int(port), "last_error": "",
+                       "url": "",          # 换隧道时必须清掉旧地址，否则界面显示上一个隧道的网址
+                       "mode": "token" if use_token else "login"})
     _spawn_host()
     _ensure_watch()
     return dict(_STATE)
@@ -349,35 +455,57 @@ def public_url_of(tunnel_id, port):
 
 
 def _spawn_host():
-    """真正拉起 `devtunnel host`，再通过 `show` 轮询出公网 URL。"""
-    global _HOST_PROC
+    """真正拉起 `devtunnel host`。
+
+    * 有令牌就带 `-t`（教室电脑不用登录账号）
+    * stdout 落到日志文件：既能留证据，又能从里面读出公网 URL
+    * URL 不走 `devtunnel show`——教室端没登录，那条路走不通
+    """
+    global _HOST_PROC, _HOST_LOG_FH
     with _LOCK:
         want = dict(_WANT_RUN)
     if not want.get("on"):
         return
+    tid, port = want["tunnel_id"], int(want["port"])
+    token = _token_usable(tid)
+    args = [EXE_PATH, "host", tid]
+    if token:
+        args += ["-t", token]
+    if _HOST_LOG_FH is not None:
+        try:
+            _HOST_LOG_FH.close()
+        except Exception:
+            pass
+        _HOST_LOG_FH = None
     try:
+        try:
+            with open(_HOST_LOG, "w", encoding="utf-8") as f:
+                f.write("# devtunnel host %s\n" % tid)
+        except Exception:
+            pass
+        _HOST_LOG_FH = open(_HOST_LOG, "ab", buffering=0)
         _HOST_PROC = subprocess.Popen(
-            [EXE_PATH, "host", want["tunnel_id"]],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, env=_env(),
+            args, stdin=subprocess.DEVNULL, stdout=_HOST_LOG_FH,
+            stderr=subprocess.STDOUT, env=_env(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception as exc:
         with _LOCK:
             _STATE.update({"host_state": "error", "last_error": repr(exc)})
         return
 
-    tid, port = want["tunnel_id"], int(want["port"])
-
     def _poll():
-        for _ in range(40):                      # 最多等约 80 秒
+        for _ in range(40):                      # 最多等 80 秒
             time.sleep(2)
             proc = _HOST_PROC
             if proc is not None and proc.poll() is not None:
                 with _LOCK:
                     if _STATE["host_state"] != "running":
-                        _STATE.update({"host_state": "stopped", "url": ""})
+                        _STATE.update({"host_state": "stopped", "url": "",
+                                       "last_error": "隧道进程已退出（令牌可能已过期）"})
                 return
-            url = public_url_of(tid, port)
+            url = _url_from_log(port)
+            if not url and login_user():
+                url = public_url_of(tid, port)   # 本机登录着就还有这条后路
             if url:
                 with _LOCK:
                     _STATE.update({"host_state": "running", "url": url,

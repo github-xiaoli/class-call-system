@@ -392,6 +392,11 @@ function fillSettingsForm() {
   $("set-secure-port").value = c.secure_port || 9443;
   if ($("set-secure-force")) $("set-secure-force").checked = !!c.secure_port_force;
   $("set-secure-enabled").checked = c.secure_enabled !== false;
+  if ($("set-creds-enabled")) $("set-creds-enabled").checked = !!c.creds_enabled;
+  if ($("set-creds-slot")) $("set-creds-slot").value = c.creds_slot || "";
+  if ($("set-creds-code")) $("set-creds-code").value = c.creds_code || "";
+  if ($("set-creds-repo")) $("set-creds-repo").value = c.creds_repo || "";
+  if ($("set-creds-poll")) $("set-creds-poll").value = c.creds_poll_minutes || 180;
   updatePhrasePreview();
 }
 
@@ -440,6 +445,23 @@ async function saveSettings() {
     }
     await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
     state.config = { ...state.config, ...cfg };
+    // 教室端凭据单独存：激活码只留在本机 config.json，不进普通设置接口
+    if ($("set-creds-enabled")) {
+      try {
+        await authedApi("/api/creds/config", {
+          method: "POST",
+          body: JSON.stringify({
+            creds_enabled: $("set-creds-enabled").checked,
+            creds_slot: ($("set-creds-slot").value || "").trim(),
+            creds_code: ($("set-creds-code").value || "").trim(),
+            creds_repo: ($("set-creds-repo").value || "").trim(),
+            creds_poll_minutes: parseInt($("set-creds-poll").value, 10) || 180,
+          }),
+        });
+      } catch (e) {
+        toast("凭据设置保存失败：" + (e.message || "未知原因"));
+      }
+    }
     await loadStatus();
     const hostChanged = String(cfg.mdns_hostname || "").toLowerCase() !== oldHost;
     const tips = [];
@@ -862,4 +884,264 @@ init();
   });
 
   loadTunnelStatus();
+})();
+
+/* ==========================================================================
+ * 教室端凭据（定时拉取）：状态展示 + 立即拉取
+ * ========================================================================== */
+(function () {
+  const $c = (id) => document.getElementById(id);
+  function setBadge(el, text, cls) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "badge " + (cls || "gray");
+  }
+  const LABEL = {
+    idle: ["未启用", "gray"], fetching: ["拉取中…", "warn"],
+    ok: ["正常", "ok"], error: ["失败", "danger"],
+  };
+
+  async function renderCreds() {
+    if (!$c("creds-state")) return;
+    let d = null;
+    try {
+      const r = await fetch("/api/creds/status", { credentials: "same-origin" });
+      d = await r.json();
+    } catch (e) { return; }
+    const c = (d && d.creds) || {};
+    let lab = LABEL[c.state] || ["未知", "gray"];
+    if (!c.enabled) lab = ["未启用", "gray"];
+    else if (!c.configured) lab = ["待填写", "warn"];
+    setBadge($c("creds-state"), lab[0], lab[1]);
+
+    const box = $c("creds-info");
+    if (!box) return;
+    if (c.enabled && c.configured) {
+      const parts = [];
+      if (c.tunnel_id) parts.push("隧道 " + c.tunnel_id);
+      if (c.url) parts.push("公网地址 " + c.url);
+      if (c.expires_text) parts.push("令牌还剩 " + c.expires_text);
+      if (c.interval_minutes) parts.push("每 " + c.interval_minutes + " 分钟拉一次");
+      if (c.message) parts.push("⚠ " + c.message);
+      box.textContent = parts.join("　·　");
+      box.style.display = parts.length ? "" : "none";
+    } else {
+      box.style.display = "none";
+    }
+  }
+
+  const btn = $c("btn-creds-refresh");
+  if (btn) btn.addEventListener("click", async () => {
+    const m = $c("creds-msg");
+    if (m) m.textContent = "正在拉取…";
+    try {
+      const r = await fetch("/api/creds/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: "{}",
+      });
+      const d = await r.json();
+      if (m) m.textContent = d.ok ? "拉取成功，令牌已更新"
+                                  : ("拉取失败：" + (d.error || "未知原因"));
+    } catch (e) {
+      if (m) m.textContent = "拉取失败：" + (e.message || "网络异常");
+    }
+    renderCreds();
+  });
+
+  renderCreds();
+  setInterval(renderCreds, 20000);
+})();
+
+/* ==========================================================================
+ * 自动登录 + 隧道命名/管理（不用发布工具，全在这台电脑上做）
+ * ========================================================================== */
+(function () {
+  const $a = (id) => document.getElementById(id);
+  const LABEL = {
+    idle: ["未登录", "gray"], running: ["登录中…", "warn"],
+    ok: ["已登录", "ok"], error: ["登录失败", "danger"],
+  };
+
+  function msg(text, kind) {
+    const el = $a("auto-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = kind === "err" ? "#b3261e" : (kind === "ok" ? "#12805c" : "");
+  }
+  function badge(el, text, cls) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "badge " + (cls || "gray");
+  }
+
+  async function jget(url) {
+    const r = await fetch(url, { credentials: "same-origin" });
+    return r.json();
+  }
+  async function jpost(url, body) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {}),
+    });
+    return r.json();
+  }
+
+  async function renderAuto() {
+    if (!$a("auto-state")) return;
+    let d = null;
+    try { d = await jget("/api/tunnel/auto_status"); } catch (e) { return; }
+    const a = (d && d.auto) || {};
+    let lab = LABEL[a.state] || ["未知", "gray"];
+    if (a.logged_in) lab = ["已登录：" + a.logged_in, "ok"];
+    else if (a.state === "idle" && a.has_credentials) lab = ["待登录", "gray"];
+    badge($a("auto-state"), lab[0], lab[1]);
+    if ($a("set-gh-user") && !$a("set-gh-user").value && a.cred_user) {
+      $a("set-gh-user").value = a.cred_user;
+    }
+    if (a.state === "error" && a.message) msg(a.message, "err");
+  }
+
+  const btnAuto = $a("btn-auto-login");
+  if (btnAuto) btnAuto.addEventListener("click", async () => {
+    const user = ($a("set-gh-user").value || "").trim();
+    const pwd = $a("set-gh-pwd").value || "";
+    msg("正在自动登录（大约 30~60 秒，别关页面）…");
+    btnAuto.disabled = true;
+    try {
+      const r = await jpost("/api/tunnel/login_auto", { username: user, password: pwd });
+      if (!r.ok) { msg(r.error || "启动失败", "err"); return; }
+      if (r.message) { msg(r.message, "ok"); }
+      const t = setInterval(async () => {
+        const s = await jget("/api/tunnel/auto_status");
+        const a = (s.auto) || {};
+        if (a.state === "running") return;
+        clearInterval(t);
+        btnAuto.disabled = false;
+        if (a.state === "ok") {
+          msg("登录成功：" + (a.user || a.logged_in || ""), "ok");
+          $a("set-gh-pwd").value = "";
+        } else {
+          msg(a.message || "登录失败", "err");
+        }
+        renderAuto();
+        loadNames();
+      }, 2500);
+    } catch (e) {
+      btnAuto.disabled = false;
+      msg("出错：" + (e.message || "网络异常"), "err");
+    }
+  });
+
+  /* ---------- 隧道命名 ---------- */
+  function nameMsg(text, kind) {
+    const el = $a("name-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = kind === "err" ? "#b3261e" : (kind === "ok" ? "#12805c" : "#6b7590");
+  }
+
+  const btnProbe = $a("btn-probe-name");
+  if (btnProbe) btnProbe.addEventListener("click", async () => {
+    const tid = ($a("set-tunnel-id").value || "").trim();
+    if (!tid) { nameMsg("先填一个隧道名，例如 cc-101", "err"); return; }
+    nameMsg("检查中…");
+    const r = await jpost("/api/tunnel/probe_name", { tunnel_id: tid });
+    if (!r.ok) { nameMsg(r.error || "检查失败", "err"); return; }
+    const kind = r.state === "taken" ? "err" : (r.state === "free" ? "ok" : "");
+    nameMsg(tid + " —— " + (r.label || ""), kind);
+  });
+
+  const btnCreate = $a("btn-create-name");
+  if (btnCreate) btnCreate.addEventListener("click", async () => {
+    const tid = ($a("set-tunnel-id").value || "").trim();
+    if (!tid) { nameMsg("先填一个隧道名，例如 cc-101", "err"); return; }
+    nameMsg("正在创建并开通…");
+    const r = await jpost("/api/tunnel/create_name", { tunnel_id: tid });
+    if (!r.ok) { nameMsg(r.error || "创建失败", "err"); return; }
+    nameMsg("已" + (r.created ? "创建" : "复用") + "隧道 " + r.tunnel_id + "，正在开通公网访问…", "ok");
+    loadNames();
+  });
+
+  const btnDel = $a("btn-del-name");
+  if (btnDel) btnDel.addEventListener("click", async () => {
+    const tid = ($a("set-tunnel-id").value || "").trim();
+    if (!tid) { nameMsg("先填要删除的隧道名", "err"); return; }
+    if (!confirm("删除隧道 \"" + tid + "\"？删掉后这个公网地址就失效了，手机要重新扫码。")) return;
+    const r = await jpost("/api/tunnel/delete_name", { tunnel_id: tid });
+    nameMsg(r.ok ? ("已删除 " + tid) : (r.error || "删除失败"), r.ok ? "ok" : "err");
+    loadNames();
+  });
+
+  async function loadNames() {
+    const box = $a("tunnel-names");
+    if (!box) return;
+    const r = await jget("/api/tunnel/list_names");
+    box.innerHTML = "";
+    if (!r.ok) { box.textContent = r.error || ""; return; }
+    const cur = (r.current || "").trim();
+    if (!$a("set-tunnel-id").value && cur) $a("set-tunnel-id").value = cur;
+    const list = r.tunnels || [];
+    if (!list.length) { box.textContent = "本账号还没有隧道，直接在上面填一个名字点「创建并使用」。"; return; }
+    box.appendChild(document.createTextNode("本账号已有：")); 
+    for (const t of list) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "badge " + (t === cur ? "ok" : "gray");
+      b.style.cssText = "cursor:pointer;margin:0 6px 4px 0;border:0";
+      b.textContent = t + (t === cur ? "（当前）" : "");
+      b.addEventListener("click", () => { $a("set-tunnel-id").value = t; nameMsg("已选择 " + t); });
+      box.appendChild(b);
+    }
+  }
+
+  renderAuto();
+  setTimeout(loadNames, 800);
+  setInterval(renderAuto, 20000);
+})();
+
+/* ==========================================================================
+ * 批量生成隧道名
+ * ========================================================================== */
+(function () {
+  const $b = (id) => document.getElementById(id);
+  const btn = $b("btn-batch-names");
+  if (!btn) return;
+  const NAMES = { created: "新建", reused: "复用", taken: "被占用", error: "失败" };
+
+  btn.addEventListener("click", async () => {
+    const box = $b("batch-result");
+    box.textContent = "正在批量创建（每个约 2~5 秒，别关页面）…";
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/tunnel/create_batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          prefix: ($b("set-tid-prefix").value || "cc-"),
+          start: parseInt($b("set-tid-start").value, 10) || 1,
+          end: parseInt($b("set-tid-end").value, 10) || 8,
+        }),
+      }).then((x) => x.json());
+      if (!r.ok) { box.textContent = r.error || "失败"; return; }
+      let html = "<div>共 " + r.total + " 个，成功 " + r.ok_count + " 个</div>" +
+        "<table style='margin-top:6px'><thead><tr><th>隧道名</th><th>结果</th><th>说明</th></tr></thead><tbody>";
+      for (const row of (r.rows || [])) {
+        const color = row.state === "taken" || row.state === "error" ? "#b3261e"
+                    : (row.state === "created" ? "#12805c" : "");
+        html += "<tr><td style='font-family:monospace'>" + row.name + "</td>" +
+          "<td style='color:" + color + "'>" + (NAMES[row.state] || row.state) + "</td>" +
+          "<td>" + (row.message || "") + "</td></tr>";
+      }
+      box.innerHTML = html + "</tbody></table>";
+    } catch (e) {
+      box.textContent = "出错：" + (e.message || "网络异常");
+    } finally {
+      btn.disabled = false;
+    }
+  });
 })();

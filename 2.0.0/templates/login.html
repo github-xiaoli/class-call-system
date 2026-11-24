@@ -202,6 +202,13 @@
       $("login-sub").textContent = "第一次使用：先创建管理员账号";
       document.querySelector(".login-foot").style.display = "none";
       $("boot-username").focus();
+    } else if (d && d.need_bootstrap) {
+      // 一个账号都还没有，而当前又不是那台电脑：谁也登不进去，
+      // 只能明确告诉人去教室电脑上先建号，别让人对着登录框反复试密码。
+      $("form-login").classList.add("hidden");
+      $("form-reset").classList.add("hidden");
+      $("login-sub").textContent = "这台电脑还没创建管理员账号";
+      showMsg("请先在教室那台电脑上打开本页面完成「创建管理员」，之后手机才能登录", "warn");
     } else {
       $("username").focus();
     }

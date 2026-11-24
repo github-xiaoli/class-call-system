@@ -33,7 +33,7 @@
       <p class="lead">这台电脑将变成教室的"叫号台"：随机点名、语音播报、手机遥控，都在这里设置。</p>
       <div class="cards">
         <div class="card"><b>🖥</b><span>装好即用</span><small>本机浏览器打开就能操作</small></div>
-        <div class="card"><b>📱</b><span>手机可控</span><small>同一 Wi-Fi 扫二维码即可</small></div>
+        <div class="card"><b>📱</b><span>手机可控</span><small>同一 Wi-Fi 用账号密码登录</small></div>
         <div class="card"><b>🔄</b><span>自动更新</span><small>只下增量代码包</small></div>
       </div>
       <p class="hint">下面大约需要 1 分钟，设置完成后可以随时在「⚙️ 设置」里修改。</p>
@@ -108,30 +108,27 @@
       <p class="hint">更新只下载增量代码包（约 0.14 MB）；运行环境缺依赖时才会额外下载。</p>
     </section>
 
-    <!-- 5 配对手机 -->
+    <!-- 5 手机连接（账号密码登录，不再需要扫码配对） -->
     <section class="step" data-step="5">
-      <h1>配对一台手机（可选）</h1>
-      <p class="lead">用手机扫下面这个二维码，浏览器会打开并 <b>自动完成激活</b>（不用手输密码）。</p>
-      <div class="two-col" style="margin:12px 0 2px">
-        <label class="field"><span>名称（可改）</span>
-          <input id="pair-name" maxlength="40" placeholder="手机扫码配对" autocomplete="off"></label>
-        <label class="field"><span>备注（可改）</span>
-          <input id="pair-note" maxlength="100" placeholder="例如：班主任手机" autocomplete="off"></label>
+      <h1>用手机连接（可选）</h1>
+      <p class="lead">
+        手机连同一个 Wi-Fi，打开下面的地址，用<b>软件账号密码</b>登录就能操作本软件。
+        不用扫码配对，手机上也什么都不用装。
+      </p>
+      <div class="hint" style="margin:12px 0 6px">
+        <b>地址在哪看？</b>装好后软件首页和「设置 → 手机访问」里都会显示
+        <b>局域网地址</b>（形如 http://192.168.1.19:8000）和二维码，手机照着打开即可。
       </div>
-      <p class="hint">手机也可以直接打开 <b id="pair-manual-url">…</b> 手动输入配对码。</p>
       <div class="pair">
-        <div class="pair-left">
-          <canvas id="qr" width="200" height="200"></canvas>
-          <div class="qr-url" id="qr-url">正在生成二维码…</div>
-          <div class="qr-hint" id="qr-hint"></div>
-        </div>
         <div class="pair-right">
-          <button class="btn primary" id="btn-genpw">🔄 重新生成二维码</button>
-          <div class="pw-show" id="pw-show">
-            <div class="hint" style="margin:0 0 6px">二维码 30 分钟内有效、只能用一次。手机扫开后会自己跳转，激活成功即进入首页。</div>
-            <div>备用配对码：<b class="pw-value" id="pw-value">—</b></div>
-            <div class="hint">扫码不便时，也可以在手机「🔑 激活」里输入这串码（区分大小写）。</div>
-            <button class="btn ghost small" id="btn-copy">复制配对码</button>
+          <div class="hint" style="margin:0 0 6px">
+            第一次使用会要求<b>创建管理员账号</b>（用户名 + 至少 8 位密码）；
+            之后电脑和手机都用这个账号登录，公网访问也要密码。
+          </div>
+          <div class="hint" style="margin:0 0 6px">
+            想在家里 / 路上也能看？装完后到 <b>设置 → 🌐 公网访问</b>：
+            填一次 GitHub 账号密码，点「自动登录」，再给这台电脑起个隧道名即可
+            —— 以后<b>不用再登录</b>，登录失效会自动重登。
           </div>
           <p class="hint">手机首次打开 https 会提示「证书不安全」，点「高级 → 继续访问」即可。</p>
         </div>

@@ -299,8 +299,9 @@ def api_bootstrap():
                    target=user["username"], ip=_client_ip(),
                    detail="首次运行创建管理员")
     sid = accounts.create_session(user["id"], ua=_ua(), ip=_client_ip())
+    # 刚创建的管理员是自己定的密码，不该再被逼着改一次；按真实标记返回。
     resp = jsonify({"ok": True, "user": public_user(user),
-                    "needs_change": True})
+                    "needs_change": bool(user.get("must_change_pwd"))})
     _set_cookie(resp, sid)
     return resp
 

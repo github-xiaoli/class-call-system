@@ -1,9 +1,9 @@
 {
-    "app_name":  "班级叫号器",
-    "version":  "2.0.35",
-    "edition":  "beta",
-    "entry":  "app.py",
-    "data_dir":  "data",
-    "python_dir":  "python",
-    "description":  "版本与启动信息。OTA 更新时：新增版本目录（如 2.0.1/）并把 version 改为新版本号；data/ 目录始终保留不删除。edition 为 stable 时主页不显示「日志」入口（直接输 /logs 仍可进入）。"
+  "app_name": "班级叫号器",
+  "version": "2.0.36",
+  "edition": "beta",
+  "entry": "app.py",
+  "data_dir": "data",
+  "python_dir": "python",
+  "description": "版本与启动信息。OTA 更新时：新增版本目录（如 2.0.1/）并把 version 改为新版本号；data/ 目录始终保留不删除。edition 为 stable 时主页不显示「日志」入口（直接输 /logs 仍可进入）。"
 }

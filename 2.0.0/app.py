@@ -17,6 +17,7 @@ import io
 import json
 import os
 import queue
+import re
 import socket
 import ssl
 import subprocess
@@ -51,6 +52,8 @@ import abr                    # 自适应码率控制器
 import accounts               # 账号与会话（SQLite）
 import security               # 信道判定 / 限速 / 安全响应头
 import tunnel                 # 微软 Dev Tunnels（公网访问）
+import creds                  # 教室端凭据（定时拉取，免登录）
+import autologin              # 自动登录（GitHub 账号密码 → 设备码授权）
 from login import login_bp, validate_password
 import update as update_mod
 
@@ -102,6 +105,16 @@ DEFAULT_CONFIG = {
     "public_port": 9444,            # 公网专用端口：只绑 127.0.0.1，仅隧道可达
     "tunnel_id": "",                # 固定隧道 ID（空=首次开通时自动生成）
     "tunnel_expiration_hours": 720,  # 隧道有效期（小时，最长 720=30 天），到期前自动续期
+    "tunnel_auto_login": True,     # 隧道登录失效时用保存的账号密码自动重登
+    "creds_enabled": False,        # 教室端：从仓库定时拉取令牌（免登录）
+    "creds_slot": "",              # 班级槽位号（发布工具里配的）
+    "creds_code": "",              # 激活码（只在本机，不进仓库）
+    "creds_repo": "",              # owner/repo
+    "creds_branch": "main",
+    "creds_base": "",              # 也可以直接给完整 base URL
+    "creds_path": "",              # 本地文件夹（离线自测）
+    "creds_poll_minutes": 180,     # 多久拉一次（令牌 24 小时到期）
+    "creds_timeout": 15,
     "local_auto_login": True,       # 本机免登录（公网口强制关闭，不读此值）
     "trusted_proxies": ["127.0.0.1", "::1"],  # 唯一可信代理：本机回环（隧道入口）
     "api_rate_limit": 60,           # 通用接口限速：每 (IP,路径组) 每分钟次数，0=关闭
@@ -191,6 +204,17 @@ def _cc_security_nonce():
     """每个请求一个 CSP nonce，模板里的 <script> 必须带上它才被允许执行。"""
     g.csp_nonce = security.new_nonce()
     return None
+
+
+@app.context_processor
+def _cc_template_nonce():
+    """把 nonce 交给模板。
+
+    login / admin / account 三页的内联脚本靠它才不被 CSP 拦掉。
+    漏了这一步的后果很隐蔽：页面照样能打开，但所有内联 JS 全被浏览器拒执行——
+    「加载中…」永远转圈、按钮点了没反应、登录失败还一句提示都没有。
+    """
+    return {"csp_nonce": getattr(g, "csp_nonce", "")}
 
 
 @app.before_request
@@ -1620,6 +1644,13 @@ def page_account():
 @app.route("/admin")
 def page_admin():
     """管理员后台：账号、在线设备、审计日志。"""
+    # 全新安装（一个账号都没有）时后台是空的：先去登录页创建管理员，
+    # 否则用户看到的是「账号管理 0 / 加载中…」，点「新建账号」也没反应。
+    try:
+        if accounts.count_users() == 0:
+            return redirect("/login?next=" + urllib.parse.quote("/admin"))
+    except Exception:
+        pass
     return render_template("admin.html")
 
 
@@ -1655,7 +1686,8 @@ def api_tunnel_status():
     st = tunnel.status()
     return jsonify({"ok": True, "tunnel": st,
                     "enabled": bool(cfg.get("public_enabled")),
-                    "public_port": int(cfg.get("public_port", 9444) or 9444)})
+                    "public_port": int(cfg.get("public_port", 9444) or 9444),
+        "creds": creds.status()})
 
 
 @app.route("/api/tunnel/login/start", methods=["POST"])
@@ -3235,6 +3267,389 @@ def acquire_single_instance():
         return True
 
 
+# ---------------------------------------------------------------------------
+# 教室端凭据（定时拉取）：只在电脑本机上可配置
+# ---------------------------------------------------------------------------
+def _creds_local_only():
+    try:
+        if security.is_public_request() or not is_local():
+            return jsonify({"ok": False, "error": "只能在这台电脑上操作"}), 403
+    except Exception:
+        return jsonify({"ok": False, "error": "只能在这台电脑上操作"}), 403
+    return None
+
+
+@app.route("/api/creds/status")
+def api_creds_status():
+    """凭据状态：有没有配、拉没拉到、还剩多久到期。"""
+    return jsonify({"ok": True, "creds": creds.status()})
+
+
+@app.route("/api/creds/config", methods=["POST"])
+def api_creds_config():
+    """保存教室端凭据配置（激活码只写本机 config.json）。"""
+    denied = _creds_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    cfg = get_config()
+    for key in ("creds_slot", "creds_code", "creds_repo", "creds_branch",
+                "creds_base", "creds_path"):
+        if key in data:
+            cfg[key] = str(data.get(key) or "").strip()
+    if "creds_enabled" in data:
+        cfg["creds_enabled"] = bool(data.get("creds_enabled"))
+    if "creds_poll_minutes" in data:
+        try:
+            cfg["creds_poll_minutes"] = max(5, int(data.get("creds_poll_minutes") or 180))
+        except Exception:
+            pass
+    save_config(cfg)
+    try:
+        creds.restart(get_config, on_update=tunnel.set_token,
+                      log=lambda m: print(m))
+    except Exception as exc:
+        print("[凭据] 重启定时拉取失败:", exc)
+    if cfg.get("creds_enabled"):
+        threading.Thread(
+            target=lambda: tunnel.start(int(cfg.get("public_port") or 9444),
+                                        cfg.get("tunnel_id", ""), log=print),
+            daemon=True, name="creds-tunnel").start()
+    return jsonify({"ok": True, "creds": creds.status()})
+
+
+@app.route("/api/creds/refresh", methods=["POST"])
+def api_creds_refresh():
+    """立刻拉一次（调试用）。"""
+    denied = _creds_local_only()
+    if denied:
+        return denied
+    ok, msg = creds.refresh_once(log=lambda m: print(m))
+    if ok:
+        tunnel.set_token(creds.token_info(), log=lambda m: print(m))
+    return jsonify({"ok": ok, "error": "" if ok else msg, "creds": creds.status()})
+
+
+
+# ---------------------------------------------------------------------------
+# 自动登录：GitHub 账号 + 密码 → 浏览器自动完成设备码授权
+# ---------------------------------------------------------------------------
+_AUTO = {"state": "idle", "message": "", "user": "", "started": 0, "tries": 0}
+_AUTO_LOCK = threading.Lock()
+_AUTO_THREAD = None
+
+
+def _auto_snapshot():
+    with _AUTO_LOCK:
+        st = dict(_AUTO)
+    cred = autologin.load_credentials() or {}
+    st["has_credentials"] = bool(cred)
+    st["cred_user"] = cred.get("username", "")      # 只回用户名，密码绝不出库
+    st["logged_in"] = tunnel.login_user()
+    return st
+
+
+def _auto_run(log=None):
+    """后台跑一轮自动登录。"""
+    with _AUTO_LOCK:
+        _AUTO.update({"state": "running", "message": "正在自动登录…",
+                      "started": time.time()})
+    try:
+        ok, msg = autologin.run(tunnel.EXE_PATH, tunnel._env, log=log or print)
+    except Exception as exc:
+        ok, msg = False, repr(exc)
+    with _AUTO_LOCK:
+        _AUTO.update({"state": "ok" if ok else "error",
+                      "message": "" if ok else str(msg),
+                      "user": str(msg) if ok else "",
+                      "tries": _AUTO.get("tries", 0) + 1})
+    if ok and log:
+        log("[自动登录] 完成：%s" % msg)
+    return ok, msg
+
+
+def _auto_start(log=None):
+    global _AUTO_THREAD
+    with _AUTO_LOCK:
+        if _AUTO.get("state") == "running":
+            return False
+    _AUTO_THREAD = threading.Thread(target=_auto_run, kwargs={"log": log},
+                                    daemon=True, name="auto-login")
+    _AUTO_THREAD.start()
+    return True
+
+
+def _auto_watch():
+    """守候：登录掉了就用保存的密码自己登回来（只在配了凭据且开关打开时）。"""
+    while True:
+        time.sleep(300)
+        try:
+            cfg = get_config()
+            if not cfg.get("tunnel_auto_login"):
+                continue
+            if not autologin.has_credentials():
+                continue
+            if tunnel.login_user():
+                continue
+            with _AUTO_LOCK:
+                running = _AUTO.get("state") == "running"
+                tries = _AUTO.get("tries", 0)
+            if running or tries >= 3:
+                continue
+            print("[自动登录] 检测到登录已失效，正在自动重登…")
+            _auto_run(log=lambda m: print(m))
+        except Exception as exc:
+            print("[自动登录] 守候线程异常：%r" % (exc,))
+
+
+@app.route("/api/tunnel/login_auto", methods=["POST"])
+def api_tunnel_login_auto():
+    """用 GitHub 账号密码自动登录（凭据 DPAPI 加密存本机）。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    user = str(data.get("username", "") or "").strip()
+    pwd = str(data.get("password", "") or "")
+    if user and pwd:
+        ok, err = autologin.save_credentials(user, pwd)
+        if not ok:
+            return jsonify({"ok": False, "error": err})
+    elif not autologin.has_credentials():
+        return jsonify({"ok": False, "error": "请输入 GitHub 账号和密码"})
+    if tunnel.login_user():
+        return jsonify({"ok": True, "auto": _auto_snapshot(),
+                        "message": "已经是登录状态"})
+    _auto_start(log=lambda m: print(m))
+    return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+@app.route("/api/tunnel/auto_status")
+def api_tunnel_auto_status():
+    return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+@app.route("/api/tunnel/credentials", methods=["POST"])
+def api_tunnel_credentials():
+    """只保存账号密码，不立刻登录；clear=true 则删除。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    if data.get("clear"):
+        autologin.clear_credentials()
+        with _AUTO_LOCK:
+            _AUTO.update({"state": "idle", "message": "", "user": "", "tries": 0})
+        return jsonify({"ok": True, "auto": _auto_snapshot()})
+    user = str(data.get("username", "") or "").strip()
+    pwd = str(data.get("password", "") or "")
+    if not user or not pwd:
+        return jsonify({"ok": False, "error": "账号和密码都要填"})
+    ok, err = autologin.save_credentials(user, pwd)
+    if not ok:
+        return jsonify({"ok": False, "error": err})
+    return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+# ---------------------------------------------------------------------------
+# 隧道命名与管理（不用发布工具，直接在叫号器里建/改/删）
+# ---------------------------------------------------------------------------
+def _norm_tid(name):
+    return re.sub(r"[^a-z0-9\-]", "", str(name or "").strip().lower()
+                  .split(".")[0])[:32].strip("-")
+
+
+def _my_tunnel_ids():
+    rc, out = tunnel._run(["list"], timeout=60)
+    ids = set()
+    for line in (out or "").splitlines():
+        tok = line.strip().split()[0] if line.strip() else ""
+        if re.fullmatch(r"[a-z0-9][a-z0-9\-]{1,40}(\.[a-z0-9]+)?", tok or ""):
+            ids.add(tok.split(".")[0])
+    return ids
+
+
+@app.route("/api/tunnel/probe_name", methods=["POST"])
+def api_tunnel_probe_name():
+    """检查自定义隧道名能不能用。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    tid = _norm_tid(data.get("tunnel_id"))
+    if len(tid) < 3:
+        return jsonify({"ok": False, "error": "名字至少 3 个字符（小写字母/数字/横线）"})
+    if not tunnel.login_user():
+        return jsonify({"ok": False, "error": "还没登录隧道账号"})
+    if tid in _my_tunnel_ids():
+        info = tunnel.show_tunnel(tid).get("tunnel") or {}
+        ports = [int(p.get("portNumber") or 0) for p in (info.get("ports") or [])]
+        return jsonify({"ok": True, "state": "mine", "tunnel_id": tid,
+                        "ports": ports,
+                        "label": "本账号已有这个隧道，可直接复用"})
+    rc, out = tunnel._run(["show", tid], timeout=60)
+    low = (out or "").lower()
+    if "not found" in low:
+        return jsonify({"ok": True, "state": "free", "tunnel_id": tid,
+                        "label": "名字可用，点「创建并使用」即可"})
+    if rc == 0:
+        return jsonify({"ok": True, "state": "taken", "tunnel_id": tid,
+                        "label": "这个名字已被其他账号占用，换一个"})
+    return jsonify({"ok": False, "error": (out or "").strip()[-160:] or "查询失败"})
+
+
+@app.route("/api/tunnel/create_name", methods=["POST"])
+def api_tunnel_create_name():
+    """按自定义名字创建（或复用）隧道，并立刻用它开公网访问。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    tid = _norm_tid(data.get("tunnel_id"))
+    if len(tid) < 3:
+        return jsonify({"ok": False, "error": "名字至少 3 个字符"})
+    if not tunnel.login_user():
+        return jsonify({"ok": False, "error": "还没登录隧道账号"})
+    port = int(get_config().get("public_port", 9444) or 9444)
+    created = False
+    if tid not in _my_tunnel_ids():
+        rc, out = tunnel._run(["show", tid], timeout=60)
+        if rc == 0:
+            return jsonify({"ok": False,
+                            "error": "这个名字已被其他账号占用，换一个"})
+        rc, out = tunnel._run(["create", tid, "--expiration",
+                               "%dh" % int(get_config().get("tunnel_expiration_hours", 720) or 720)],
+                              timeout=120)
+        if rc != 0:
+            txt = (out or "").strip()
+            if "rate limit" in txt.lower():
+                return jsonify({"ok": False,
+                                "error": "微软限流了：创建隧道太频繁，等 1 分钟再试（已经建好的不会重复扣）"})
+            return jsonify({"ok": False, "error": "创建失败：%s" % txt[-200:]})
+        created = True
+    cfg = get_config()
+    cfg["tunnel_id"] = tid
+    cfg["public_enabled"] = True
+    save_config(cfg)
+    st = tunnel.start(port, tid,
+                      int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                      log=lambda m: print(m))
+    return jsonify({"ok": True, "created": created, "reused": not created,
+                    "tunnel_id": tid, "tunnel": st})
+
+
+@app.route("/api/tunnel/create_batch", methods=["POST"])
+def api_tunnel_create_batch():
+    """批量按规则建隧道：前缀 + 起始号 … 结束号（一次把一个年级占好名字）。
+
+    每个名字都先探一次：本账号已有 → 复用；没人用 → 创建；被别人占 → 记失败。
+    返回逐条结果，前端标出"新建 / 复用 / 被占用"。
+    """
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    # 注意：前缀不能走 _norm_tid（它会把结尾的横线去掉，cc- + 105 就变成 cc105）
+    prefix = re.sub(r"[^a-z0-9\-]", "", str(data.get("prefix") or "cc-").lower())[:24]
+    try:
+        start = int(data.get("start") or 1)
+        end = int(data.get("end") or 8)
+    except Exception:
+        return jsonify({"ok": False, "error": "起始号和结束号要是数字"})
+    if end < start:
+        return jsonify({"ok": False, "error": "结束号不能小于起始号"})
+    if end - start > 40:
+        return jsonify({"ok": False, "error": "一次最多 41 个（年级够用了）"})
+    if not tunnel.login_user():
+        return jsonify({"ok": False, "error": "还没登录隧道账号"})
+
+    cfg = get_config()
+    expire = int(cfg.get("tunnel_expiration_hours", 720) or 720)
+    mine = _my_tunnel_ids()
+    rows = []
+    for n in range(start, end + 1):
+        name = ("%s%d" % (prefix, n))
+        if not prefix.endswith("-"):
+            name = prefix + "-" + str(n)
+        name = re.sub(r"[^a-z0-9\-]", "", name).strip("-")[:32]
+        if len(name) < 3:
+            rows.append({"name": name, "state": "error", "message": "名字太短"})
+            continue
+        if name in mine:
+            rows.append({"name": name, "state": "reused", "message": "本账号已有"})
+            continue
+        rc, out = tunnel._run(["show", name], timeout=60)
+        if rc == 0:
+            rows.append({"name": name, "state": "taken",
+                         "message": "被其他账号占用"})
+            continue
+        # 微软对"建隧道"有频率限制：被限流就等一分钟重试，最多重试两次
+        created_ok = False
+        last_err = ""
+        for attempt in range(3):
+            rc, out = tunnel._run(["create", name, "--expiration", "%dh" % expire],
+                                  timeout=120)
+            if rc == 0:
+                created_ok = True
+                break
+            last_err = (out or "").strip()
+            if "rate limit" in last_err.lower() and attempt < 2:
+                time.sleep(60)
+                continue
+            break
+        if not created_ok:
+            if "rate limit" in last_err.lower():
+                rows.append({"name": name, "state": "error",
+                             "message": "微软限流：稍后重跑一次即可，已建好的会自动复用"})
+                break
+            rows.append({"name": name, "state": "error", "message": last_err[-120:]})
+            continue
+        time.sleep(2.0)          # 别打太快
+        tunnel._ensure_port(name, int(cfg.get("public_port", 9444) or 9444))
+        tunnel._ensure_anonymous(name)
+        mine.add(name)
+        rows.append({"name": name, "state": "created", "message": "已新建"})
+
+    ok_n = sum(1 for r in rows if r["state"] in ("created", "reused"))
+    return jsonify({"ok": True, "total": len(rows), "ok_count": ok_n,
+                    "rows": rows,
+                    "tunnels": sorted(mine)})
+
+
+@app.route("/api/tunnel/delete_name", methods=["POST"])
+def api_tunnel_delete_name():
+    """删除本账号的隧道（危险操作：地址会变）。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    tid = _norm_tid(data.get("tunnel_id"))
+    if not tid:
+        return jsonify({"ok": False, "error": "名字不合法"})
+    if tid not in _my_tunnel_ids():
+        return jsonify({"ok": False, "error": "这不是本账号的隧道"})
+    tunnel.stop()
+    rc, out = tunnel._run(["delete", tid], timeout=90)
+    if rc != 0:
+        return jsonify({"ok": False, "error": "删除失败：%s" % (out or "").strip()[-200:]})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tunnel/list_names")
+def api_tunnel_list_names():
+    """本账号已有的隧道列表。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    if not tunnel.login_user():
+        return jsonify({"ok": False, "error": "还没登录隧道账号", "tunnels": []})
+    cfg = get_config()
+    return jsonify({"ok": True,
+                    "current": cfg.get("tunnel_id", ""),
+                    "tunnels": sorted(_my_tunnel_ids())})
+
+
+
 def _main():
     global _running_port, _running_secure_port, _desktop
 
@@ -3380,7 +3795,21 @@ def _main():
         threading.Thread(target=_serve_public, daemon=True,
                          name="public-server").start()
 
-        if cfg.get("public_enabled"):
+        # 教室端凭据：先起"定时拉取"，再把隧道挂上（令牌模式，不需要登录账号）
+        if cfg.get("creds_enabled"):
+            try:
+                creds.start(get_config, on_update=tunnel.set_token,
+                            log=lambda m: print(m))
+                status("已启用教室凭据（定时拉取）")
+            except Exception as exc:
+                print("[凭据] 启动失败:", exc)
+
+        # 登录失效自动重登（有保存的账号密码才生效）
+        if cfg.get("tunnel_auto_login", True) and autologin.has_credentials():
+            threading.Thread(target=_auto_watch, daemon=True,
+                             name="auto-login-watch").start()
+
+        if cfg.get("public_enabled") or cfg.get("creds_enabled"):
             def _boot_tunnel():
                 time.sleep(2.0)
                 st = tunnel.start(public_port,
