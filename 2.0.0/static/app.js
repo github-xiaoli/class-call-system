@@ -14,10 +14,8 @@ const state = {
   csvColumns: [],
   interfaces: [],
   isLocal: false,
-  activated: false,
-  hasValidPassword: false,
-  edition: "stable",
-  mdns: { enabled: false, ok: true, error: "", urls: [], hostname: "" },
+  localAdmin: false,
+  user: null,
 };
 
 /* ---------- 工具 ---------- */
@@ -90,11 +88,41 @@ async function authedForm(url, fd) {
   return data;
 }
 function maybeActivate(e) {
-  if (e && (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message || ""))) {
-    openModal("modal-activate");
+  // 统一登录后：没有权限一律引导去登录页
+  if (e && (e.code === "NEED_ACTIVATE" || e.code === "NEED_LOGIN"
+      || /未激活|需要密码激活|请先登录/.test(e.message || ""))) {
+    location.href = "/login?next=" + encodeURIComponent(location.pathname);
+    return true;
+  }
+  // 叫号节流：给个轻提示并让按钮冷却，不要静默吞掉
+  if (e && e.status === 429 && e.data && e.data.throttled) {
+    toast(e.message);
+    coolDownCallButton(e.data.retry_after || 2);
     return true;
   }
   return false;
+}
+
+/* 叫号按钮冷却：显示剩余秒数，期间不可点，避免用户狂点 */
+function coolDownCallButton(seconds) {
+  const btn = $("btn-call");
+  if (!btn) return;
+  const total = Math.max(0.5, Number(seconds) || 2);
+  let left = total;
+  const original = btn.dataset.label || btn.textContent;
+  btn.dataset.label = original;
+  btn.disabled = true;
+  btn.textContent = "⏳ " + left.toFixed(1) + " 秒";
+  const timer = setInterval(() => {
+    left = Math.round((left - 0.1) * 10) / 10;
+    if (left <= 0) {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = btn.dataset.label;
+    } else {
+      btn.textContent = "⏳ " + left.toFixed(1) + " 秒";
+    }
+  }, 100);
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -118,122 +146,30 @@ async function loadStatus() {
     $("roster-count").textContent = s.roster_count;
     const urls = [];
     for (const ip of s.local_ips) urls.push("http://" + ip + ":" + s.port);
-    if (s.mdns_enabled) {
-      const mdnsUrls = (s.mdns_urls && s.mdns_urls.length) ? s.mdns_urls : [s.mdns_url];
-      for (const u of mdnsUrls) urls.push(u);
-    }
+    if (s.mdns_enabled) urls.push(s.mdns_url);
     if (s.secure_enabled) urls.push(s.secure_url + " (安全)");
     $("server-url").textContent = urls.join("  ·  ");
     state.secureUrl = s.secure_url;
     state.securePort = s.secure_port;
-    state.edition = s.edition || "stable";
-    state.mdns = { enabled: !!s.mdns_enabled, ok: s.mdns_ok !== false, error: s.mdns_error || "",
-                   urls: s.mdns_urls || [], hostname: s.mdns_hostname || "" };
     $("status-dot").className = "dot " + (s.zeroconf_ok ? "ok" : "err");
-    // 日志入口：稳定版隐藏（但直接输 /logs 仍然能进）
-    const lb = $("btn-logs");
-    if (lb) lb.classList.toggle("hidden", state.edition === "stable");
-    renderMdnsState();
   } catch (e) {
     $("status-dot").className = "dot err";
   }
 }
 
-/* mDNS 状态提示：注册失败时在设置里用红字说清楚原因和办法 */
-function renderMdnsState() {
-  const box = $("mdns-state");
-  if (!box) return;
-  const m = state.mdns || {};
-  box.classList.remove("ok", "bad");
-  if (!m.enabled) {
-    box.textContent = "mDNS 状态：已关闭（手机只能用 IP 访问）";
-    return;
-  }
-  if (m.ok === false || m.error) {
-    box.classList.add("bad");
-    box.textContent = "⚠️ mDNS 注册失败：" + (m.error || "原因见日志") +
-      "（手机可先用 http://电脑IP:端口 访问；点右侧「mDNS 诊断」查明原因）";
-    return;
-  }
-  const urls = (m.urls && m.urls.length) ? m.urls.join("  ") : "http://" + (m.hostname || "主机名") + ".local";
-  box.classList.add("ok");
-  box.textContent = "✅ mDNS 已生效：" + urls;
-}
-
-async function mdnsDiag() {
-  const out = $("mdns-diag-out");
-  out.classList.remove("hidden");
-  out.textContent = "正在检查…";
-  try {
-    const d = await authedApi("/api/mdns/diag");
-    const lines = [];
-    lines.push("【网卡判定】");
-    for (const a of (d.adapters || [])) {
-      lines.push("  " + (a.usable ? "✅" : "⏭") + " " + a.alias +
-        "　IP=" + ((a.ips || []).join(",") || "-") +
-        (a.gateway ? "　有默认网关" : "　无默认网关") +
-        (a.desc ? "\n      " + a.desc : "") +
-        (a.reason ? "　→ " + a.reason : ""));
-    }
-    lines.push("");
-    lines.push("【mDNS 广播计划】");
-    if (!(d.plan || []).length) lines.push("  （没有可广播的网卡）");
-    for (const p of (d.plan || [])) {
-      lines.push("  http://" + p.hostname + ".local:" + (d.status || {}).port +
-        "　→ " + (p.ips || []).join(",") + "（网卡 " + p.iface + "）");
-    }
-    lines.push("");
-    lines.push("【本机解析结果】");
-    for (const r of (d.resolved || [])) {
-      lines.push("  " + (r.ok ? "✅" : "⚠️") + " " + r.host + " → " + (r.ip || "解析不到"));
-    }
-    if ((d.hints || []).length) {
-      lines.push("");
-      lines.push("【提示】");
-      for (const h of d.hints) lines.push("  · " + h);
-    }
-    lines.push("");
-    lines.push("【计算机名】" + d.computer_name + "　默认路由 IP：" + (d.default_route_ip || "-"));
-    lines.push("【日志文件】" + (d.log_file || "-"));
-    out.textContent = lines.join("\n");
-    if (d.status) {
-      state.mdns = { enabled: !!d.status.enabled, ok: !!d.status.ok,
-                     error: d.status.error || "", urls: d.status.urls || [],
-                     hostname: d.status.hostname || "" };
-      renderMdnsState();
-    }
-  } catch (e) {
-    out.textContent = "诊断失败：" + e.message;
-  }
-}
-
-async function mdnsRetry() {
-  try {
-    const d = await authedApi("/api/mdns/refresh", { method: "POST", body: "{}" });
-    const registered = (d.registered !== undefined) ? !!d.registered : !!d.ok;
-    state.mdns = { enabled: !!d.enabled, ok: registered, error: d.error || "",
-                   urls: d.urls || [], hostname: d.hostname || "" };
-    renderMdnsState();
-    await loadStatus();
-    toast(registered ? "mDNS 已重新注册：" + (d.urls || []).join("  ")
-                     : "重新注册失败：" + (d.error || "原因见日志"));
-  } catch (e) {
-    toast("重新注册失败：" + e.message);
-  }
-}
-
-
 async function loadAuthMe() {
   try {
-    const d = await Auth.me();
+    const d = await fetch("/api/auth/session").then((r) => r.json());
+    state.user = d.user || null;
     state.isLocal = !!d.local;
-    state.activated = !!d.activated;
-    state.hasValidPassword = !!d.has_valid_password;
+    state.localAdmin = !!d.local_admin;
   } catch (e) { /* 忽略 */ }
-  // 右上角按钮：本机显示“密码管理”；远程显示“激活/取消激活”
-  $("btn-password").classList.toggle("hidden", !state.isLocal);
-  $("btn-activate").classList.toggle("hidden", state.isLocal);
-  $("btn-deactivate").classList.toggle("hidden", state.isLocal || !state.activated);
+  const admin = !!(state.user && state.user.is_admin);
+  $("btn-admin").classList.toggle("hidden", !admin);
+  const u = $("teacher-name");
+  if (u && state.user && !u.value) {
+    u.value = state.user.display_name || state.user.username || "";
+  }
 }
 
 async function loadRoster() {
@@ -376,7 +312,7 @@ async function doCall(force) {
       }
       toast("已取消叫号");
     } else {
-      toast("叫号失败：" + e.message);
+      if (!maybeActivate(e)) toast("叫号失败：" + e.message);
     }
   } finally {
     $("btn-call").disabled = false;
@@ -398,7 +334,7 @@ async function doCallForce(number, name, note, teacher) {
     toast("已叫号：" + d.name);
     loadCalls();
   } catch (e) {
-    toast("叫号失败：" + e.message);
+    if (!maybeActivate(e)) toast("叫号失败：" + e.message);
   } finally {
     $("btn-call").disabled = false;
   }
@@ -448,7 +384,7 @@ function fillSettingsForm() {
   if (qSel) qSel.value = c.monitor_quality || "standard";
   const ifSel = $("set-mdns-interface");
   ifSel.innerHTML = "";
-  ifSel.add(new Option("自动（推荐：自动挑选能连上的网卡）", "auto"));
+  ifSel.add(new Option("自动（全部网卡）", "auto"));
   for (const it of (state.interfaces || [])) {
     ifSel.add(new Option(it.name + "（" + (it.ips || []).join(", ") + "）", it.id));
   }
@@ -502,25 +438,17 @@ async function saveSettings() {
         }
       } catch (e) { /* 校验接口本身异常时不阻塞保存 */ }
     }
-    const r = await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
+    await authedApi("/api/settings", { method: "POST", body: JSON.stringify(cfg) });
     state.config = { ...state.config, ...cfg };
     await loadStatus();
     const hostChanged = String(cfg.mdns_hostname || "").toLowerCase() !== oldHost;
     const tips = [];
     if (cfg.port !== oldPort) tips.push("端口需重启生效");
     if (hostChanged) tips.push("主机名已改：http 立刻可用，https 需重启一次生效");
-    if (r && r.mdns) {
-      state.mdns = { enabled: !!r.mdns.enabled, ok: !!r.mdns.ok, error: r.mdns.error || "",
-                     urls: r.mdns.urls || [], hostname: r.mdns.hostname || "" };
-      renderMdnsState();
-      if (cfg.mdns_enabled && r.mdns.ok === false) {
-        tips.push("mDNS 没成功：" + (r.mdns.error || "原因见日志") + "（手机可用 IP 直连）");
-      }
-    }
     toast("设置已保存" + (tips.length ? "（" + tips.join("；") + "）" : ""));
   } catch (e) {
-    if (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message)) {
-      openModal("modal-activate");
+    if (e.code === "NEED_LOGIN" || /请先登录|未激活/.test(e.message)) {
+      location.href = "/login";
     } else {
       toast("保存失败：" + e.message);
     }
@@ -535,37 +463,11 @@ async function restartApp() {
     toast("软件正在重启，网页即将断开…");
     setTimeout(() => { location.reload(); }, 3000);
   } catch (e) {
-    if (e.code === "NEED_ACTIVATE" || /未激活|需要密码激活/.test(e.message)) {
-      openModal("modal-activate");
+    if (e.code === "NEED_LOGIN" || /请先登录|未激活/.test(e.message)) {
+      location.href = "/login";
     } else {
       toast("重启失败：" + e.message);
     }
-  }
-}
-
-/* ---------- 激活 ---------- */
-function openActivate() {
-  $("act-password").value = "";
-  $("act-status").textContent = "";
-  if (!window.crypto || !crypto.subtle) {
-    $("act-status").innerHTML = '当前不是安全连接，无法使用浏览器加密。请用手机浏览器打开：<br><b>' +
-      esc(state.secureUrl || "https://本机地址:8443") + '</b><br>首次会提示证书不受信任，请点“继续访问”。';
-  }
-  openModal("modal-activate");
-}
-
-async function doActivate() {
-  const password = $("act-password").value.trim();
-  if (!password) { $("act-status").textContent = "请输入密码"; return; }
-  $("act-status").textContent = "正在生成密钥并激活…";
-  try {
-    await Auth.activate(password);
-    $("act-status").textContent = "✅ 激活成功，本设备已绑定。";
-    await loadAuthMe();
-    toast("激活成功");
-    setTimeout(() => closeModal("modal-activate"), 800);
-  } catch (e) {
-    $("act-status").textContent = "激活失败：" + e.message;
   }
 }
 
@@ -756,15 +658,8 @@ function bindEvents() {
   $("btn-monitor").addEventListener("click", () => { location.href = "/monitor"; });
   $("btn-remote").addEventListener("click", () => { location.href = "/remote"; });
   $("btn-files").addEventListener("click", () => { location.href = "/files"; });
-  $("btn-password").addEventListener("click", () => { location.href = "/password"; });
-  $("btn-activate").addEventListener("click", openActivate);
-  $("btn-activate-do").addEventListener("click", doActivate);
-  $("btn-deactivate").addEventListener("click", async () => {
-    if (!confirm("取消激活后，本设备将无法再使用监控/远程控制/文件传输/设置等敏感功能，需重新激活。确定取消？")) return;
-    await Auth.deactivate();
-    await loadAuthMe();
-    toast("已取消激活");
-  });
+  $("btn-account").addEventListener("click", () => { location.href = "/account"; });
+  $("btn-admin").addEventListener("click", () => { location.href = "/admin"; });
 
   // 设置
   /* ---------- 全屏叫号 ---------- */
@@ -797,20 +692,8 @@ document.addEventListener("webkitfullscreenchange", syncFsClass);
 $("btn-fullscreen").addEventListener("click", toggleFullscreen);
 
 $("btn-settings").addEventListener("click", () => {
-    loadConfig().then(() => {
-      fillSettingsForm();
-      renderMdnsState();
-      openModal("modal-settings");
-    });
+    loadConfig().then(() => { fillSettingsForm(); openModal("modal-settings"); });
   });
-  const btnLogs = $("btn-logs");
-  if (btnLogs) btnLogs.addEventListener("click", () => { location.href = "/logs"; });
-  const btnOpenLogs = $("btn-open-logs");
-  if (btnOpenLogs) btnOpenLogs.addEventListener("click", () => { location.href = "/logs"; });
-  const btnDiag = $("btn-mdns-diag");
-  if (btnDiag) btnDiag.addEventListener("click", mdnsDiag);
-  const btnRetry = $("btn-mdns-retry");
-  if (btnRetry) btnRetry.addEventListener("click", mdnsRetry);
   $("btn-update").addEventListener("click", () => { location.href = "/update"; });
   $("set-phrase").addEventListener("input", updatePhrasePreview);
   $("set-volume-enabled").addEventListener("change", () => {
@@ -848,6 +731,135 @@ async function init() {
   await loadConfig();
   fillSettingsForm();
   updateSelectedDisplay();
-  window.__appReady = true;        // 告诉白屏兜底：脚本正常运行，不用显示提示
 }
 init();
+
+/* ==========================================================================
+ * 公网访问（微软 Dev Tunnels）
+ * - 所有接口只在电脑本机可用（后端已限制），手机上点这些按钮会被拒绝
+ * ========================================================================== */
+(function () {
+  let pollTimer = null;
+
+  function setBadge(el, text, kind) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "badge " + (kind || "gray");
+  }
+
+  function drawQR(text) {
+    const box = $("tunnel-qr");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!text || typeof qrcode !== "function") return;
+    try {
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      box.innerHTML = qr.createImgTag(4, 6);
+    } catch (e) { /* 忽略：二维码失败不影响主流程 */ }
+  }
+
+  function renderStatus(d) {
+    const t = (d && d.tunnel) || {};
+    const loginEl = $("tunnel-login-state");
+    const hostEl = $("tunnel-host-state");
+    if (t.login_state === "ok" || t.login_user) {
+      setBadge(loginEl, "已连接：" + (t.login_user || "GitHub"), "ok");
+      $("tunnel-login-box").style.display = "none";
+    } else if (t.login_state === "waiting") {
+      setBadge(loginEl, "等待授权…", "warn");
+      $("tunnel-login-box").style.display = "";
+      if (t.user_code) $("tunnel-user-code").textContent = t.user_code;
+    } else {
+      setBadge(loginEl, "未连接", "gray");
+    }
+    const st = t.host_state || "stopped";
+    const label = { stopped: "未开通", starting: "启动中…", running: "运行中", error: "出错" }[st] || st;
+    setBadge(hostEl, label, st === "running" ? "ok" : (st === "error" ? "warn" : "gray"));
+
+    if (t.url && st === "running") {
+      $("tunnel-url-box").style.display = "";
+      const a = $("tunnel-url");
+      a.textContent = t.url;
+      a.href = t.url;
+      drawQR(t.url);
+    } else {
+      $("tunnel-url-box").style.display = "none";
+    }
+    if (t.last_error) $("tunnel-msg").textContent = "提示：" + t.last_error;
+  }
+
+  async function loadTunnelStatus() {
+    try {
+      const d = await authedApi("/api/tunnel/status");
+      renderStatus(d);
+      return d;
+    } catch (e) {
+      // 手机上调用会被 403 拒绝，静默即可
+      return null;
+    }
+  }
+
+  function startPoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      const d = await loadTunnelStatus();
+      const t = (d && d.tunnel) || {};
+      const done = t.login_state === "ok" && t.host_state !== "starting";
+      if (done) { clearInterval(pollTimer); pollTimer = null; }
+    }, 3000);
+  }
+
+  const btnLogin = $("btn-tunnel-login");
+  if (btnLogin) btnLogin.addEventListener("click", async () => {
+    $("tunnel-msg").textContent = "";
+    btnLogin.disabled = true;
+    try {
+      const d = await authedApi("/api/tunnel/login/start", { method: "POST", body: "{}" });
+      renderStatus(d);
+      if (((d.tunnel || {}).login_state) === "waiting") {
+        $("tunnel-msg").textContent = "已生成设备码，请按提示去 GitHub 授权（会自动检测结果）。";
+      }
+      startPoll();
+    } catch (e) {
+      $("tunnel-msg").textContent = e.message || "无法开始登录";
+    } finally {
+      btnLogin.disabled = false;
+    }
+  });
+
+  const btnStart = $("btn-tunnel-start");
+  if (btnStart) btnStart.addEventListener("click", async () => {
+    $("tunnel-msg").textContent = "正在创建/启动隧道（首次会下载组件，约 23MB）…";
+    btnStart.disabled = true;
+    try {
+      const tid = ($("set-tunnel-id") && $("set-tunnel-id").value || "").trim();
+      const d = await authedApi("/api/tunnel/start", {
+        method: "POST", body: JSON.stringify({ tunnel_id: tid })
+      });
+      renderStatus(d);
+      startPoll();
+    } catch (e) {
+      $("tunnel-msg").textContent = e.message || "启动失败";
+    } finally {
+      btnStart.disabled = false;
+    }
+  });
+
+  const btnStop = $("btn-tunnel-stop");
+  if (btnStop) btnStop.addEventListener("click", async () => {
+    btnStop.disabled = true;
+    try {
+      const d = await authedApi("/api/tunnel/stop", { method: "POST", body: "{}" });
+      renderStatus(d);
+      $("tunnel-msg").textContent = "已停止公网访问。";
+    } catch (e) {
+      $("tunnel-msg").textContent = e.message || "停止失败";
+    } finally {
+      btnStop.disabled = false;
+    }
+  });
+
+  loadTunnelStatus();
+})();

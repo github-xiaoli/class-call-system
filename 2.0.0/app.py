@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from flask import (Flask, Response, jsonify, render_template, request,
+from flask import (Flask, Response, g, jsonify, render_template, request,
                    redirect, send_file, send_from_directory)
 from flask_sock import Sock
 
@@ -48,6 +48,10 @@ from remote import (remote_bp, remote_shutdown, set_desktop, ws_remote,
                     ws_remote_input,
                     set_config_getter as remote_set_config_getter)
 import abr                    # 自适应码率控制器
+import accounts               # 账号与会话（SQLite）
+import security               # 信道判定 / 限速 / 安全响应头
+import tunnel                 # 微软 Dev Tunnels（公网访问）
+from login import login_bp, validate_password
 import update as update_mod
 
 ROOT_DIR = os.path.dirname(BASE_DIR)   # 版本目录的上一级（程序根目录，含 data/ 与 version.json）
@@ -93,6 +97,15 @@ DEFAULT_CONFIG = {
     "secure_port_force": False,     # 目标端口被系统保留时，是否临时停止 WinNAT 抢占该端口（需管理员）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
     "update_policy": "none",        # OTA 更新策略：none | check | download | install
+    # ---- 公网访问（微软 Dev Tunnels）----
+    "public_enabled": False,        # 是否开通公网访问（隧道）
+    "public_port": 9444,            # 公网专用端口：只绑 127.0.0.1，仅隧道可达
+    "tunnel_id": "",                # 固定隧道 ID（空=首次开通时自动生成）
+    "tunnel_expiration_hours": 720,  # 隧道有效期（小时，最长 720=30 天），到期前自动续期
+    "local_auto_login": True,       # 本机免登录（公网口强制关闭，不读此值）
+    "trusted_proxies": ["127.0.0.1", "::1"],  # 唯一可信代理：本机回环（隧道入口）
+    "api_rate_limit": 60,           # 通用接口限速：每 (IP,路径组) 每分钟次数，0=关闭
+    "call_min_interval": 2.0,       # 叫号最小间隔（秒），0=不限制
 }
 
 try:
@@ -138,6 +151,7 @@ app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 20}
 sock = Sock(app)
 
 app.register_blueprint(auth_bp)
+app.register_blueprint(login_bp)      # 账号登录（公网访问的唯一凭据）
 app.register_blueprint(monitor_bp)
 app.register_blueprint(remote_bp)
 app.register_blueprint(fs_bp)
@@ -153,11 +167,130 @@ sock.route("/ws/remote/input")(ws_remote_input)   # 触控/键盘独立通道（
 # 生成令牌签名密钥（首次运行自动写入 config.json）
 ensure_auth_secret()
 
+# 账号与会话库（SQLite，data/app.db）；不创建任何默认账号
+accounts.init_db()
+
+
+# ---------------------------------------------------------------------------
+# 安全层：CSP nonce / 限速 / 登录闸门
+#
+# 顺序很重要：nonce -> 限速 -> 登录闸门。限速必须排在鉴权之前，
+# 否则未登录的人刷接口就能把线程池占满（threaded=True 每请求一线程）。
+# ---------------------------------------------------------------------------
+_PUBLIC_PREFIXES = ("/login", "/static/", "/favicon.ico",
+                    "/api/auth/login", "/api/auth/session", "/api/auth/logout",
+                    "/api/auth/reset", "/api/health", "/plain", "/ping",
+                    "/cert", "/cert.crt", "/cert.mobileconfig")
+# 这些页面涉及画面/声音/文件/远控，远程必须走加密信道
+_SECURE_PAGES = ("/login", "/monitor", "/remote", "/files", "/account",
+                 "/admin", "/update", "/logs")
+
+
+@app.before_request
+def _cc_security_nonce():
+    """每个请求一个 CSP nonce，模板里的 <script> 必须带上它才被允许执行。"""
+    g.csp_nonce = security.new_nonce()
+    return None
+
+
+@app.before_request
+def _cc_rate_limit():
+    """通用接口限速：每 (客户端 IP, 路径组) 每分钟 N 次。"""
+    return security.check_rate_limit()
+
+
+@app.before_request
+def _cc_force_https_pages():
+    """敏感页面：远程设备自动跳到安全端口（本机不受影响）。"""
+    if not security.https_available() or security.is_secure_request():
+        return None
+    try:
+        if is_local():
+            return None
+        path = request.path or "/"
+        for prefix in _SECURE_PAGES:
+            if path == prefix or path.startswith(prefix + "/"):
+                if request.method in ("GET", "HEAD"):
+                    return redirect(security.https_url(path, request.query_string),
+                                    code=302)
+                return jsonify({"ok": False, "need_https": True,
+                                "https_url": security.https_url(),
+                                "error": "该功能必须在安全连接（HTTPS）下使用：%s"
+                                         % security.https_url()}), 403
+    except Exception:
+        return None
+    return None
+
+
+@app.before_request
+def _cc_login_gate():
+    """页面级登录闸门：未登录只放行登录页/静态资源/公开接口。
+
+    接口不在这里拦（各自 check_access() 返回 401/need_login，前端据此跳登录页）；
+    WebSocket 同理交给各自处理函数，因为这里返回 302 会破坏升级握手。
+    """
+    path = request.path or "/"
+    for p in _PUBLIC_PREFIXES:
+        if path == p or path.startswith(p.rstrip("/") + "/"):
+            return None
+    try:
+        # 还没有任何账号（全新安装）：本机照常可用，等同老版本体验；
+        # 公网口仍然走下面（必须登录）——而公网口又没账号可登，等于进不来。
+        if not security.is_public_request() and accounts.count_users() == 0:
+            return None
+    except Exception:
+        pass
+    try:
+        from login import current_user
+        if current_user() is not None:
+            return None
+    except Exception:
+        return None
+    if path.startswith("/api/") or path.startswith("/ws/"):
+        return None
+    return redirect("/login?next=" + urllib.parse.quote(path or "/"))
+
+
+@app.before_request
+def _cc_public_gate():
+    """公网口（隧道）总闸：除登录相关与健康检查外，**一切**都要求已登录。
+
+    这是"只靠软件密码"的安全底线：哪怕某个接口忘了写 check_access()，
+    只要它出现在公网口上，也必须先有会话才能进。局域网口不受影响。
+    """
+    try:
+        if not security.is_public_request():
+            return None
+    except Exception:
+        return None
+    path = request.path or "/"
+    allow = ("/login", "/static/", "/favicon.ico", "/api/auth/login",
+             "/api/auth/session", "/api/auth/logout", "/api/health",
+             "/api/auth/bootstrap",          # 放行到处理函数，由它返回明确的 403
+             "/cert.crt", "/cert.mobileconfig")
+    for p in allow:
+        if path == p or path.startswith(p.rstrip("/") + "/"):
+            return None
+    try:
+        from login import current_user
+        if current_user() is not None:
+            return None
+    except Exception:
+        pass
+    if path.startswith("/api/") or path.startswith("/ws/"):
+        return jsonify({"ok": False, "need_login": True,
+                        "error": "请先登录后再使用该功能"}), 401
+    return redirect("/login?next=" + urllib.parse.quote(path or "/"))
+
 
 @app.after_request
 def _no_cache(resp):
-    """禁止浏览器缓存页面/脚本，避免更新后前端仍用旧文件。"""
+    """禁止浏览器缓存页面/脚本，并统一挂上安全响应头。"""
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    try:
+        security.apply_headers(resp, getattr(g, "csp_nonce", None))
+    except Exception:
+        pass
     return resp
 
 CONFIG_LOCK = threading.Lock()
@@ -1478,9 +1611,110 @@ def page_files():
     return render_template("files.html")
 
 
-@app.route("/password")
-def page_password():
-    return render_template("password.html")
+@app.route("/account")
+def page_account():
+    """我的账号：改密 / 退出登录（原来的密码管理页在这里）。"""
+    return render_template("account.html")
+
+
+@app.route("/admin")
+def page_admin():
+    """管理员后台：账号、在线设备、审计日志。"""
+    return render_template("admin.html")
+
+
+@app.route("/login")
+def page_login():
+    """统一登录页（公网访问与局域网都走这里）。"""
+    return render_template("login.html")
+
+
+# ---------------------------------------------------------------------------
+# 公网访问（微软 Dev Tunnels）——只在电脑本机上可操作
+# ---------------------------------------------------------------------------
+def _tunnel_local_only():
+    """隧道类操作只允许本机：公网口上的人不能自己开关隧道。"""
+    try:
+        if security.is_public_request() or not is_local():
+            return jsonify({"ok": False,
+                            "error": "隧道设置只能在电脑本机上操作"}), 403
+    except Exception:
+        return jsonify({"ok": False, "error": "无法确认本机身份"}), 403
+    return None
+
+
+@app.route("/api/tunnel/status")
+def api_tunnel_status():
+    err = check_access()
+    if err:
+        return err
+    err = _tunnel_local_only()
+    if err:
+        return err
+    cfg = get_config()
+    st = tunnel.status()
+    return jsonify({"ok": True, "tunnel": st,
+                    "enabled": bool(cfg.get("public_enabled")),
+                    "public_port": int(cfg.get("public_port", 9444) or 9444)})
+
+
+@app.route("/api/tunnel/login/start", methods=["POST"])
+def api_tunnel_login_start():
+    err = check_access()
+    if err:
+        return err
+    err = _tunnel_local_only()
+    if err:
+        return err
+    st = tunnel.login_start(log=lambda m: print(m))
+    return jsonify({"ok": True, "tunnel": st})
+
+
+@app.route("/api/tunnel/start", methods=["POST"])
+def api_tunnel_start():
+    err = check_access()
+    if err:
+        return err
+    err = _tunnel_local_only()
+    if err:
+        return err
+    cfg = get_config()
+    data = request.get_json(silent=True) or {}
+    # 开通公网前必须有账号：否则隧道一开，谁也登不进去（公网口强制登录）
+    try:
+        if accounts.count_users() == 0:
+            return jsonify({"ok": False,
+                            "error": "请先创建管理员账号（打开「我的账号」页），再开通公网访问"}), 400
+    except Exception:
+        pass
+    tid = str(data.get("tunnel_id") or cfg.get("tunnel_id") or "").strip().lower()
+    port = int(cfg.get("public_port", 9444) or 9444)
+    st = tunnel.start(port, tid,
+                      int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                      log=lambda m: print(m))
+    if st.get("host_state") == "error":
+        return jsonify({"ok": False, "error": st.get("last_error") or "启动失败",
+                        "tunnel": st}), 400
+    cfg["public_enabled"] = True
+    if st.get("tunnel_id"):
+        cfg["tunnel_id"] = st["tunnel_id"]
+    save_config(cfg)
+    return jsonify({"ok": True, "tunnel": st})
+
+
+@app.route("/api/tunnel/stop", methods=["POST"])
+def api_tunnel_stop():
+    err = check_access()
+    if err:
+        return err
+    err = _tunnel_local_only()
+    if err:
+        return err
+    tunnel.stop(log=lambda m: print(m))
+    cfg = get_config()
+    cfg["public_enabled"] = False
+    save_config(cfg)
+    return jsonify({"ok": True, "tunnel": tunnel.status()})
 
 
 @app.route("/update")
@@ -1562,14 +1796,14 @@ def page_wizard():
 
 @app.route("/pair")
 def page_pair():
-    """手机配对页：扫码打开自动配对，也可以手动输入配对码（向导期间同样可用）。"""
-    return render_template("pair.html")
+    """旧版配对页：已由统一登录取代，跳过去（老书签不至于 404）。"""
+    return redirect("/login")
 
 
 @app.route("/activate")
 def page_activate():
-    """手机扫码打开这个页面，自动完成设备激活（不需要手输密码）。"""
-    return render_template("activate.html")
+    """旧版扫码激活页：已由统一登录取代，跳过去。"""
+    return redirect("/login")
 
 
 @app.route("/api/wizard/state")
@@ -2688,6 +2922,28 @@ def api_call():
     if not number:
         return jsonify({"ok": False, "error": "请输入学号"}), 400
 
+    # 公网口上一律要求登录（局域网口按原样：本机/已授权设备可直接叫号）
+    err = check_access()
+    if err:
+        return err
+
+    # 叫号最小间隔（默认 2 秒）：多个老师同时连点也只会过一个，
+    # 避免喇叭连珠炮。0 表示不限制。
+    allowed, wait = security.CALL_LIMITER.take("__global__")
+    if not allowed:
+        return jsonify({"ok": False, "throttled": True,
+                        "retry_after": round(wait, 1),
+                        "error": "叫号太快了，请 %.1f 秒后再试" % wait}), 429
+
+    # 老师身份以登录会话为准，前端传值只作显示兜底（防伪造"某老师"）
+    try:
+        from login import current_user as _cur
+        _u = _cur()
+        if _u:
+            teacher = (_u.get("display_name") or _u.get("username") or teacher)
+    except Exception:
+        pass
+
     # 以名条中的姓名为准
     roster = get_roster()
     for item in roster:
@@ -3099,6 +3355,43 @@ def _main():
             print("[网页服务] 异常退出:", exc)
 
     threading.Thread(target=_serve, daemon=True, name="web-server").start()
+
+    # ------------------------------------------------------------------
+    # 公网访问：安全层初始化 + 公网专用端口 + 隧道
+    #
+    # 公网口（默认 9444）**只绑 127.0.0.1**：局域网任何人都连不到，
+    # 只有本机的隧道进程能进；该端口上的请求永不被当作"本机"，
+    # 一切操作都要登录（见 auth.check_access / login.current_user）。
+    # ------------------------------------------------------------------
+    try:
+        security.init_from_config(cfg)
+        public_port = int(cfg.get("public_port", 9444) or 9444)
+        security.set_public_port(public_port)
+        print("[公网] 公网专用端口 %d（仅 127.0.0.1，供隧道使用）" % public_port)
+
+        def _serve_public():
+            try:
+                pub = make_server("127.0.0.1", public_port, app, threaded=True)
+                pub.serve_forever()
+            except BaseException as exc:
+                print("[公网] 端口 %d 启动失败（不影响局域网使用）：%s"
+                      % (public_port, exc))
+
+        threading.Thread(target=_serve_public, daemon=True,
+                         name="public-server").start()
+
+        if cfg.get("public_enabled"):
+            def _boot_tunnel():
+                time.sleep(2.0)
+                st = tunnel.start(public_port,
+                                  cfg.get("tunnel_id", ""),
+                                  int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                                  log=lambda m: print(m))
+                print("[公网] " + tunnel.summary_line())
+            threading.Thread(target=_boot_tunnel, daemon=True,
+                             name="tunnel-boot").start()
+    except Exception as exc:
+        print("[公网] 初始化失败（不影响局域网使用）：", exc)
 
     # 首次使用（还没完成设置向导）时自动打开浏览器，省得用户找不到入口
     def _auto_open_browser():

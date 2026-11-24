@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的账号 · 班级叫号器</title>
+<link rel="stylesheet" href="/static/style.css?v=20261121a">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">我的账号</div>
+  <div class="topbar-right">
+    <a href="/" class="btn ghost">← 返回主页</a>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <section class="panel">
+    <div class="panel-head"><h2>账号信息</h2></div>
+    <div class="acct-row"><span class="acct-label">用户名</span><b id="acct-username">—</b></div>
+    <div class="acct-row"><span class="acct-label">显示名</span><span id="acct-display">—</span></div>
+    <div class="acct-row"><span class="acct-label">角色</span><span id="acct-role">—</span></div>
+    <div class="acct-row"><span class="acct-label">上次登录</span><span id="acct-last">—</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>修改密码</h2></div>
+    <div class="form-row">
+      <label>原密码</label>
+      <input id="pwd-old" type="password" autocomplete="current-password" placeholder="请输入当前密码" />
+    </div>
+    <div class="form-row">
+      <label>新密码</label>
+      <input id="pwd-new" type="password" autocomplete="new-password" placeholder="至少 4 位" />
+    </div>
+    <div class="form-row">
+      <label>确认新密码</label>
+      <input id="pwd-new2" type="password" autocomplete="new-password" placeholder="再输入一次" />
+    </div>
+    <p class="hint">修改成功后，其他设备上的登录会被强制下线。</p>
+    <div class="acct-actions">
+      <button id="btn-change" class="btn primary">保存新密码</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>登录状态</h2></div>
+    <p class="hint" id="acct-session-hint">正在读取…</p>
+    <div class="acct-actions">
+      <button id="btn-logout" class="btn danger">退出登录</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let toastTimer = null;
+  function toast(text) {
+    const t = $("toast");
+    t.textContent = text;
+    t.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 2600);
+  }
+
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+      credentials: "same-origin",
+    }).then((r) => r.json().then((d) => ({ status: r.status, data: d })));
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+      + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  fetch("/api/auth/session", { credentials: "same-origin" })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.logged_in) { location.href = "/login"; return; }
+      const u = d.user;
+      $("acct-username").textContent = u.username;
+      $("acct-display").textContent = u.display_name || u.username;
+      $("acct-role").textContent = u.is_admin ? "管理员" : "老师";
+      $("acct-last").textContent = fmtTime(u.last_login);
+      $("acct-session-hint").textContent = d.local
+        ? "当前为本机直连（教室电脑），已自动以管理员身份登录。"
+        : "当前为远程登录，会话有效期 30 天，活跃时自动续期。";
+      if (u.must_change_pwd) {
+        $("acct-session-hint").textContent += " ⚠️ 当前为初始密码，请立即修改。";
+      }
+    })
+    .catch(() => { location.href = "/login"; });
+
+  $("btn-change").addEventListener("click", async () => {
+    const oldPwd = $("pwd-old").value;
+    const newPwd = $("pwd-new").value;
+    const newPwd2 = $("pwd-new2").value;
+    if (!oldPwd) { toast("请输入原密码"); return; }
+    if (newPwd.length < 4) { toast("新密码至少 4 位"); return; }
+    if (newPwd !== newPwd2) { toast("两次输入的新密码不一致"); return; }
+
+    $("btn-change").disabled = true;
+    try {
+      const res = await postJSON("/api/auth/change-pwd",
+        { old_password: oldPwd, new_password: newPwd });
+      if (!res.data.ok) { toast(res.data.error || "修改失败"); return; }
+      toast("密码已修改");
+      $("pwd-old").value = ""; $("pwd-new").value = ""; $("pwd-new2").value = "";
+      setTimeout(() => location.reload(), 900);
+    } catch (e) {
+      toast("网络异常，请重试");
+    } finally {
+      $("btn-change").disabled = false;
+    }
+  });
+
+  $("btn-logout").addEventListener("click", async () => {
+    if (!confirm("确定退出登录吗？")) return;
+    try {
+      await postJSON("/api/auth/logout", {});
+    } catch (e) { /* 忽略 */ }
+    location.href = "/login";
+  });
+})();
+</script>
+</body>
+</html>

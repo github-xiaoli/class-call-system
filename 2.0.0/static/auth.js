@@ -1,179 +1,35 @@
-/* 密码激活 / 挑战签名 / 令牌管理
- * 使用浏览器原生 WebCrypto（ECDSA P-256）。
- * 私钥设为不可导出(extractable=false)，只以 CryptoKey 对象存 IndexedDB，
- * 任何代码都读不到私钥原文；换浏览器/清除数据后需重新激活。 */
-"use strict";
+// 班级叫号器 (Class Caller)  Copyright (C) 2026 xiaoli
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// 统一登录后的前端鉴权辅助。
+//
+// 历史背景：原版用「一次性密码 + 浏览器 ECDSA 设备密钥」换 60 秒令牌，
+// 用于在没有登录体系时保护敏感接口。现在改成账号会话（Cookie），
+// 鉴权由服务端按会话完成，前端只需要：
+//   1) 带上 Cookie（同源默认就会带）
+//   2) 遇到 401 时跳登录页
+//
+// 之所以保留 Auth 这个对象和这些函数名，是为了不改动 files.js /
+// monitor.js / remote.js / update.js 里几十处调用点。
 
 const Auth = (() => {
-  const DB_NAME = "cqt_auth_db";
-  const STORE = "keys";
-  const DEVICE_KEY = "cqt_device_id";
-  let _token = null;
-  let _tokenExp = 0;
-  let _dbPromise = null;
   let _local = null;
 
-  function openDb() {
-    if (_dbPromise) return _dbPromise;
-    _dbPromise = new Promise((resolve, reject) => {
-      if (!window.indexedDB) { reject(new Error("浏览器不支持 IndexedDB")); return; }
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error || new Error("IndexedDB 打开失败"));
-    });
-    return _dbPromise;
+  function loginUrl() {
+    const next = encodeURIComponent(location.pathname + location.search);
+    return "/login?next=" + next;
   }
 
-  function idbPut(key, value) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(value, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    }));
-  }
-  function idbGet(key) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
-      const rq = tx.objectStore(STORE).get(key);
-      rq.onsuccess = () => resolve(rq.result || null);
-      rq.onerror = () => reject(rq.error);
-    }));
-  }
-  function idbDel(key) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).delete(key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    }));
-  }
-
-  function b64urlToBytes(s) {
-    s = String(s).replace(/-/g, "+").replace(/_/g, "/");
-    while (s.length % 4) s += "=";
-    const bin = atob(s);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-  function bytesToB64url(bytes) {
-    let s = "";
-    for (const b of bytes) s += String.fromCharCode(b);
-    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
-  function requireSubtle() {
-    if (!window.crypto || !crypto.subtle) {
-      throw Object.assign(
-        new Error("当前连接不是安全连接，浏览器加密不可用。请改用 https:// 安全地址访问后再激活。"),
-        { code: "INSECURE" });
-    }
-  }
-
-  async function hasPrivateKey() {
-    try { return !!(await idbGet("privKey")); } catch (e) { return false; }
-  }
-
-  async function generateAndStoreKeyPair() {
-    requireSubtle();
-    // 私钥不可导出；仅把 CryptoKey 对象结构化克隆进 IndexedDB（依然读不到原文）
-    const kp = await crypto.subtle.generateKey(
-      { name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-    await idbPut("privKey", kp.privateKey);
-    const pubJwk = await crypto.subtle.exportKey("jwk", kp.publicKey);
-    return pubJwk;
-  }
-
-  async function activate(password) {
-    const pubJwk = await generateAndStoreKeyPair();
-    const res = await fetch("/api/auth/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password, public_key: pubJwk }),
-    });
-    const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
-    if (!res.ok || data.ok === false) {
-      await idbDel("privKey");
-      throw new Error(data.error || "激活失败");
-    }
-    localStorage.setItem(DEVICE_KEY, data.device_id);
-    _token = null;
-    return data;
-  }
-
-  async function activateByToken(token) {
-    // 扫码激活：不用手输密码，凭二维码里的一次性票据直接绑定
-    const pubJwk = await generateAndStoreKeyPair();
-    const res = await fetch("/api/auth/activate_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: token, public_key: pubJwk }),
-    });
-    const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
-    if (!res.ok || data.ok === false) {
-      await idbDel("privKey");
-      throw new Error(data.error || "激活失败");
-    }
-    localStorage.setItem(DEVICE_KEY, data.device_id);
-    _token = null;
-    return data;
-  }
-
-  async function sign(challengeB64url) {
-    requireSubtle();
-    const privKey = await idbGet("privKey");
-    if (!privKey) {
-      throw Object.assign(new Error("未激活，请先激活"), { code: "NEED_ACTIVATE" });
-    }
-    const sig = await crypto.subtle.sign(
-      { name: "ECDSA", hash: "SHA-256" }, privKey, b64urlToBytes(challengeB64url));
-    return bytesToB64url(new Uint8Array(sig));
-  }
-
-  async function ensureToken() {
-    const did = localStorage.getItem(DEVICE_KEY);
-    if (!did) {
-      throw Object.assign(new Error("未激活，请先激活"), { code: "NEED_ACTIVATE" });
-    }
-    if (_token && Date.now() < _tokenExp - 5000) return _token;
-    const res = await fetch("/api/auth/challenge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: did }),
-    });
-    const ch = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
-    if (!res.ok || ch.ok === false) {
-      if (/过期|撤销/.test(ch.error || "")) {
-        localStorage.removeItem(DEVICE_KEY);
-        await idbDel("privKey");
-      }
-      throw new Error(ch.error || "获取挑战失败");
-    }
-    const signature = await sign(ch.challenge);
-    const vr = await fetch("/api/auth/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ challenge_id: ch.challenge_id, signature }),
-    });
-    const vdata = await vr.json().catch(() => ({ ok: false, error: "响应解析失败" }));
-    if (!vr.ok || vdata.ok === false) {
-      if (/过期|撤销/.test(vdata.error || "")) {
-        localStorage.removeItem(DEVICE_KEY);
-        await idbDel("privKey");
-      }
-      throw new Error(vdata.error || "签名校验失败");
-    }
-    _token = vdata.token;
-    _tokenExp = Date.now() + (vdata.expires_in || 60) * 1000;
-    return _token;
+  /** 未登录时跳转登录页（返回一个永不 resolve 的 Promise，阻断后续逻辑）。 */
+  function gotoLogin() {
+    location.href = loginUrl();
+    return new Promise(() => {});
   }
 
   async function ensureLocal() {
     if (_local === null) {
       try {
-        const m = await me();
+        const m = await fetch("/api/auth/session").then((r) => r.json());
         _local = !!m.local;
       } catch (e) {
         _local = false;
@@ -182,59 +38,71 @@ const Auth = (() => {
     return _local;
   }
 
+  /**
+   * 把 URL 补成可直接用于 <img> / WebSocket 的地址。
+   *
+   * 会话鉴权靠 Cookie：同源请求浏览器自动携带，所以这里原样返回即可。
+   * 保留这个函数是为了兼容 urlWithToken() 的调用点。
+   */
   async function urlWithToken(path) {
-    // 本机访问无需令牌
-    if (await ensureLocal()) return path;
-    const t = await ensureToken();
-    return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t);
+    return path;
   }
 
+  /** 带鉴权的 fetch：401 时跳登录页。 */
   async function fetchAuthed(url, options = {}) {
-    const doFetch = (tok) => fetch(url, {
+    const res = await fetch(url, {
+      credentials: "same-origin",
       ...options,
-      headers: { ...(options.headers || {}), ...(tok ? { "X-Auth-Token": tok } : {}) },
     });
-    // 本机访问无需令牌，直接请求
-    if (await ensureLocal()) return doFetch(null);
-    let tok = await ensureToken();
-    let res = await doFetch(tok);
     if (res.status === 401) {
-      _token = null;
-      tok = await ensureToken();
-      res = await doFetch(tok);
+      let needLogin = true;
+      try {
+        const d = await res.clone().json();
+        needLogin = d.need_login !== false;
+      } catch (e) { /* 非 JSON 响应，按未登录处理 */ }
+      if (needLogin) return gotoLogin();
     }
     return res;
   }
 
-  async function deactivate() {
-    const did = localStorage.getItem(DEVICE_KEY);
-    if (did) {
-      try {
-        const tok = await ensureToken();
-        await fetch("/api/auth/deactivate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Auth-Token": tok },
-          body: "{}",
-        });
-      } catch (e) { /* 服务器不可达时也照常清除本机密钥 */ }
-    }
-    localStorage.removeItem(DEVICE_KEY);
-    await idbDel("privKey");
-    _token = null;
+  /** 兼容旧调用名。 */
+  async function ensureToken() {
+    const m = await fetch("/api/auth/session").then((r) => r.json())
+      .catch(() => ({ logged_in: false }));
+    if (!m.logged_in) return gotoLogin();
+    return "";                       // 会话鉴权不需要令牌
   }
 
   async function me() {
-    const did = localStorage.getItem(DEVICE_KEY) || "";
+    const d = await fetch("/api/auth/session").then((r) => r.json());
+    return {
+      ok: true,
+      local: !!d.local,
+      logged_in: !!d.logged_in,
+      user: d.user || null,
+    };
+  }
+
+  /** 退出登录。 */
+  async function logout() {
     try {
-      const res = await fetch("/api/auth/me?device_id=" + encodeURIComponent(did));
-      return await res.json();
-    } catch (e) {
-      return { ok: false, local: false, activated: false, has_valid_password: false };
-    }
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        credentials: "same-origin",
+      });
+    } catch (e) { /* 忽略网络错误 */ }
+    location.href = "/login";
   }
 
   return {
-    me, activate, activateByToken, deactivate, ensureToken, urlWithToken, fetchAuthed,
-    hasPrivateKey, requireSubtle,
+    me,
+    logout,
+    ensureLocal,
+    ensureToken,
+    urlWithToken,
+    fetchAuthed,
+    gotoLogin,
   };
 })();

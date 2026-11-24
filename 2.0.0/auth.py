@@ -23,6 +23,8 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 
+import security          # 信道判定 / 公网口判定（只依赖 Flask，不循环引用）
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")  # 共享数据目录（OTA 更新不删除）
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
@@ -157,22 +159,62 @@ def _machine_ips():
     return ips
 
 
-def is_local():
+def _has_proxy_headers():
+    """请求是否经过反代/隧道（带任何 X-Forwarded-* / Forwarded 头）。"""
     try:
+        return bool(request.headers.get("X-Forwarded-For")
+                    or request.headers.get("X-Real-IP")
+                    or request.headers.get("Forwarded"))
+    except Exception:
+        return True          # 取不到头就按"不安全"处理
+
+
+def is_local():
+    """是否为"真正坐在本机前面"的访问。
+
+    比原实现多两道判定（原实现只看 IP，隧道/反代一进来就误判成本机）：
+      1) 公网口（隧道专用端口）上的请求 **永远不算本机**；
+      2) 带代理头的请求不算本机（同机反代、伪造请求头都挡住）。
+    """
+    try:
+        if security.is_public_request():
+            return False
+        if _has_proxy_headers():
+            return False
         return request.remote_addr in _machine_ips()
     except Exception:
         return False
 
 
 def check_access():
-    """受保护接口统一鉴权：本机直接放行；远程需有效令牌。
-    返回 None 表示放行，否则返回可直接 return 的 Flask 响应。"""
-    if is_local():
+    """受保护接口统一鉴权。返回 None 放行，否则返回可直接 return 的响应。
+
+    判定顺序就是安全边界，别乱改：
+      1) 公网口/带代理头 -> 必须走会话登录，绝不放行；
+      2) 本机直连 -> 放行（教室电脑打开即用）；
+      3) 已登录会话 -> 放行；
+      4) 旧设备令牌 -> 兼容放行；
+      5) 其余 -> 401。
+    """
+    try:
+        via_proxy = security.is_public_request() or _has_proxy_headers()
+    except Exception:
+        via_proxy = True
+    if not via_proxy and is_local():
         return None
+
+    try:
+        import login as _login
+        if _login.current_user() is not None:
+            return None
+    except Exception:
+        pass
+
     token = request.headers.get("X-Auth-Token") or request.args.get("token") or ""
     if token and verify_token(token):
         return None
-    return jsonify({"ok": False, "error": "需要密码激活后才能使用该功能"}), 401
+    return jsonify({"ok": False, "need_login": True,
+                    "error": "请先登录后再使用该功能"}), 401
 
 
 def _jwk_to_public_key(jwk):

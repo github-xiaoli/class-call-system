@@ -55,56 +55,28 @@ body.fs .msg-row input { padding: 10px 12px; }
 </style>
 </head>
 <body>
-<!-- 白屏兜底：脚本没跑起来（iPhone 上常见）时，4 秒后自动显示这层，给出可用的下一步 -->
-<div id="boot-fallback" style="display:none;position:fixed;inset:0;z-index:99999;background:#fff;
-     padding:22px 20px;font-family:'Microsoft YaHei',system-ui,sans-serif;line-height:1.9;color:#0f172a;
-     overflow:auto">
-  <h2 style="font-size:18px;margin:0 0 8px">页面好像没有加载完（一片空白？）</h2>
-  <p style="color:#475569;margin:0 0 10px">先点下面这条，它不依赖脚本，能验证"电脑那边是否正常"：</p>
-  <p style="font-size:16px"><a href="/plain">➡️ 打开极简诊断页 /plain</a></p>
-  <p style="color:#475569;margin:14px 0 6px"><b>iPhone / iPad 白屏</b>（最常见原因：自签名证书）：
-    到 <a href="/cert">/cert</a> 下载证书/描述文件 → 设置 → 通用 → 关于本机 → 证书信任设置 →
-    为「班级叫号器本机根证书」开启完全信任，然后重新打开。</p>
-  <p style="color:#475569;margin:6px 0">其它可试：清浏览器缓存；设置 → 隐私与安全性 → 本地网络 → 允许浏览器；
-    改用 <b>https://本机IP:安全端口</b>。</p>
-  <p style="margin-top:14px"><a href="/logs">查看运行日志</a>　·　<a href="/api/health">/api/health</a></p>
-</div>
-<noscript>
-  <div style="padding:22px;font-family:'Microsoft YaHei',sans-serif;line-height:1.9">
-    <h2 style="font-size:18px">浏览器禁用了 JavaScript</h2>
-    <p>班级叫号器需要 JavaScript。请点这里打开极简页：<a href="/plain">/plain</a>，
-       或换用 Safari / Chrome 再打开。</p>
-  </div>
-</noscript>
-<script>
-  setTimeout(function () {
-    if (window.__appReady) return;
-    var d = document.getElementById('boot-fallback');
-    if (d) d.style.display = 'block';
-  }, 4000);
-</script>
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">班级叫号器</div>
-  <div class="topbar-right">
+  <div class="topbar-info">
     <span id="server-url" class="muted" title="局域网访问地址"></span>
     <label class="teacher-box">
       老师
       <input id="teacher-name" maxlength="20" placeholder="老师姓名" />
       <button id="btn-save-teacher" class="btn ghost small">保存</button>
     </label>
+  </div>
+  <nav class="topbar-actions">
     <button id="btn-monitor" class="btn ghost">📷 监控对讲</button>
     <button id="btn-remote" class="btn ghost">🖥 远程控制</button>
     <button id="btn-files" class="btn ghost">📁 文件传输</button>
-    <button id="btn-activate" class="btn ghost hidden">🔑 激活</button>
-    <button id="btn-deactivate" class="btn ghost hidden">🔓 取消激活</button>
-    <button id="btn-password" class="btn ghost hidden">🔐 密码管理</button>
     <button id="btn-update" class="btn ghost">🔄 软件更新</button>
-    <button id="btn-logs" class="btn ghost hidden" title="查看运行日志（排障用）">📜 日志</button>
     <button id="btn-fullscreen" class="btn ghost" title="全屏显示（一屏放完小键盘/备注/叫号/消息）">⛶ 全屏</button>
     <button id="btn-settings" class="btn ghost">⚙️ 设置</button>
     <button id="btn-import" class="btn ghost">📥 导入CSV</button>
     <button id="btn-manage" class="btn ghost">👥 名条管理</button>
-  </div>
+    <button id="btn-admin" class="btn ghost hidden">🛡 后台</button>
+    <button id="btn-account" class="btn ghost">👤 我的账号</button>
+  </nav>
 </header>
 
 <main class="layout">
@@ -193,7 +165,9 @@ body.fs .msg-row input { padding: 10px 12px; }
       <div class="form-grid">
         <label>播放次数 <input id="set-play-count" type="number" min="1" max="10" value="1" /></label>
         <label class="checkbox"><input id="set-volume-enabled" type="checkbox" /> 叫号时切换系统音量</label>
-        <label>叫号音量 <input id="set-volume" type="number" min="0" max="100" value="100" /> %</label>
+        <label>叫号音量
+          <span class="unit"><input id="set-volume" type="number" min="0" max="100" value="100" /><em>%</em></span>
+        </label>
         <label class="checkbox"><input id="set-prompt-enabled" type="checkbox" /> 叫号前播放提示音</label>
         <label class="checkbox"><input id="set-autostart" type="checkbox" /> 开机自启</label>
       </div>
@@ -222,25 +196,16 @@ body.fs .msg-row input { padding: 10px 12px; }
         <label>主机名 <input id="set-mdns-hostname" placeholder="如 classroom" /></label>
         <label>网卡
           <select id="set-mdns-interface">
-            <option value="auto">自动（推荐：自动挑选能连上的网卡）</option>
+            <option value="auto">自动（全部网卡）</option>
           </select>
         </label>
         <label>端口 <input id="set-port" type="number" min="1" max="65535" /></label>
       </div>
-      <p class="hint">其他设备浏览器访问：<b>http://本机IP:端口</b>（所有手机都能用）；<b>http://主机名.local:端口</b> 需要设备支持 mDNS —— iPhone / iPad / 电脑 / 较新安卓系统（如 Android 12+、LineageOS）可以，部分华为鸿蒙等机型解析不了（浏览器会报"找不到服务器"），这类设备请用 IP。修改端口后需重启软件生效。</p>
-      <div class="form-row mdns-box">
-        <p class="hint" id="mdns-state">mDNS 状态：读取中…</p>
-        <div class="mdns-actions">
-          <button id="btn-mdns-diag" class="btn ghost small" type="button">🔍 mDNS 诊断</button>
-          <button id="btn-mdns-retry" class="btn ghost small" type="button">🔁 重新注册</button>
-          <button id="btn-open-logs" class="btn ghost small" type="button">📜 查看日志</button>
-        </div>
-        <pre id="mdns-diag-out" class="mdns-diag hidden"></pre>
-      </div>
+      <p class="hint">其他设备浏览器访问：http://主机名.local:端口（修改端口后需重启软件生效）</p>
       <div class="form-grid">
         <label class="checkbox"><input id="set-secure-enabled" type="checkbox" /> 启用 HTTPS 安全端口</label>
         <label>安全端口 <input id="set-secure-port" type="number" min="1" max="65535" /></label>
-      <label class="checkbox"><input id="set-secure-force" type="checkbox" /> 占用系统保留端口时自动抢占（管理员权限，会短暂停止 WinNAT/Hyper-V 网络）</label>
+      <label class="checkbox wide"><input id="set-secure-force" type="checkbox" /> 占用系统保留端口时自动抢占（管理员权限，会短暂停止 WinNAT/Hyper-V 网络）</label>
       </div>
       <p class="hint">手机端“激活 / 监控 / 远程控制 / 文件传输”等敏感功能需通过 https://主机名.local:安全端口 访问（自签名证书，首次需点“继续访问”）。</p>
       <div class="form-grid">
@@ -273,6 +238,43 @@ body.fs .msg-row input { padding: 10px 12px; }
       </div>
       <p class="hint">「自动」会用 Windows 多点触摸 API 注入真实触点（支持双指手势），
         注入失败时自动退回鼠标，保证一定能点。</p>
+
+      <!-- ---------------- 公网访问（微软 Dev Tunnels） ---------------- -->
+      <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb" />
+      <h4 style="margin:0 0 8px">🌐 公网访问（人不在教室时用手机看）</h4>
+      <p class="hint" style="margin-top:0">
+        用一个固定网址从外网打开本软件；隧道由微软 Dev Tunnels 提供，
+        <b>所有操作仍然需要账号密码登录</b>（公网口强制登录，本机免登录不生效）。
+      </p>
+      <div class="form-grid">
+        <label>GitHub 连接
+          <span id="tunnel-login-state" class="badge gray">未连接</span>
+        </label>
+        <button type="button" id="btn-tunnel-login" class="btn">连接 GitHub</button>
+      </div>
+      <div id="tunnel-login-box" class="hint" style="display:none">
+        在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a>
+        ，输入设备码 <b id="tunnel-user-code" style="font-size:16px;letter-spacing:2px">--------</b>
+      </div>
+      <div class="form-grid">
+        <label>隧道状态
+          <span id="tunnel-host-state" class="badge gray">未开通</span>
+        </label>
+        <label>固定 ID <input id="set-tunnel-id" type="text" maxlength="32" placeholder="留空=自动生成，例如 classcaller" /></label>
+      </div>
+      <div id="tunnel-url-box" class="hint" style="display:none">
+        公网地址：<a id="tunnel-url" href="#" target="_blank" rel="noreferrer"></a>
+        <div style="margin-top:6px">手机扫这个二维码直接打开：</div>
+        <div id="tunnel-qr" style="background:#fff;padding:8px;display:inline-block;border-radius:8px"></div>
+        <div style="margin-top:6px;color:#b45309">
+          ⚠️ 这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
+        </div>
+      </div>
+      <div class="form-grid">
+        <button type="button" id="btn-tunnel-start" class="btn primary">开通公网访问</button>
+        <button type="button" id="btn-tunnel-stop" class="btn danger">停止公网访问</button>
+      </div>
+      <p class="hint" id="tunnel-msg" style="min-height:18px"></p>
     </div>
     <div class="modal-foot">
       <button id="btn-restart" class="btn danger" style="margin-right:auto">🔄 重启软件</button>
@@ -283,21 +285,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 </div>
 
 <!-- 激活弹窗 -->
-<div id="modal-activate" class="modal-mask hidden">
-  <div class="modal">
-    <div class="modal-head"><h3>激活设备</h3><button class="close" data-close>✕</button></div>
-    <div class="modal-body">
-      <p class="hint">输入电脑上创建的密码完成激活。浏览器会生成一对密钥：<b>公钥发给电脑保存，私钥不可读取、只存本浏览器</b>，密码激活后立即失效。</p>
-      <p class="hint" style="color:#b45309">⚠️ 重要：激活后本设备即与电脑<b>永久绑定</b>。请勿清除浏览器数据、卸载浏览器，也不要对手机进行恢复出厂、刷机或重装系统，否则密钥丢失后需在本机重新创建密码再激活。</p>
-      <label>密码 <input id="act-password" type="password" placeholder="请输入电脑上创建的密码" /></label>
-      <p class="hint" id="act-status"></p>
-    </div>
-    <div class="modal-foot">
-      <button id="btn-activate-do" class="btn primary">激活</button>
-      <button class="btn ghost" data-close>取消</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- 导入 CSV 弹窗 -->
 <div id="modal-import" class="modal-mask hidden">
@@ -354,7 +342,8 @@ body.fs .msg-row input { padding: 10px 12px; }
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/auth.js?v=20261119f"></script>
-<script src="/static/app.js?v=20261119f"></script>
+<script src="/static/qrcode.js?v=20261123a"></script>
+<script src="/static/auth.js?v=20261123a"></script>
+<script src="/static/app.js?v=20261123a"></script>
 </body>
 </html>

@@ -23,6 +23,12 @@ _BLOCK_NAMES = {"windows", "program files", "program files (x86)",
                 "programdata", "system volume information", "$recycle.bin",
                 "recovery", "boot"}
 
+# 本程序自己的数据目录：里面有 auth.json（设备密钥）、config.json（令牌签名密钥
+# auth_secret）、ssl.key（HTTPS 私钥）、app.db（账号与会话）。这些一旦能通过
+# 文件传输下载，等于把整台电脑的控制权交出去，所以整目录禁止读写。
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR = os.path.normcase(os.path.join(os.path.dirname(_APP_DIR), "data"))
+
 
 def _norm(p):
     try:
@@ -38,6 +44,22 @@ def _safe_name(name):
     return name.strip() or "未命名"
 
 
+def _path_parts(p):
+    """按层级拆路径（小写），用于逐级比对黑名单，而不是只比最后一段。"""
+    try:
+        _drive, rest = os.path.splitdrive(p)
+        rest = str(rest).replace("/", os.sep)
+        return [x.lower() for x in rest.split(os.sep) if x]
+    except Exception:
+        return []
+
+
+def _is_secret(p):
+    """是否是本程序数据目录（私钥、授权、令牌签名密钥都在里面）。"""
+    np = os.path.normcase(p)
+    return np == _DATA_DIR or np.startswith(_DATA_DIR + os.sep)
+
+
 def _is_blocked(p):
     p = _norm(p)
     if not p:
@@ -45,10 +67,10 @@ def _is_blocked(p):
     # 盘符根目录
     if len(p) == 3 and p[1:] == ":\\":
         return True
-    base = os.path.basename(p).lower()
-    if base in _BLOCK_NAMES:
+    # 逐级比对：原来只比最后一段，C:\Windows\System32 这种能绕过去
+    if any(part in _BLOCK_NAMES for part in _path_parts(p)):
         return True
-    return False
+    return _is_secret(p)
 
 
 def _unique_dest(dest_dir, name):
@@ -86,6 +108,8 @@ def api_fs_list():
     path = _norm(request.args.get("path", ""))
     if not path or not os.path.isdir(path):
         return jsonify({"ok": False, "error": "路径不存在"}), 400
+    if _is_secret(path):
+        return jsonify({"ok": False, "error": "该目录不允许访问"}), 403
     parent = os.path.dirname(path)
     if parent == path:
         parent = ""
@@ -124,6 +148,8 @@ def api_fs_mkdir():
     name = _safe_name(data.get("name", ""))
     if not path or not os.path.isdir(path):
         return jsonify({"ok": False, "error": "目录不存在"}), 400
+    if _is_blocked(path):
+        return jsonify({"ok": False, "error": "该目录不允许新建"}), 403
     new_path = os.path.join(path, name)
     if os.path.exists(new_path):
         return jsonify({"ok": False, "error": "已存在同名项目"}), 400
@@ -177,6 +203,8 @@ def _copy_move(is_move):
         return jsonify({"ok": False, "error": "源路径不存在"}), 400
     if not dest_dir or not os.path.isdir(dest_dir):
         return jsonify({"ok": False, "error": "目标目录不存在"}), 400
+    if _is_blocked(dest_dir):
+        return jsonify({"ok": False, "error": "目标目录不允许写入"}), 403
     if _is_blocked(src):
         return jsonify({"ok": False, "error": "系统目录不允许操作"}), 400
     if os.path.dirname(src) == dest_dir and not is_move:
@@ -229,17 +257,16 @@ def api_fs_delete():
 def api_fs_download():
     # 允许 POST 表单携带 token：部分浏览器对脚本点击的 <a download> 不放行，
     # 用真实表单提交能稳定触发下载（且是流式，不吃内存）。
-    from auth import is_local, verify_token
-
-    if not is_local():
-        token = (request.args.get("token") or request.form.get("token")
-                 or request.headers.get("X-Auth-Token") or "")
-        if not (token and verify_token(token)):
-            return jsonify({"ok": False, "error": "需要密码激活后才能使用该功能"}), 401
+    # 统一走 check_access：本机直连放行 / 会话放行 / 旧令牌放行，其余 401。
+    err = check_access()
+    if err:
+        return err
     raw_path = request.form.get("path") or request.args.get("path", "")
     path = _norm(raw_path)
     if not path or not os.path.isfile(path):
         return jsonify({"ok": False, "error": "文件不存在"}), 400
+    if _is_secret(path):
+        return jsonify({"ok": False, "error": "该目录不允许下载"}), 403
     try:
         return send_file(path, as_attachment=True,
                          download_name=os.path.basename(path),
@@ -256,6 +283,8 @@ def api_fs_upload():
     dest_dir = _norm(request.form.get("path", ""))
     if not dest_dir or not os.path.isdir(dest_dir):
         return jsonify({"ok": False, "error": "目标目录不存在"}), 400
+    if _is_blocked(dest_dir):
+        return jsonify({"ok": False, "error": "目标目录不允许上传"}), 403
     files = request.files.getlist("files")
     if not files and "file" in request.files:
         files = [request.files["file"]]
