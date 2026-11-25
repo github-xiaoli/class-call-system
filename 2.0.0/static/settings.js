@@ -11,6 +11,8 @@
   if ($("sub-back")) $("sub-back").addEventListener("click", () => { location.href = "/"; });
   const edge = $("edge-hot");
   if (edge) edge.addEventListener("mouseenter", () => document.body.classList.add("edge-open"));
+  const tab = $("edge-tab");
+  if (tab) tab.addEventListener("click", () => document.body.classList.add("edge-open"));
   const closeBtn = $("drawer-close");
   if (closeBtn) closeBtn.addEventListener("click", () => document.body.classList.remove("edge-open", "drawer-open"));
   const mask = $("drawer-mask");
@@ -188,10 +190,11 @@
   setInterval(refreshTunnel, 8000);
 })();
 
-  /* 鼠标移到中间区域 → 自动收起侧栏 */
+  /* 左边缘 16px 内自动滑出；移到中间（>300px）自动收起 */
   document.addEventListener("mousemove", (e) => {
-    if (!document.body.classList.contains("edge-open")) return;
-    if (e.clientX > 300) document.body.classList.remove("edge-open");
+    const open = document.body.classList.contains("edge-open");
+    if (!open && e.clientX <= 16) document.body.classList.add("edge-open");
+    else if (open && e.clientX > 300) document.body.classList.remove("edge-open");
   });
 
   /* 高亮当前所在的应用 */

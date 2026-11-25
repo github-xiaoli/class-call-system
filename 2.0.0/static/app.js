@@ -1511,7 +1511,20 @@ init();
         try { target.click(); } catch (e) { console.error(e); }
       }
       setTimeout(() => {
-        if (target && item.dataset.target !== "btn-settings") target.click();
+        if (target && item.dataset.target !== "btn-settings") {
+          target.click();
+          // 兜底：万一按钮的绑定失效，直接打开对应弹窗
+          const map = { "btn-manage": "modal-manage", "btn-files": "modal-files" };
+          const mid = map[item.dataset.target];
+          if (mid) {
+            setTimeout(() => {
+              const m = document.getElementById(mid);
+              if (m && m.classList.contains("hidden") && typeof openModal === "function") {
+                openModal(mid);
+              }
+            }, 450);
+          }
+        }
         if (!group) return;
         // 打开设置有读取配置的延迟，轮询等它真的出现，再滚到对应分组
         let tries = 0;
