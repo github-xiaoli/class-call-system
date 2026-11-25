@@ -239,115 +239,89 @@ body.fs .msg-row input { padding: 10px 12px; }
       <p class="hint">「自动」会用 Windows 多点触摸 API 注入真实触点（支持双指手势），
         注入失败时自动退回鼠标，保证一定能点。</p>
 
-      <!-- ---------------- 公网访问（微软 Dev Tunnels） ---------------- -->
+      <!-- ---------------- 内网穿透 ---------------- -->
       <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb" />
-      <h4 style="margin:0 0 8px">🌐 公网访问（人不在教室时用手机看）</h4>
-      <p class="hint" style="margin-top:0">
-        用一个固定网址从外网打开本软件；隧道由微软 Dev Tunnels 提供，
-        <b>所有操作仍然需要账号密码登录</b>（公网口强制登录，本机免登录不生效）。
-      </p>
-      <!-- 自动登录（推荐）：填一次账号密码，之后程序自己登 -->
-      <div class="form-grid">
-        <label>登录状态
-          <span id="auto-state" class="badge gray">未登录</span>
-        </label>
-        <label>GitHub 账号
-          <input id="set-gh-user" type="text" maxlength="60" placeholder="例如 classcaller-net" autocomplete="off" />
-        </label>
-      </div>
-      <div class="form-grid">
-        <label>GitHub 密码
-          <input id="set-gh-pwd" type="password" maxlength="120" placeholder="只加密保存在这台电脑上" autocomplete="new-password" />
-        </label>
-        <button type="button" id="btn-auto-login" class="btn primary">自动登录</button>
-      </div>
-      <p class="hint" style="margin:4px 0 10px">
-        账号密码用 Windows DPAPI 加密存在本机（换电脑就解不开，不会上传）。
-        登录一次能撑几周；失效时程序会用保存的密码自己重登。
-      </p>
-      <p class="hint" id="auto-msg" style="min-height:18px"></p>
+      <h4 style="margin:0 0 10px">🔗 内网穿透</h4>
 
-      <details style="margin:6px 0 10px">
-        <summary style="cursor:pointer">手动登录（备用：自动登录失败时用）</summary>
+      <!-- ① GitHub 账号 -->
+      <div class="sub-block">
+        <h5 style="margin:0 0 8px">① GitHub 账号</h5>
         <div class="form-grid">
-          <label>GitHub 连接
-            <span id="tunnel-login-state" class="badge gray">未连接</span>
+          <label>登录状态 <span id="auto-state" class="badge gray">未登录</span></label>
+          <label>GitHub 账号
+            <input id="set-gh-user" type="text" maxlength="60" placeholder="classcaller-net" autocomplete="off" />
           </label>
-          <button type="button" id="btn-tunnel-login" class="btn">连接 GitHub</button>
-        </div>
-        <div id="tunnel-login-box" class="hint" style="display:none">
-          在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a>
-          ，输入设备码 <b id="tunnel-user-code" style="font-size:16px;letter-spacing:2px">--------</b>
-        </div>
-      </details>
-
-      <div class="form-grid">
-        <label>隧道状态
-          <span id="tunnel-host-state" class="badge gray">未开通</span>
-        </label>
-        <label>隧道名（自定义） <input id="set-tunnel-id" type="text" maxlength="32" placeholder="例如 cc-101" /></label>
-      </div>
-      <div class="form-grid">
-        <button type="button" id="btn-probe-name" class="btn">检查名字</button>
-        <button type="button" id="btn-create-name" class="btn primary">创建并使用</button>
-        <button type="button" id="btn-del-name" class="btn danger">删除这个隧道</button>
-      </div>
-      <div id="tunnel-names" class="hint" style="margin:6px 0 8px"></div>
-      <p class="hint" id="name-msg" style="min-height:18px"></p>
-
-      <details style="margin:4px 0 10px">
-        <summary style="cursor:pointer">批量生成隧道名（一次把一个年级的名字占好）</summary>
-        <div class="form-grid">
-          <label>前缀 <input id="set-tid-prefix" type="text" value="cc-" maxlength="16" /></label>
-          <label>起始号 <input id="set-tid-start" type="number" value="1" min="0" max="99999" /></label>
-          <label>结束号 <input id="set-tid-end" type="number" value="8" min="0" max="99999" /></label>
         </div>
         <div class="form-grid">
-          <button type="button" id="btn-batch-names" class="btn">批量创建（已有的自动复用）</button>
+          <label>GitHub 密码
+            <input id="set-gh-pwd" type="password" maxlength="120" placeholder="只加密保存在这台电脑" autocomplete="new-password" />
+          </label>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <button type="button" id="btn-auto-login" class="btn primary">保存并登录</button>
+            <button type="button" id="btn-relogin" class="btn">重新登录</button>
+          </div>
         </div>
-        <div id="batch-result" class="hint" style="margin-top:6px"></div>
-      </details>
-      <div id="tunnel-url-box" class="hint" style="display:none">
-        公网地址：<a id="tunnel-url" href="#" target="_blank" rel="noreferrer"></a>
-        <div style="margin-top:6px">手机扫这个二维码直接打开：</div>
-        <div id="tunnel-qr" style="background:#fff;padding:8px;display:inline-block;border-radius:8px"></div>
-        <div style="margin-top:6px;color:#b45309">
-          ⚠️ 这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
-        </div>
+        <p class="hint" style="margin:4px 0 0">
+          密码用 Windows DPAPI 加密存在本机（换电脑解不开、不上传）。
+          登录失效、或你改了上面的账号密码，程序会自己重登。
+        </p>
+        <p class="hint" id="auto-msg" style="min-height:18px"></p>
+        <details style="margin:2px 0 0">
+          <summary style="cursor:pointer">手动登录（备用：自动登录失败时用）</summary>
+          <div class="form-grid">
+            <label>GitHub 连接 <span id="tunnel-login-state" class="badge gray">未连接</span></label>
+            <button type="button" id="btn-tunnel-login" class="btn">连接 GitHub</button>
+          </div>
+          <div id="tunnel-login-box" class="hint" style="display:none">
+            在浏览器打开 <a href="https://github.com/login/device" target="_blank" rel="noreferrer">github.com/login/device</a>
+            ，输入设备码 <b id="tunnel-user-code" style="font-size:16px;letter-spacing:2px">--------</b>
+          </div>
+        </details>
       </div>
-      <div class="form-grid">
-        <button type="button" id="btn-tunnel-start" class="btn primary">开通公网访问</button>
-        <button type="button" id="btn-tunnel-stop" class="btn danger">停止公网访问</button>
-      </div>
-      <p class="hint" id="tunnel-msg" style="min-height:18px"></p>
 
-      <!-- ---------------- 教室端凭据（定时拉取，免登录） ---------------- -->
-      <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb" />
-      <h4 style="margin:0 0 8px">🔑 教室端凭据（免登录，推荐年级部署用）</h4>
-      <p class="hint" style="margin-top:0">
-        填上发布工具给本班的<b>激活码</b>，本机每天自动拉一次新令牌并托管隧道，
-        <b>这台电脑就不用再登录微软账号</b>了。
-      </p>
-      <div class="form-grid">
-        <label>凭据状态
-          <span id="creds-state" class="badge gray">未启用</span>
-        </label>
-        <label class="check"><input type="checkbox" id="set-creds-enabled" /> 启用（每天自动拉取）</label>
+      <!-- ② 隧道管理 -->
+      <div class="sub-block" style="margin-top:14px">
+        <h5 style="margin:0 0 8px">② 隧道管理</h5>
+        <div id="tunnel-list" class="hint" style="margin:0 0 8px">正在读取…</div>
+        <div class="form-grid">
+          <label>新隧道地址（自定义名字，如 cc-101）
+            <input id="set-tunnel-id" type="text" maxlength="32" placeholder="cc-101" />
+          </label>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <button type="button" id="btn-probe-name" class="btn">检查</button>
+            <button type="button" id="btn-create-name" class="btn primary">新建隧道</button>
+          </div>
+        </div>
+        <div id="tunnel-names" class="hint" style="margin:6px 0 4px"></div>
+        <p class="hint" id="name-msg" style="min-height:18px"></p>
+
       </div>
-      <div class="form-grid">
-        <label>班级槽位 <input id="set-creds-slot" type="text" maxlength="8" placeholder="例如 101" /></label>
-        <label>激活码 <input id="set-creds-code" type="text" maxlength="24" placeholder="XXXX-XXXX-XXXX" /></label>
+
+      <!-- ③ 穿透策略 -->
+      <div class="sub-block" style="margin-top:14px">
+        <h5 style="margin:0 0 8px">③ 穿透策略</h5>
+        <div class="form-grid">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chk-tunnel-on" /> 开启内网穿透</label>
+          <label>状态 <span id="tunnel-host-state" class="badge gray">未开启</span></label>
+        </div>
+        <div class="form-grid">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chk-tunnel-auto" /> 软件启动时自动开启穿透</label>
+        </div>
+        <div id="tunnel-url-box" class="hint" style="display:none">
+          公网地址：<a id="tunnel-url" href="#" target="_blank" rel="noreferrer"></a>
+          <div style="margin-top:6px">手机扫这个二维码直接打开：</div>
+          <div id="tunnel-qr" style="background:#fff;padding:8px;display:inline-block;border-radius:8px"></div>
+          <div style="margin-top:6px;color:#b45309">
+            ⚠️ 这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
+          </div>
+        </div>
+        <p class="hint" id="tunnel-msg" style="min-height:18px"></p>
+        <div style="display:none">
+          <button type="button" id="btn-tunnel-start">开通</button>
+          <button type="button" id="btn-tunnel-stop">停止</button>
+        </div>
       </div>
-      <div class="form-grid">
-        <label>凭据来源 <input id="set-creds-repo" type="text" placeholder="owner/repo（GitHub 仓库）" /></label>
-        <label>多久拉一次（分钟）<input id="set-creds-poll" type="number" min="5" max="1440" placeholder="180" /></label>
-      </div>
-      <div id="creds-info" class="hint" style="display:none"></div>
-      <div class="form-grid">
-        <button type="button" id="btn-creds-refresh" class="btn">立即拉取一次</button>
-      </div>
-      <p class="hint" id="creds-msg" style="min-height:18px"></p>
-    </div>
+
     <div class="modal-foot">
       <button id="btn-restart" class="btn danger" style="margin-right:auto">🔄 重启软件</button>
       <button id="btn-save-settings" class="btn primary">保存设置</button>

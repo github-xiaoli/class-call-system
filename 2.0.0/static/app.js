@@ -1145,3 +1145,128 @@ init();
     }
   });
 })();
+
+/* ==========================================================================
+ * 内网穿透：② 隧道管理列表框 + ③ 穿透策略开关 + ① 重新登录
+ * ========================================================================== */
+(function () {
+  const $t = (id) => document.getElementById(id);
+  const jget = (u) => fetch(u, { credentials: "same-origin" }).then((r) => r.json());
+  const jpost = (u, b) => fetch(u, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    credentials: "same-origin", body: JSON.stringify(b || {}),
+  }).then((r) => r.json());
+
+  function note(text, kind) {
+    const el = $t("name-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = kind === "err" ? "#b3261e" : (kind === "ok" ? "#12805c" : "");
+  }
+
+  /* ---------- ② 隧道列表 ---------- */
+  async function renderTunnelList() {
+    const box = $t("tunnel-list");
+    if (!box) return;
+    let d;
+    try { d = await jget("/api/tunnel/list_names"); } catch (e) {
+      box.textContent = "读取失败：" + (e.message || "网络异常");
+      return;
+    }
+    box.innerHTML = "";
+    if (!d.ok) { box.textContent = d.error || "读取失败"; return; }
+    const cur = (d.current || "").trim();
+    const list = d.tunnels || [];
+    if (!list.length) {
+      box.textContent = "还没有隧道。在下面填一个名字（如 cc-101）点「新建隧道」。";
+      return;
+    }
+    const table = document.createElement("table");
+    table.style.cssText = "width:100%;border-collapse:collapse;font-size:13.5px";
+    table.innerHTML = "<thead><tr><th style='text-align:left'>隧道地址（名字）</th>" +
+      "<th style='width:70px'>状态</th><th style='width:130px'>操作</th></tr></thead><tbody></tbody>";
+    const tb = table.querySelector("tbody");
+    for (const name of list) {
+      const tr = document.createElement("tr");
+      const isCur = name === cur;
+      tr.innerHTML = "<td style='font-family:monospace;padding:5px 4px'>" + name +
+        "</td><td>" + (isCur ? "<span class='badge ok'>当前</span>" : "") + "</td>" +
+        "<td style='padding:5px 4px'></td>";
+      const ops = tr.lastElementChild;
+      const use = document.createElement("button");
+      use.type = "button";
+      use.className = "mini";
+      use.textContent = "使用";
+      use.addEventListener("click", async () => {
+        $t("set-tunnel-id").value = name;
+        const r = await jpost("/api/tunnel/create_name", { tunnel_id: name });
+        note(r.ok ? ("已切到 " + name) : (r.error || "切换失败"), r.ok ? "ok" : "err");
+        renderTunnelList();
+      });
+      ops.appendChild(use);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "mini danger";
+      del.style.marginLeft = "6px";
+      del.textContent = "删除";
+      del.addEventListener("click", async () => {
+        if (!confirm("删除隧道 " + name + "？地址会失效。")) return;
+        const r = await jpost("/api/tunnel/delete_name", { tunnel_id: name });
+        note(r.ok ? ("已删除 " + name) : (r.error || "删除失败"), r.ok ? "ok" : "err");
+        renderTunnelList();
+      });
+      ops.appendChild(del);
+      tb.appendChild(tr);
+    }
+    box.appendChild(table);
+  }
+
+  /* ---------- ③ 穿透策略 ---------- */
+  async function syncStrategy() {
+    const on = $t("chk-tunnel-on");
+    const auto = $t("chk-tunnel-auto");
+    if (!on || !auto) return;
+    const d = await jget("/api/tunnel/status");
+    const cfg = (STATE && STATE.config) || {};
+    const st = d.tunnel || {};
+    on.checked = !!(d.enabled || st.host_state === "running");
+    auto.checked = cfg.tunnel_autostart !== false;
+  }
+
+  if ($t("chk-tunnel-on")) $t("chk-tunnel-on").addEventListener("change", async (e) => {
+    const on = e.target.checked;
+    const msg = $t("tunnel-msg");
+    if (msg) msg.textContent = on ? "正在开启公网访问…" : "正在关闭…";
+    const r = await jpost("/api/tunnel/enable", { on: on });
+    if (msg) msg.textContent = r.ok ? (on ? "已开启" : "已关闭") : (r.error || "操作失败");
+    if (!r.ok) e.target.checked = !on;
+  });
+
+  if ($t("chk-tunnel-auto")) $t("chk-tunnel-auto").addEventListener("change", async (e) => {
+    const r = await jpost("/api/tunnel/autostart", { on: e.target.checked });
+    if (!r.ok) { e.target.checked = !e.target.checked; }
+  });
+
+  /* ---------- ① 重新登录 ---------- */
+  if ($t("btn-relogin")) $t("btn-relogin").addEventListener("click", async () => {
+    const msg = $t("auto-msg");
+    if (msg) msg.textContent = "正在强制重新登录（约 30~60 秒）…";
+    const r = await jpost("/api/tunnel/relogin", {});
+    if (!r.ok) { if (msg) msg.textContent = r.error || "失败"; return; }
+    const t = setInterval(async () => {
+      const s = await jget("/api/tunnel/auto_status");
+      const a = s.auto || {};
+      if (a.state === "running") return;
+      clearInterval(t);
+      if (msg) msg.textContent = a.state === "ok" ? ("已重新登录：" + (a.user || a.logged_in || ""))
+                                                  : (a.message || "重新登录失败");
+      renderTunnelList();
+    }, 2500);
+  });
+
+  const openBtn = $t("btn-settings");
+  if (openBtn) openBtn.addEventListener("click", () => {
+    setTimeout(() => { renderTunnelList(); syncStrategy(); }, 600);
+  });
+  setTimeout(() => { renderTunnelList(); syncStrategy(); }, 1200);
+})();

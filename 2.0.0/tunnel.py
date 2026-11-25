@@ -454,6 +454,26 @@ def public_url_of(tunnel_id, port):
     return ""
 
 
+def named_url(tunnel_id, port):
+    """用隧道 ID 拼出的固定地址：https://<id>-<port>.<cluster>.devtunnels.ms
+
+    实测（2026-11，jpe1）：这个地址和 CLI 打印的随机别名指向**同一条隧道**，
+    但地址里带自己起的名字、重启也不变，二维码可以长期发出去。
+    """
+    tid = _clean_id(tunnel_id)
+    if not tid or not port:
+        return ""
+    try:
+        info = show_tunnel(tid).get("tunnel") or {}
+    except Exception:
+        info = {}
+    full = str(info.get("tunnelId") or "")
+    cluster = full.split(".", 1)[1] if "." in full else ""
+    if not cluster:
+        return ""
+    return "https://%s-%d.%s.devtunnels.ms" % (tid, int(port), cluster)
+
+
 def _spawn_host():
     """真正拉起 `devtunnel host`。
 
@@ -467,6 +487,7 @@ def _spawn_host():
     if not want.get("on"):
         return
     tid, port = want["tunnel_id"], int(want["port"])
+    named = named_url(tid, port)      # 优先用"带名字"的地址
     token = _token_usable(tid)
     args = [EXE_PATH, "host", tid]
     if token:
@@ -503,7 +524,7 @@ def _spawn_host():
                         _STATE.update({"host_state": "stopped", "url": "",
                                        "last_error": "隧道进程已退出（令牌可能已过期）"})
                 return
-            url = _url_from_log(port)
+            url = named or _url_from_log(port)
             if not url and login_user():
                 url = public_url_of(tid, port)   # 本机登录着就还有这条后路
             if url:

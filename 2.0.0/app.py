@@ -105,6 +105,7 @@ DEFAULT_CONFIG = {
     "public_port": 9444,            # 公网专用端口：只绑 127.0.0.1，仅隧道可达
     "tunnel_id": "",                # 固定隧道 ID（空=首次开通时自动生成）
     "tunnel_expiration_hours": 720,  # 隧道有效期（小时，最长 720=30 天），到期前自动续期
+    "tunnel_autostart": True,      # 软件启动时自动开启穿透
     "tunnel_auto_login": True,     # 隧道登录失效时用保存的账号密码自动重登
     "creds_enabled": False,        # 教室端：从仓库定时拉取令牌（免登录）
     "creds_slot": "",              # 班级槽位号（发布工具里配的）
@@ -3650,6 +3651,61 @@ def api_tunnel_list_names():
 
 
 
+@app.route("/api/tunnel/enable", methods=["POST"])
+def api_tunnel_enable():
+    """③ 穿透策略：一个开关开关内网穿透。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    on = bool(data.get("on"))
+    cfg = get_config()
+    cfg["public_enabled"] = on
+    save_config(cfg)
+    port = int(cfg.get("public_port", 9444) or 9444)
+    if on:
+        if not tunnel.login_user():
+            return jsonify({"ok": False, "error": "还没登录 GitHub 账号（见上面 ①）"})
+        st = tunnel.start(port, cfg.get("tunnel_id", ""),
+                          int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                          log=lambda m: print(m))
+    else:
+        st = tunnel.stop(log=lambda m: print(m))
+    return jsonify({"ok": True, "tunnel": st, "enabled": on})
+
+
+@app.route("/api/tunnel/autostart", methods=["POST"])
+def api_tunnel_autostart():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    cfg = get_config()
+    cfg["tunnel_autostart"] = bool(data.get("on"))
+    save_config(cfg)
+    return jsonify({"ok": True, "autostart": cfg["tunnel_autostart"]})
+
+
+@app.route("/api/tunnel/relogin", methods=["POST"])
+def api_tunnel_relogin():
+    """① 强制重新登录：先退掉旧登录态，再用保存的账号密码登一次。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    if not autologin.has_credentials():
+        return jsonify({"ok": False, "error": "还没保存 GitHub 账号密码"})
+    try:
+        tunnel._run(["user", "logout"], timeout=60)
+    except Exception:
+        pass
+    tunnel.stop()
+    with _AUTO_LOCK:
+        _AUTO.update({"state": "idle", "message": "", "tries": 0})
+    _auto_start(log=lambda m: print(m))
+    return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+
 def _main():
     global _running_port, _running_secure_port, _desktop
 
@@ -3809,7 +3865,7 @@ def _main():
             threading.Thread(target=_auto_watch, daemon=True,
                              name="auto-login-watch").start()
 
-        if cfg.get("public_enabled") or cfg.get("creds_enabled"):
+        if (cfg.get("public_enabled") and cfg.get("tunnel_autostart", True)) or cfg.get("creds_enabled"):
             def _boot_tunnel():
                 time.sleep(2.0)
                 st = tunnel.start(public_port,
