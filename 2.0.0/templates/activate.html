@@ -38,6 +38,7 @@
 </style>
 </head>
 <body>
+{% include "_icons.html" %}
 <div class="card">
   <div id="box-loading">
     <div class="spin"></div>
@@ -45,13 +46,13 @@
     <p>请稍候，马上就好</p>
   </div>
   <div id="box-ok" class="hidden">
-    <div class="ok">✅</div>
+    <div class="ok"><svg class="ic-inline ok"><use href="#ic-check"/></svg></div>
     <h1>激活成功</h1>
     <p>这台手机已经和电脑绑定，正在进入…</p>
     <a class="btn" href="/">立即进入</a>
   </div>
   <div id="box-err" class="hidden">
-    <div class="err">⚠️</div>
+    <div class="err"><svg class="ic-inline warn"><use href="#ic-warn"/></svg></div>
     <h1>激活失败</h1>
     <p id="err-text">—</p>
     <a class="btn" href="/">仍然打开首页</a>

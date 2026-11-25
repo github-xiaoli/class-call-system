@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/style.css?v=20261119f">
 </head>
 <body>
+{% include "_icons.html" %}
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">软件更新</div>
   <div class="topbar-right">
@@ -32,9 +33,9 @@
         <p class="hint"><b id="cur-version">…</b> · 通道：<span id="cur-channel">…</span></p>
       </div>
       <div>
-        <button id="btn-check" class="btn primary">🔍 检查更新</button>
-        <button id="btn-update" class="btn primary hidden">⬇ 下载更新</button>
-        <button id="btn-install" class="btn primary hidden">✅ 安装并重启</button>
+        <button id="btn-check" class="btn primary"><svg class="ic-inline"><use href="#ic-search"/></svg> 检查更新</button>
+        <button id="btn-update" class="btn primary hidden"><svg class="ic-inline"><use href="#ic-download"/></svg> 下载更新</button>
+        <button id="btn-install" class="btn primary hidden"><svg class="ic-inline ok"><use href="#ic-check"/></svg> 安装并重启</button>
       </div>
     </div>
     <p class="hint" id="latest-info">尚未检查更新。</p>

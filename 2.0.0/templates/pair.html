@@ -42,6 +42,7 @@
 </style>
 </head>
 <body>
+{% include "_icons.html" %}
 <div class="card">
   <div id="box-loading">
     <div class="spin"></div>
@@ -55,19 +56,19 @@
     <input id="code" inputmode="latin" autocomplete="off" autocapitalize="characters"
            spellcheck="false" maxlength="12" placeholder="ABC12XYZ">
     <button id="btn-go" class="btn">配对并进入</button>
-    <div class="tip">配对码在电脑上「📱 扫码配对」或设置向导第 6 步里显示；<br>
+    <div class="tip">配对码在电脑上「<svg class="ic-inline"><use href="#ic-phone"/></svg> 扫码配对」或设置向导第 6 步里显示；<br>
       一张配对码只能给一台手机用，30 分钟内有效。</div>
   </div>
 
   <div id="box-ok" class="hidden">
-    <div class="ok">✅</div>
+    <div class="ok"><svg class="ic-inline ok"><use href="#ic-check"/></svg></div>
     <h1>配对成功</h1>
     <p>这台设备已经和电脑绑定，正在进入…</p>
     <a class="btn" href="/">立即进入</a>
   </div>
 
   <div id="box-err" class="hidden">
-    <div class="err">⚠️</div>
+    <div class="err"><svg class="ic-inline warn"><use href="#ic-warn"/></svg></div>
     <h1>配对失败</h1>
     <p id="err-text">—</p>
     <button id="btn-retry" class="btn">重新输入</button>

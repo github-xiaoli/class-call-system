@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/wizard.css?v=20261119f">
 </head>
 <body data-scene="forest">
+{% include "_icons.html" %}
 <div class="scene" aria-hidden="true">
   <div class="sun"></div>
   <div class="layer l1"></div>
@@ -32,18 +33,18 @@
       <h1>欢迎使用班级叫号器</h1>
       <p class="lead">这台电脑将变成教室的"叫号台"：随机点名、语音播报、手机遥控，都在这里设置。</p>
       <div class="cards">
-        <div class="card"><b>🖥</b><span>装好即用</span><small>本机浏览器打开就能操作</small></div>
-        <div class="card"><b>📱</b><span>手机可控</span><small>同一 Wi-Fi 用账号密码登录</small></div>
-        <div class="card"><b>🔄</b><span>自动更新</span><small>只下增量代码包</small></div>
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-monitor"/></svg></b><span>装好即用</span><small>本机浏览器打开就能操作</small></div>
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-phone"/></svg></b><span>手机可控</span><small>同一 Wi-Fi 用账号密码登录</small></div>
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-refresh"/></svg></b><span>自动更新</span><small>只下增量代码包</small></div>
       </div>
-      <p class="hint">下面大约需要 1 分钟，设置完成后可以随时在「⚙️ 设置」里修改。</p>
+      <p class="hint">下面大约需要 1 分钟，设置完成后可以随时在「<svg class="ic-inline"><use href="#ic-settings"/></svg> 设置」里修改。</p>
     </section>
 
     <!-- 1 许可证 -->
     <section class="step" data-step="1">
       <h1>先读一下许可证</h1>
       <p class="lead">本软件以 <b>GNU 通用公共许可证第 3 版（或更高版本）</b> 开源发布。请把下面的内容读完（划到底部并停留 10 秒）再同意。</p>
-      <div class="lic-legal">⚠️ 这是一份法律性资料（GNU General Public License v3），具有法律效力，请认真阅读后再点"同意"</div>
+      <div class="lic-legal"><svg class="ic-inline warn"><use href="#ic-warn"/></svg> 这是一份法律性资料（GNU General Public License v3），具有法律效力，请认真阅读后再点"同意"</div>
       <div class="lic-tabs">
         <button class="tab active" data-lang="zh">中文译文</button>
         <button class="tab" data-lang="en">English (原文)</button>
@@ -68,7 +69,7 @@
       <p class="hint">默认用电脑名。点<b>「下一步」时会立刻保存并切换 mDNS</b>，手机用
         <b>http://名字.local</b> 马上就能打开；
         但 <b>https://名字.local</b>（手机里的监控、文件、更新）要<b>重启一次程序</b>才会换用新名字的证书，
-        完成页会给你一个「🔄 现在重启」按钮。</p>
+        完成页会给你一个「<svg class="ic-inline"><use href="#ic-refresh"/></svg> 现在重启」按钮。</p>
     </section>
 
     <!-- 3 名条 -->
@@ -77,12 +78,12 @@
       <p class="lead">每行一个学生：<b>学号,姓名</b>（也可以用空格或制表符分隔）。</p>
       <div class="roster-tools">
         <input type="file" id="roster-file" accept=".csv,.txt" hidden>
-        <button class="btn ghost" id="btn-pick-file">📄 从 CSV 文件导入</button>
-        <button class="btn ghost" id="btn-sample">✨ 填入示例名条</button>
+        <button class="btn ghost" id="btn-pick-file"><svg class="ic-inline"><use href="#ic-roster"/></svg> 从 CSV 文件导入</button>
+        <button class="btn ghost" id="btn-sample"><svg class="ic-inline"><use href="#ic-spark"/></svg> 填入示例名条</button>
         <span class="hint" id="roster-count">当前 0 条</span>
       </div>
       <textarea id="roster-text" rows="8" placeholder="1,张子墨&#10;2,王欣然&#10;3,李嘉怡"></textarea>
-      <p class="hint" id="roster-hint">不想现在填也可以，之后在「👥 名条管理」里随时添加。</p>
+      <p class="hint" id="roster-hint">不想现在填也可以，之后在「<svg class="ic-inline"><use href="#ic-user"/></svg> 名条管理」里随时添加。</p>
     </section>
 
     <!-- 4 启动与更新 -->
@@ -126,7 +127,7 @@
             之后电脑和手机都用这个账号登录，公网访问也要密码。
           </div>
           <div class="hint" style="margin:0 0 6px">
-            想在家里 / 路上也能看？装完后到 <b>设置 → 🌐 公网访问</b>：
+            想在家里 / 路上也能看？装完后到 <b>设置 → <svg class="ic-inline"><use href="#ic-globe"/></svg> 公网访问</b>：
             填一次 GitHub 账号密码，点「自动登录」，再给这台电脑起个隧道名即可
             —— 以后<b>不用再登录</b>，登录失效会自动重登。
           </div>
@@ -173,15 +174,15 @@
 
     <!-- 7 完成 -->
     <section class="step" data-step="7">
-      <h1>设置完成 🎉</h1>
+      <h1>设置完成 <svg class="ic-inline"><use href="#ic-check"/></svg></h1>
       <p class="lead">一切就绪，现在就可以开始叫号了。</p>
       <ul class="summary" id="summary"></ul>
       <div class="restart-tip hidden" id="restart-tip">
         <b>设备名改过了。</b>手机用 <b>http://名字.local</b> 已经能用；
         <b>https://名字.local</b>（监控 / 文件 / 更新）需要重启一次程序才会用上新名字的证书。
-        <button class="btn ghost" id="btn-restart">🔄 现在重启</button>
+        <button class="btn ghost" id="btn-restart"><svg class="ic-inline"><use href="#ic-refresh"/></svg> 现在重启</button>
       </div>
-      <button class="btn primary big" id="btn-start">🚀 立即使用</button>
+      <button class="btn primary big" id="btn-start"><svg class="ic-inline"><use href="#ic-rocket"/></svg> 立即使用</button>
     </section>
   </div>
 

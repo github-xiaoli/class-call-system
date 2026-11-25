@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/style.css?v=20261119f">
 </head>
 <body>
+{% include "_icons.html" %}
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">远程监控 · 对讲</div>
   <div class="topbar-right">
@@ -43,7 +44,7 @@
   <section class="panel">
     <h2>远程对讲</h2>
     <p class="hint">点击按钮打开手机麦克风开始对讲，电脑端实时播放；对讲音量使用叫号时的音量设置。</p>
-    <button id="btn-talk" class="btn primary big">🎤 开始对讲</button>
+    <button id="btn-talk" class="btn primary big"><svg class="ic-inline"><use href="#ic-call"/></svg> 开始对讲</button>
     <p class="hint" id="talk-status"></p>
   </section>
 </main>

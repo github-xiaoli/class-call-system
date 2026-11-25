@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/style.css?v=20261121a">
 </head>
 <body>
+{% include "_icons.html" %}
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">我的账号</div>
   <div class="topbar-right">
@@ -98,7 +99,7 @@
         ? "当前为本机直连（教室电脑），已自动以管理员身份登录。"
         : "当前为远程登录，会话有效期 30 天，活跃时自动续期。";
       if (u.must_change_pwd) {
-        $("acct-session-hint").textContent += " ⚠️ 当前为初始密码，请立即修改。";
+        $("acct-session-hint").textContent += " <svg class="ic-inline warn"><use href="#ic-warn"/></svg> 当前为初始密码，请立即修改。";
       }
     })
     .catch(() => { location.href = "/login"; });

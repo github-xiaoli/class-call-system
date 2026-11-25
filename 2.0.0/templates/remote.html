@@ -10,11 +10,12 @@
 <link rel="stylesheet" href="/static/style.css?v=20261119f">
 </head>
 <body>
+{% include "_icons.html" %}
 <header class="topbar">
   <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">远程控制</div>
   <div class="topbar-right">
-    <button id="btn-fullscreen" class="btn ghost">⛶ 全屏</button>
-    <button id="btn-mode" class="btn ghost">📱 手机模式</button>
+    <button id="btn-fullscreen" class="btn ghost"><svg class="ic-inline"><use href="#ic-expand"/></svg> 全屏</button>
+    <button id="btn-mode" class="btn ghost"><svg class="ic-inline"><use href="#ic-phone"/></svg> 手机模式</button>
     <span id="remote-state" class="muted">连接中…</span>
     <a href="/" id="btn-back" class="btn ghost">← 返回主页</a>
   </div>

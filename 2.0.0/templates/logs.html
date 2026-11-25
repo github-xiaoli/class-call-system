@@ -51,19 +51,20 @@
 </style>
 </head>
 <body>
+{% include "_icons.html" %}
 <header>
-  <h1>📜 运行日志</h1>
+  <h1><svg class="ic-inline"><use href="#ic-roster"/></svg> 运行日志</h1>
   <span class="tag">v{{ version }}{% if edition != 'stable' %} · {{ edition }}{% endif %}</span>
   <span class="grow"></span>
   <button id="btn-pause">⏸ 暂停</button>
-  <button id="btn-clear">🧹 清空显示</button>
-  <button id="btn-export" class="primary">⬇️ 导出日志</button>
-  <button id="btn-home">🏠 返回主页</button>
+  <button id="btn-clear"><svg class="ic-inline"><use href="#ic-trash"/></svg> 清空显示</button>
+  <button id="btn-export" class="primary"><svg class="ic-inline"><use href="#ic-download"/></svg> 导出日志</button>
+  <button id="btn-home"><svg class="ic-inline"><use href="#ic-home"/></svg> 返回主页</button>
 </header>
 
 <div id="toolbar">
   <span id="status"><span class="dot" id="dot"></span>正在连接…</span>
-  <input id="search" placeholder="🔍 过滤关键字（如 mDNS）" />
+  <input id="search" placeholder="<svg class="ic-inline"><use href="#ic-search"/></svg> 过滤关键字（如 mDNS）" />
   <select id="level">
     <option value="all">全部级别</option>
     <option value="info">只看普通</option>
