@@ -2614,8 +2614,6 @@ def api_settings():
             cfg["secure_port"] = max(1, min(65535, int(data["secure_port"])))
         except Exception:
             pass
-    if "secure_port_force" in data:
-        cfg["secure_port_force"] = bool(data["secure_port_force"])
     save_config(cfg)
     host_changed = normalize_hostname(cfg.get("mdns_hostname", "")) != old_host
     if changed:
