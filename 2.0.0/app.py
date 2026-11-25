@@ -1620,6 +1620,23 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/settings/<key>")
+def page_settings_section(key):
+    """设置的四个板块，各是一个子页面。"""
+    m = {"personal": "settings_personal.html", "network": "settings_network.html",
+         "control": "settings_control.html", "tunnel": "settings_tunnel.html"}
+    tpl = m.get(str(key or "").lower())
+    if not tpl:
+        return redirect(url_for("page_settings"))
+    return render_template(tpl)
+
+
+@app.route("/settings")
+def page_settings():
+    """设置子页面（四分组，左上角返回，左边缘悬停出应用列表）。"""
+    return render_template("settings.html")
+
+
 @app.route("/monitor")
 def page_monitor():
     return render_template("monitor.html")

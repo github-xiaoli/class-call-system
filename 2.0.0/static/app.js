@@ -1547,3 +1547,25 @@ init();
   showAccountName();
   setInterval(showAccountName, 15000);
 })();
+
+
+/* 抽屉顶端的"外网地址" */
+(async function () {
+  async function fillPublic() {
+    const el = document.getElementById("drawer-public-url");
+    if (!el) return;
+    try {
+      const d = await fetch("/api/tunnel/status", { credentials: "same-origin" }).then((r) => r.json());
+      const t = (d && d.tunnel) || {};
+      if (t.url) {
+        el.innerHTML = '<a href="' + t.url + '" target="_blank" rel="noreferrer">' + t.url + "</a>";
+      } else {
+        el.textContent = d && d.enabled ? "启动中…" : "未开启";
+      }
+    } catch (e) { el.textContent = "未开启"; }
+  }
+  const btn = document.getElementById("btn-apps");
+  if (btn) btn.addEventListener("click", fillPublic);
+  fillPublic();
+  setInterval(fillPublic, 20000);
+})();

@@ -37,6 +37,20 @@ TOOL_DIR = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"),
                         "ClassCaller", "tools")
 EXE_PATH = os.path.join(TOOL_DIR, "devtunnel.exe")
 DOWNLOAD_URL = "https://aka.ms/TunnelsCliDownload/win-x64"
+
+# ---- 优先使用随软件一起安装的组件：<安装目录>/MS-tunnel/devtunnel.exe ----
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_BUNDLED_EXE = ""
+for _cand in ("MS-tunnel", "ms-tunnel", "MS-Tunnel"):
+    _p = os.path.join(_APP_DIR, _cand, "devtunnel.exe")
+    if os.path.isfile(_p):
+        _BUNDLED_EXE = _p
+        break
+if _BUNDLED_EXE:
+    EXE_PATH = _BUNDLED_EXE
+    # .NET 单文件需要 UTF-8 的展开目录，安装路径可能含中文，这里固定到 ProgramData
+    _BUNDLE_DIR = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"),
+                               "ClassCaller", "dotnet-cache")
 _BUNDLE_DIR = os.path.join(TOOL_DIR, "bundle")
 
 _URL_RE = re.compile(r"https://[A-Za-z0-9\-\.]+\.devtunnels\.ms[^\s]*")
