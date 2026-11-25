@@ -187,3 +187,19 @@
   refreshNames();
   setInterval(refreshTunnel, 8000);
 })();
+
+  /* 鼠标移到中间区域 → 自动收起侧栏 */
+  document.addEventListener("mousemove", (e) => {
+    if (!document.body.classList.contains("edge-open")) return;
+    if (e.clientX > 300) document.body.classList.remove("edge-open");
+  });
+
+  /* 高亮当前所在的应用 */
+  (function markActive() {
+    const here = location.pathname.replace(/\/$/, "") || "/";
+    document.querySelectorAll(".app-item").forEach((a) => {
+      const href = (a.getAttribute("href") || "").replace(/\/$/, "") || "/";
+      if (href === here) a.classList.add("active");
+      if (a.classList.contains("home")) a.classList.toggle("active", here === "/");
+    });
+  })();
