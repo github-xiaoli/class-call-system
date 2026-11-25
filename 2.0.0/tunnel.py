@@ -276,10 +276,16 @@ def _ensure_anonymous(tunnel_id, log=None):
 
 
 def _kill_stale_hosts(tunnel_id, log=None):
-    """清掉上次异常退出留下的 host 进程（否则会和新进程抢同一个隧道）。"""
-    tid = (tunnel_id or "").split(".")[0].lower()
-    if not tid:
-        return
+    """清掉所有"devtunnel host"进程（除我们自己刚拉起的那个）。
+
+    一台电脑只托管一条隧道：切隧道时如果旧的 host 还在，
+    旧地址会继续可以访问 —— 所以这里一律清掉。
+    """
+    keep = None
+    try:
+        keep = _HOST_PROC.pid if _HOST_PROC is not None else None
+    except Exception:
+        keep = None
     killed = 0
     try:
         out = subprocess.run(
@@ -291,12 +297,14 @@ def _kill_stale_hosts(tunnel_id, log=None):
         return
     for line in out.splitlines():
         low = line.lower()
-        if "host" not in low or tid not in low:
+        if "devtunnel.exe" not in low or re.search(r"\bhost\b", low) is None:
             continue
         m = re.search(r"(\d+)\s*$", line.strip())
         if not m:
             continue
         pid = m.group(1)
+        if keep and str(keep) == pid:
+            continue
         try:
             subprocess.run(["taskkill", "/F", "/PID", pid],
                            capture_output=True, timeout=15,
@@ -305,12 +313,9 @@ def _kill_stale_hosts(tunnel_id, log=None):
         except Exception:
             pass
     if killed and log:
-        log("[隧道] 已清理 %d 个上次残留的隧道进程" % killed)
+        log("[隧道] 已停掉 %d 个旧的隧道进程" % killed)
 
-
-# ---------------------------------------------------------------------------
-# 教室端令牌模式：不登录账号，用"定时拉取"来的 host 令牌托管隧道
-# ---------------------------------------------------------------------------
+# --- 教室端令牌模式 / host 日志（切隧道时要维护的状态）---
 _TOKEN = {"token": "", "tunnel_id": "", "port": 0, "expires_ts": 0}
 _HOST_LOG = os.path.join(TOOL_DIR, "host.log")
 _HOST_LOG_FH = None
@@ -381,7 +386,7 @@ def _url_from_log(port):
     return best
 
 
-def start(port, tunnel_id="", expire_hours=720, log=None):
+def start(port, tunnel_id="", expire_hours=720, log=None, prepare=True):
     """启动（或重启）隧道托管。异步生效，用 status() 查结果。
 
     两种模式：
@@ -405,11 +410,21 @@ def start(port, tunnel_id="", expire_hours=720, log=None):
         return dict(_STATE)
 
     tid = _pick_tunnel_id(want_tid or (_TOKEN.get("tunnel_id", "") if token else ""))
+    # 切隧道前先把自己在托管的旧隧道停掉（否则旧地址还能访问）
+    with _LOCK:
+        old_tid = _WANT_RUN.get("tunnel_id", "")
+        running = bool(_WANT_RUN.get("on"))
+    if running and old_tid and old_tid != tid:
+        try:
+            stop(log=log)
+        except Exception:
+            pass
+    prepare = bool(prepare)
     _kill_stale_hosts(tid, log=log)
     # 有教室凭据就优先走令牌模式：教室电脑一般登录不上账号，
     # 而且建隧道 / 登记端口 / 开匿名访问这些准备动作发布机都做过了。
     use_token = bool(token)
-    if not use_token:
+    if not use_token and prepare:
         created, cerr = _create_if_needed(tid, expire_hours, log=log)
         if not created:
             with _LOCK:

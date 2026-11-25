@@ -53,10 +53,112 @@ body.fs .msg-row input { padding: 10px 12px; }
   body.fs .student-panel, body.fs .records-panel { display: none; }
 }
 </style>
+
+<style>
+  /* ---- 顶栏：左上角账号 / 右上角启动器 ---- */
+  .account-chip{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.14);
+    border:0;color:#fff;border-radius:10px;padding:6px 12px 6px 8px;cursor:pointer;font:inherit}
+  .account-chip:hover{background:rgba(255,255,255,.24)}
+  .account-chip .avatar{width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.22);
+    display:flex;align-items:center;justify-content:center;flex:none}
+  .account-chip .avatar svg{width:17px;height:17px;fill:none;stroke:#fff;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .account-chip .account-name{font-size:13px;max-width:130px;overflow:hidden;
+    white-space:nowrap;text-overflow:ellipsis}
+  .btn.icon-only{padding:6px 8px;line-height:0}
+  .btn.icon-only svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .legacy-hidden{display:none !important}
+
+  /* ---- 右侧应用列表 ---- */
+  .drawer-mask{position:fixed;inset:0;background:rgba(12,20,40,.38);opacity:0;pointer-events:none;
+    transition:opacity .22s ease;z-index:60}
+  body.drawer-open .drawer-mask{opacity:1;pointer-events:auto}
+  .app-drawer{position:fixed;top:0;right:0;height:100%;width:270px;max-width:86vw;z-index:61;
+    background:#fff;box-shadow:-6px 0 24px rgba(16,28,60,.16);display:flex;flex-direction:column;
+    transform:translateX(104%);transition:transform .26s cubic-bezier(.22,.8,.3,1)}
+  body.drawer-open .app-drawer{transform:translateX(0)}
+  .drawer-head{display:flex;align-items:center;justify-content:space-between;
+    padding:14px 16px;border-bottom:1px solid #e6ebf5;font-weight:600;font-size:14px;color:#1d2437}
+  .drawer-close{background:#f1f4fb;border:0;border-radius:8px;padding:5px 10px;font:inherit;
+    font-size:12.5px;color:#4a5673;cursor:pointer}
+  .drawer-list{padding:10px 10px 4px;display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1}
+  .app-item{display:flex;align-items:center;gap:12px;width:100%;background:transparent;border:0;
+    border-radius:11px;padding:11px 12px;font:inherit;font-size:14px;color:#1d2437;cursor:pointer;
+    text-align:left;transition:background .15s ease}
+  .app-item:hover{background:#f2f6ff}
+  .app-item:active{background:#e8f0ff}
+  .app-item .ic{width:22px;height:22px;flex:none;fill:none;stroke:#2a5bd7;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .btn svg.ic-btn{width:16px;height:16px;vertical-align:-3px;margin-right:5px;
+    fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .hint svg.ic-inline{width:14px;height:14px;vertical-align:-2px;margin-right:3px;
+    fill:none;stroke:#b45309;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .search-wrap{position:relative}
+  .search-wrap svg.ic-inline{position:absolute;left:10px;top:50%;transform:translateY(-50%);
+    width:15px;height:15px;stroke:#9aa4b8;fill:none;stroke-width:1.8;stroke-linecap:round}
+  .search-wrap input{padding-left:32px}
+  .drawer-sep{height:1px;background:#eef2f9;margin:8px 12px}
+  .drawer-foot{padding:12px 16px;border-top:1px solid #eef2f9;color:#8b96ad;font-size:12px}
+
+  /* ---- 设置分组标题 ---- */
+  .set-group{margin:20px 0 10px;font-size:13px;font-weight:700;color:#2a5bd7;
+    letter-spacing:.4px;display:flex;align-items:center;gap:8px}
+  .set-group:first-child{margin-top:2px}
+  .set-group::after{content:"";flex:1;height:1px;background:#e6ebf5}
+</style>
 </head>
 <body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+</svg>
+
+<div id="drawer-mask" class="drawer-mask"></div>
+<aside id="app-drawer" class="app-drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <span>应用</span>
+    <button class="drawer-close" id="drawer-close" title="关闭">关闭</button>
+  </div>
+  <div class="drawer-list">
+    <button class="app-item" data-target="btn-monitor"><svg class="ic"><use href="#ic-monitor"/></svg><span>屏幕监控</span></button>
+    <button class="app-item" data-target="btn-manage"><svg class="ic"><use href="#ic-roster"/></svg><span>名条管理</span></button>
+    <button class="app-item" data-target="btn-files"><svg class="ic"><use href="#ic-files"/></svg><span>文件传输</span></button>
+    <button class="app-item" data-target="btn-remote"><svg class="ic"><use href="#ic-remote"/></svg><span>手机远控</span></button>
+    <button class="app-item" data-target="btn-admin"><svg class="ic"><use href="#ic-admin"/></svg><span>管理员后台</span></button>
+    <div class="drawer-sep"></div>
+    <button class="app-item" data-target="btn-settings" data-group="个性化"><svg class="ic"><use href="#ic-personal"/></svg><span>个性化</span></button>
+    <button class="app-item" data-target="btn-settings" data-group="内网服务"><svg class="ic"><use href="#ic-network"/></svg><span>内网服务</span></button>
+    <button class="app-item" data-target="btn-settings" data-group="监控和远控"><svg class="ic"><use href="#ic-control"/></svg><span>监控和远控</span></button>
+    <button class="app-item" data-target="btn-settings" data-group="内网穿透"><svg class="ic"><use href="#ic-tunnel"/></svg><span>内网穿透</span></button>
+  </div>
+  <div class="drawer-foot">版本 2.0.36</div>
+</aside>
 <header class="topbar">
-  <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">班级叫号器</div>
+  <div class="brand">
+    <button id="btn-account" class="account-chip" title="我的账号">
+      <span class="avatar"><svg><use href="#ic-user"/></svg></span>
+      <span class="account-name" id="account-name">我的账号</span>
+    </button>
+  </div>
   <div class="topbar-info">
     <span id="server-url" class="muted" title="局域网访问地址"></span>
     <label class="teacher-box">
@@ -66,18 +168,23 @@ body.fs .msg-row input { padding: 10px 12px; }
     </label>
   </div>
   <nav class="topbar-actions">
-    <button id="btn-monitor" class="btn ghost">📷 监控对讲</button>
-    <button id="btn-remote" class="btn ghost">🖥 远程控制</button>
-    <button id="btn-files" class="btn ghost">📁 文件传输</button>
-    <button id="btn-update" class="btn ghost">🔄 软件更新</button>
-    <button id="btn-fullscreen" class="btn ghost" title="全屏显示（一屏放完小键盘/备注/叫号/消息）">⛶ 全屏</button>
-    <button id="btn-settings" class="btn ghost">⚙️ 设置</button>
-    <button id="btn-import" class="btn ghost">📥 导入CSV</button>
-    <button id="btn-manage" class="btn ghost">👥 名条管理</button>
-    <button id="btn-admin" class="btn ghost hidden">🛡 后台</button>
-    <button id="btn-account" class="btn ghost">👤 我的账号</button>
+    <button id="btn-import" class="btn ghost">导入CSV</button>
+    <button id="btn-update" class="btn ghost">软件更新</button>
+    <button id="btn-fullscreen" class="btn ghost" title="全屏显示">全屏</button>
+    <button id="btn-apps" class="btn ghost icon-only" title="应用列表" aria-label="应用列表">
+      <svg><use href="#ic-apps"/></svg>
+    </button>
   </nav>
 </header>
+<div id="legacy-actions" style="display:none" aria-hidden="true">
+  <button id="btn-monitor" type="button"></button>
+  <button id="btn-remote" type="button"></button>
+  <button id="btn-files" type="button"></button>
+  <button id="btn-manage" type="button"></button>
+  <button id="btn-settings" type="button"></button>
+  <button id="btn-admin" type="button"></button>
+</div>
+
 
 <main class="layout">
   <!-- 叫号面板 -->
@@ -118,14 +225,14 @@ body.fs .msg-row input { padding: 10px 12px; }
           备注
           <input id="note" maxlength="60" placeholder="可填写事项，如：带上作业" />
         </label>
-        <button id="btn-call" class="btn primary big">📢 叫号</button>
+        <button id="btn-call" class="btn primary big"><svg class="ic-btn"><use href="#ic-call"/></svg>叫号</button>
         <p class="hint">按叫号后，本机自动播放提示音与叫号语</p>
       </div>
     </div>
 
     <div class="msg-row">
       <input id="msg-text" maxlength="500" placeholder="发送文本消息，电脑端将用语音读出" />
-      <button id="btn-send-msg" class="btn primary">📨 发送消息</button>
+      <button id="btn-send-msg" class="btn primary"><svg class="ic-btn"><use href="#ic-send"/></svg>发送消息</button>
     </div>
   </section>
 
@@ -133,7 +240,7 @@ body.fs .msg-row input { padding: 10px 12px; }
   <section class="panel student-panel">
     <div class="panel-head">
       <h2>学生名单 <span id="roster-count" class="badge">0</span></h2>
-      <input id="search" placeholder="🔍 搜索学号或姓名" />
+      <div class="search-wrap"><svg class="ic-inline"><use href="#ic-search"/></svg><input id="search" placeholder="搜索学号或姓名" /></div>
     </div>
     <ul id="student-list" class="student-list"></ul>
     <div id="list-empty" class="empty">暂无学生，请导入 CSV 或手动添加</div>
@@ -143,8 +250,8 @@ body.fs .msg-row input { padding: 10px 12px; }
   <section class="panel records-panel wide">
     <div class="panel-head">
       <h2>叫号记录 <span id="call-total" class="badge">0</span></h2>
-      <button id="btn-refresh-calls" class="btn ghost small">🔄 刷新</button>
-      <button id="btn-clear-calls" class="btn danger small">🗑 清空记录</button>
+      <button id="btn-refresh-calls" class="btn ghost small"><svg class="ic-btn"><use href="#ic-refresh"/></svg>刷新</button>
+      <button id="btn-clear-calls" class="btn danger small"><svg class="ic-btn"><use href="#ic-trash"/></svg>清空记录</button>
     </div>
     <ul id="call-list" class="call-list"></ul>
     <div id="call-list-empty" class="empty">暂无叫号记录</div>
@@ -154,9 +261,10 @@ body.fs .msg-row input { padding: 10px 12px; }
 <!-- 设置弹窗 -->
 <div id="modal-settings" class="modal-mask hidden">
   <div class="modal">
-    <div class="modal-head"><h3>设置</h3><button class="close" data-close>✕</button></div>
+    <div class="modal-head"><h3>设置</h3><button class="close" data-close aria-label="关闭"><svg class="ic-btn" style="margin:0"><use href="#ic-close"/></svg></button></div>
     <div class="modal-body">
       <div class="form-row">
+        <h4 class="set-group">个性化</h4>
         <label>叫号语模板</label>
         <textarea id="set-phrase" rows="3"></textarea>
         <p class="hint">占位符：%number% 学号 · %name% 姓名 · %note% 备注 · %teacher% 老师名称</p>
@@ -192,7 +300,8 @@ body.fs .msg-row input { padding: 10px 12px; }
       </div>
       <hr />
       <div class="form-grid">
-        <label class="checkbox"><input id="set-mdns-enabled" type="checkbox" /> 启用 mDNS 局域网访问</label>
+        <h4 class="set-group">内网服务</h4>
+          <label class="checkbox"><input id="set-mdns-enabled" type="checkbox" /> 启用 mDNS 局域网访问</label>
         <label>主机名 <input id="set-mdns-hostname" placeholder="如 classroom" /></label>
         <label>网卡
           <select id="set-mdns-interface">
@@ -205,11 +314,11 @@ body.fs .msg-row input { padding: 10px 12px; }
       <div class="form-grid">
         <label class="checkbox"><input id="set-secure-enabled" type="checkbox" /> 启用 HTTPS 安全端口</label>
         <label>安全端口 <input id="set-secure-port" type="number" min="1" max="65535" /></label>
-      <label class="checkbox wide"><input id="set-secure-force" type="checkbox" /> 占用系统保留端口时自动抢占（管理员权限，会短暂停止 WinNAT/Hyper-V 网络）</label>
       </div>
       <p class="hint">手机端“激活 / 监控 / 远程控制 / 文件传输”等敏感功能需通过 https://主机名.local:安全端口 访问（自签名证书，首次需点“继续访问”）。</p>
       <div class="form-grid">
-        <label>监控画质
+        <h4 class="set-group">监控和远控</h4>
+          <label>监控画质
           <select id="set-monitor-quality">
             <option value="smooth">流畅（640×480，省流量）</option>
             <option value="standard">标准（1280×720，推荐）</option>
@@ -241,7 +350,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 
       <!-- ---------------- 内网穿透 ---------------- -->
       <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb" />
-      <h4 style="margin:0 0 10px">🔗 内网穿透</h4>
+      <h4 class="set-group">内网穿透</h4>
 
       <!-- ① GitHub 账号 -->
       <div class="sub-block">
@@ -312,7 +421,7 @@ body.fs .msg-row input { padding: 10px 12px; }
           <div style="margin-top:6px">手机扫这个二维码直接打开：</div>
           <div id="tunnel-qr" style="background:#fff;padding:8px;display:inline-block;border-radius:8px"></div>
           <div style="margin-top:6px;color:#b45309">
-            ⚠️ 这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
+            <svg class="ic-inline"><use href="#ic-warn"/></svg>这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
           </div>
         </div>
         <p class="hint" id="tunnel-msg" style="min-height:18px"></p>
@@ -323,7 +432,7 @@ body.fs .msg-row input { padding: 10px 12px; }
       </div>
 
     <div class="modal-foot">
-      <button id="btn-restart" class="btn danger" style="margin-right:auto">🔄 重启软件</button>
+      <button id="btn-restart" class="btn danger" style="margin-right:auto"><svg class="ic-btn"><use href="#ic-refresh"/></svg>重启软件</button>
       <button id="btn-save-settings" class="btn primary">保存设置</button>
       <button class="btn ghost" data-close>取消</button>
     </div>
@@ -336,7 +445,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 <!-- 导入 CSV 弹窗 -->
 <div id="modal-import" class="modal-mask hidden">
   <div class="modal">
-    <div class="modal-head"><h3>导入 CSV 名条</h3><button class="close" data-close>✕</button></div>
+    <div class="modal-head"><h3>导入 CSV 名条</h3><button class="close" data-close aria-label="关闭"><svg class="ic-btn" style="margin:0"><use href="#ic-close"/></svg></button></div>
     <div class="modal-body">
       <div class="form-row">
         <label>CSV 文件（姓名 + 学号）</label>
@@ -370,7 +479,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 <!-- 名条管理弹窗 -->
 <div id="modal-manage" class="modal-mask hidden">
   <div class="modal">
-    <div class="modal-head"><h3>名条管理</h3><button class="close" data-close>✕</button></div>
+    <div class="modal-head"><h3>名条管理</h3><button class="close" data-close aria-label="关闭"><svg class="ic-btn" style="margin:0"><use href="#ic-close"/></svg></button></div>
     <div class="modal-body">
       <div class="form-grid add-row">
         <input id="add-number" placeholder="学号" />
@@ -391,5 +500,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 <script src="/static/qrcode.js?v=20261123a"></script>
 <script src="/static/auth.js?v=20261123a"></script>
 <script src="/static/app.js?v=20261123a"></script>
+
+
 </body>
 </html>

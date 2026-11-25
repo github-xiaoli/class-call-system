@@ -1060,7 +1060,7 @@ init();
     const tid = ($a("set-tunnel-id").value || "").trim();
     if (!tid) { nameMsg("先填一个隧道名，例如 cc-101", "err"); return; }
     nameMsg("正在创建并开通…");
-    const r = await jpost("/api/tunnel/create_name", { tunnel_id: tid });
+    const r = await jpost("/api/tunnel/create_async", { tunnel_id: tid });
     if (!r.ok) { nameMsg(r.error || "创建失败", "err"); return; }
     nameMsg("已" + (r.created ? "创建" : "复用") + "隧道 " + r.tunnel_id + "，正在开通公网访问…", "ok");
     loadNames();
@@ -1199,7 +1199,7 @@ init();
       use.textContent = "使用";
       use.addEventListener("click", async () => {
         $t("set-tunnel-id").value = name;
-        const r = await jpost("/api/tunnel/create_name", { tunnel_id: name });
+        const r = await jpost("/api/tunnel/create_async", { tunnel_id: name });
         note(r.ok ? ("已切到 " + name) : (r.error || "切换失败"), r.ok ? "ok" : "err");
         renderTunnelList();
       });
@@ -1237,9 +1237,12 @@ init();
     const on = e.target.checked;
     const msg = $t("tunnel-msg");
     if (msg) msg.textContent = on ? "正在开启公网访问…" : "正在关闭…";
-    const r = await jpost("/api/tunnel/enable", { on: on });
-    if (msg) msg.textContent = r.ok ? (on ? "已开启" : "已关闭") : (r.error || "操作失败");
+    const r = await jpost("/api/tunnel/enable_async", { on: on });
+    if (msg) msg.textContent = r.ok ? (on ? "正在开启…" : "正在关闭…") : (r.error || "操作失败");
     if (!r.ok) e.target.checked = !on;
+    else if (window.cqtAfterAction) {
+      window.cqtAfterAction(on ? "已开启内网穿透" : "已关闭内网穿透");
+    }
   });
 
   if ($t("chk-tunnel-auto")) $t("chk-tunnel-auto").addEventListener("change", async (e) => {
@@ -1269,4 +1272,278 @@ init();
     setTimeout(() => { renderTunnelList(); syncStrategy(); }, 600);
   });
   setTimeout(() => { renderTunnelList(); syncStrategy(); }, 1200);
+})();
+
+/* ---------- 公网地址/二维码：切换隧道或开关穿透后立即刷新 ---------- */
+(function () {
+  const $q = (id) => document.getElementById(id);
+
+  function drawQr(text) {
+    const box = $q("tunnel-qr");
+    if (!box) return;
+    if (!text || typeof qrcode !== "function") { box.innerHTML = ""; return; }
+    try {
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      box.innerHTML = qr.createImgTag(4, 8);
+    } catch (e) {
+      box.textContent = text;
+    }
+  }
+
+  async function refreshTunnelView() {
+    let d;
+    try {
+      d = await fetch("/api/tunnel/status", { credentials: "same-origin" }).then((r) => r.json());
+    } catch (e) { return ""; }
+    const t = (d && d.tunnel) || {};
+    const badge = $q("tunnel-host-state");
+    if (badge) {
+      const map = { running: ["运行中", "ok"], starting: ["启动中", "warn"],
+                    error: ["出错", "danger"], stopped: ["未开启", "gray"] };
+      const lab = map[t.host_state] || ["未开启", "gray"];
+      badge.textContent = lab[0];
+      badge.className = "badge " + lab[1];
+    }
+    const box = $q("tunnel-url-box");
+    const link = $q("tunnel-url");
+    if (t.url) {
+      if (link) { link.textContent = t.url; link.href = t.url; }
+      if (box) box.style.display = "";
+      drawQr(t.url);
+    } else {
+      if (box) box.style.display = "none";
+    }
+    return t.url || "";
+  }
+
+  // 切换隧道 / 开关穿透之后：盯住地址变化，变了就重画二维码
+  window.cqtRefreshTunnel = async function (oldUrl) {
+    for (let i = 0; i < 25; i++) {
+      const url = await refreshTunnelView();
+      if (url && url !== oldUrl) return url;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return "";
+  };
+
+  const openBtn = $q("btn-settings");
+  if (openBtn) openBtn.addEventListener("click", () => setTimeout(refreshTunnelView, 500));
+  setTimeout(refreshTunnelView, 1500);
+})();
+
+
+/* ---------- 统一收尾：等后台任务 → 刷新列表 → 刷新地址/二维码 ---------- */
+(function () {
+  const $g = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function drawQr(text) {
+    const box = $g("tunnel-qr");
+    if (!box) return;
+    if (!text) { box.innerHTML = ""; return; }
+    if (typeof qrcode !== "function") { box.textContent = text; return; }
+    try {
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      box.innerHTML = qr.createImgTag(4, 8);
+    } catch (e) { box.textContent = text; }
+  }
+
+  async function refreshView() {
+    let d;
+    try {
+      d = await fetch("/api/tunnel/status", { credentials: "same-origin" }).then((r) => r.json());
+    } catch (e) { return ""; }
+    const t = (d && d.tunnel) || {};
+    const badge = $g("tunnel-host-state");
+    if (badge) {
+      const m = { running: ["运行中", "ok"], starting: ["启动中", "warn"],
+                  error: ["出错", "danger"], stopped: ["未开启", "gray"] };
+      const l = m[t.host_state] || ["未开启", "gray"];
+      badge.textContent = l[0];
+      badge.className = "badge " + l[1];
+    }
+    // 开关跟着真实状态走（否则会出现"没勾但服务已经开着"）
+    const cbOn = $g("chk-tunnel-on");
+    if (cbOn) {
+      cbOn.checked = !!(d.enabled || t.host_state === "running" || t.host_state === "starting");
+    }
+    const cbAuto = $g("chk-tunnel-auto");
+    if (cbAuto && typeof d.autostart === "boolean") cbAuto.checked = d.autostart;
+
+    const box = $g("tunnel-url-box");
+    const link = $g("tunnel-url");
+    if (t.url) {
+      if (link) { link.textContent = t.url; link.href = t.url; }
+      if (box) box.style.display = "";
+      drawQr(t.url);
+    } else {
+      // 关掉穿透后：地址和二维码一起收起来，别留个点不开的旧链接
+      if (box) box.style.display = "none";
+      if (link) { link.textContent = ""; link.removeAttribute("href"); }
+      drawQr("");
+    }
+    return t.url || "";
+  }
+
+  async function refreshList() {
+    const box = $g("tunnel-list");
+    if (!box) return;
+    let d;
+    try { d = await fetch("/api/tunnel/list_names", { credentials: "same-origin" }).then((r) => r.json()); }
+    catch (e) { box.textContent = "读取失败：" + (e.message || ""); return; }
+    if (!d.ok) { box.textContent = d.error || "读取失败"; return; }
+    const cur = (d.current || "").trim();
+    const list = d.tunnels || [];
+    if (!list.length) { box.textContent = "还没有隧道。在下面填名字点「新建隧道」。"; return; }
+    let html = "<table style='width:100%;border-collapse:collapse;font-size:13.5px'>" +
+      "<thead><tr><th style='text-align:left'>隧道地址（名字）</th><th style='width:70px'>状态</th>" +
+      "<th style='width:120px'>操作</th></tr></thead><tbody>";
+    for (const n of list) {
+      html += "<tr><td style='font-family:monospace;padding:5px 4px'>" + n + "</td><td>" +
+        (n === cur ? "<span class='badge ok'>当前</span>" : "") + "</td>" +
+        "<td style='padding:5px 4px'><button class='mini' data-use='" + n + "'>使用</button> " +
+        "<button class='mini danger' data-del='" + n + "'>删除</button></td></tr>";
+    }
+    box.innerHTML = html + "</tbody></table>";
+    box.querySelectorAll("button[data-use]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const name = b.getAttribute("data-use");
+        $g("set-tunnel-id").value = name;
+        const r = await fetch("/api/tunnel/create_async", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          credentials: "same-origin", body: JSON.stringify({ tunnel_id: name }),
+        }).then((x) => x.json());
+        if (!r.ok) { note(r.error || "切换失败", "err"); return; }
+        note("正在切到 " + name + "…");
+        window.cqtAfterAction("已切换到 " + name);
+      });
+    });
+    box.querySelectorAll("button[data-del]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const name = b.getAttribute("data-del");
+        if (!confirm("删除隧道 " + name + "？地址会失效。")) return;
+        const r = await fetch("/api/tunnel/delete_name", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          credentials: "same-origin", body: JSON.stringify({ tunnel_id: name }),
+        }).then((x) => x.json());
+        note(r.ok ? ("已删除 " + name) : (r.error || "删除失败"), r.ok ? "ok" : "err");
+        setTimeout(refreshList, 300);     // 删除是同步的，马上刷
+      });
+    });
+  }
+
+  function note(text, kind) {
+    const el = $g("name-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = kind === "err" ? "#b3261e" : (kind === "ok" ? "#12805c" : "#6b7590");
+  }
+
+  window.cqtAfterAction = async function (doneLabel) {
+    // 等后台任务结束，并把失败原因显示出来
+    for (let i = 0; i < 40; i++) {
+      let job = {};
+      try {
+        const d = await fetch("/api/tunnel/job", { credentials: "same-origin" }).then((r) => r.json());
+        job = d.job || {};
+      } catch (e) { break; }
+      if (!job.running) {
+        if (!job.ok && job.error) note("操作失败：" + job.error, "err");
+        else if (job.ok && doneLabel) note(doneLabel, "ok");
+        break;
+      }
+      await sleep(1200);
+    }
+    await refreshList();
+    // 地址可能要几秒才出来（隧道在连），最多盯 40 秒
+    let last = "";
+    for (let i = 0; i < 20; i++) {
+      last = await refreshView();
+      if (last) break;
+      await sleep(2000);
+    }
+    if (last && doneLabel) note(doneLabel + "　" + last, "ok");
+  };
+
+  window.cqtRefreshAll = async function () {
+    await refreshList();
+    await refreshView();
+  };
+
+  const openBtn = $g("btn-settings");
+  if (openBtn) openBtn.addEventListener("click", () => setTimeout(function () {
+    refreshList(); refreshView();
+  }, 600));
+  setTimeout(function () { refreshList(); refreshView(); }, 1500);
+})();
+
+/* ==========================================================================
+ * 右上角应用启动器（右侧滑出）
+ * ========================================================================== */
+(function () {
+  const body = document.body;
+  const btn = document.getElementById("btn-apps");
+  const mask = document.getElementById("drawer-mask");
+  const closeBtn = document.getElementById("drawer-close");
+  const open = () => body.classList.add("drawer-open");
+  const close = () => body.classList.remove("drawer-open");
+
+  if (btn) btn.addEventListener("click", () => {
+    body.classList.contains("drawer-open") ? close() : open();
+  });
+  if (mask) mask.addEventListener("click", close);
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+
+  // 用事件委托：抽屉的 HTML 在脚本之后才出现，直接绑会绑不到
+  document.addEventListener("click", (ev) => {
+    const item = ev.target && ev.target.closest ? ev.target.closest(".app-item") : null;
+    if (!item) return;
+      const target = document.getElementById(item.dataset.target);
+      const group = item.dataset.group || "";
+      close();
+      // 设置类入口直接点，避免 setTimeout 在关闭动画里被吞掉
+      if (target && item.dataset.target === "btn-settings") {
+        try { target.click(); } catch (e) { console.error(e); }
+      }
+      setTimeout(() => {
+        if (target && item.dataset.target !== "btn-settings") target.click();
+        if (!group) return;
+        // 打开设置有读取配置的延迟，轮询等它真的出现，再滚到对应分组
+        let tries = 0;
+        const timer = setInterval(() => {
+          tries += 1;
+          const modal = document.getElementById("modal-settings");
+          const shown = modal && !modal.classList.contains("hidden");
+          if (!shown) {
+            if (tries > 60) clearInterval(timer);
+            return;
+          }
+          const heads = modal.querySelectorAll(".set-group");
+          let hit = null;
+          heads.forEach((h) => { if (h.textContent.indexOf(group) >= 0) hit = h; });
+          if (!hit) { if (tries > 60) clearInterval(timer); return; }
+          clearInterval(timer);
+          hit.scrollIntoView({ block: "start", behavior: "smooth" });
+          hit.style.transition = "color .3s";
+          hit.style.color = "#12805c";
+          setTimeout(() => { hit.style.color = ""; }, 1200);
+        }, 200);
+      }, 130);
+  });
+
+  async function showAccountName() {
+    try {
+      const d = await fetch("/api/auth/session", { credentials: "same-origin" }).then((r) => r.json());
+      const u = d.user || {};
+      const el = document.getElementById("account-name");
+      if (el) el.textContent = u.display_name || u.username || "我的账号";
+    } catch (e) { /* 未登录时保持默认 */ }
+  }
+  showAccountName();
+  setInterval(showAccountName, 15000);
 })();

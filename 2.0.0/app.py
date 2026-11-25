@@ -97,7 +97,6 @@ DEFAULT_CONFIG = {
     "latency_budget_monitor": 5.0,   # 监控/图传延迟预算（秒）：5=画质优先（宁晚几秒也不降画质）
     "latency_budget_remote": 0.5,    # 远控延迟预算（秒）：0.5=触控跟手
     "secure_port": 9443,            # HTTPS 安全端口（8443 常被 Windows 保留，故默认 9443）
-    "secure_port_force": False,     # 目标端口被系统保留时，是否临时停止 WinNAT 抢占该端口（需管理员）
     "update_channel": "stable",     # OTA 更新通道：stable | beta | dev
     "update_policy": "none",        # OTA 更新策略：none | check | download | install
     # ---- 公网访问（微软 Dev Tunnels）----
@@ -1688,7 +1687,8 @@ def api_tunnel_status():
     return jsonify({"ok": True, "tunnel": st,
                     "enabled": bool(cfg.get("public_enabled")),
                     "public_port": int(cfg.get("public_port", 9444) or 9444),
-        "creds": creds.status()})
+                    "autostart": bool(cfg.get("tunnel_autostart", True)),
+                    "creds": creds.status()})
 
 
 @app.route("/api/tunnel/login/start", methods=["POST"])
@@ -1722,9 +1722,10 @@ def api_tunnel_start():
         pass
     tid = str(data.get("tunnel_id") or cfg.get("tunnel_id") or "").strip().lower()
     port = int(cfg.get("public_port", 9444) or 9444)
+    _ids_cache_clear()
     st = tunnel.start(port, tid,
                       int(cfg.get("tunnel_expiration_hours", 720) or 720),
-                      log=lambda m: print(m))
+                      log=lambda m: print(m), prepare=False)
     if st.get("host_state") == "error":
         return jsonify({"ok": False, "error": st.get("last_error") or "启动失败",
                         "tunnel": st}), 400
@@ -3460,14 +3461,27 @@ def _norm_tid(name):
                   .split(".")[0])[:32].strip("-")
 
 
-def _my_tunnel_ids():
+_IDS_CACHE = {"ts": 0.0, "ids": set()}
+
+
+def _my_tunnel_ids(max_age=20.0):
+    """列表带 20 秒缓存：界面点一次刷新只算一次。建/删后调 _ids_cache_clear()。"""
+    now = time.time()
+    if _IDS_CACHE["ids"] and (now - _IDS_CACHE["ts"]) < max_age:
+        return set(_IDS_CACHE["ids"])
     rc, out = tunnel._run(["list"], timeout=60)
     ids = set()
     for line in (out or "").splitlines():
         tok = line.strip().split()[0] if line.strip() else ""
         if re.fullmatch(r"[a-z0-9][a-z0-9\-]{1,40}(\.[a-z0-9]+)?", tok or ""):
             ids.add(tok.split(".")[0])
+    if ids:
+        _IDS_CACHE.update({"ts": time.time(), "ids": set(ids)})
     return ids
+
+
+def _ids_cache_clear():
+    _IDS_CACHE.update({"ts": 0.0, "ids": set()})
 
 
 @app.route("/api/tunnel/probe_name", methods=["POST"])
@@ -3532,9 +3546,10 @@ def api_tunnel_create_name():
     cfg["tunnel_id"] = tid
     cfg["public_enabled"] = True
     save_config(cfg)
+    _ids_cache_clear()
     st = tunnel.start(port, tid,
                       int(cfg.get("tunnel_expiration_hours", 720) or 720),
-                      log=lambda m: print(m))
+                      log=lambda m: print(m), prepare=False)
     return jsonify({"ok": True, "created": created, "reused": not created,
                     "tunnel_id": tid, "tunnel": st})
 
@@ -3631,6 +3646,7 @@ def api_tunnel_delete_name():
         return jsonify({"ok": False, "error": "这不是本账号的隧道"})
     tunnel.stop()
     rc, out = tunnel._run(["delete", tid], timeout=90)
+    _ids_cache_clear()
     if rc != 0:
         return jsonify({"ok": False, "error": "删除失败：%s" % (out or "").strip()[-200:]})
     return jsonify({"ok": True})
@@ -3703,6 +3719,129 @@ def api_tunnel_relogin():
         _AUTO.update({"state": "idle", "message": "", "tries": 0})
     _auto_start(log=lambda m: print(m))
     return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+
+# ---------------------------------------------------------------------------
+# 后台任务：新建隧道 / 开关穿透（CLI 每次要 5~6 秒，必须异步）
+# ---------------------------------------------------------------------------
+_JOB = {"running": False, "kind": "", "ok": False, "error": "", "done_at": 0}
+_JOB_LOCK = threading.Lock()
+
+
+def _job_state():
+    with _JOB_LOCK:
+        return dict(_JOB)
+
+
+def _job_run(kind, fn):
+    """立刻返回，实际动作丢到后台线程。"""
+    with _JOB_LOCK:
+        if _JOB.get("running"):
+            return False, "上一个操作还在进行中，稍等一下"
+        _JOB.update({"running": True, "kind": kind, "ok": False,
+                     "error": "", "done_at": 0})
+
+    def _w():
+        err = ""
+        try:
+            fn()
+        except Exception as exc:
+            err = repr(exc)[:200]
+        finally:
+            try:
+                _ids_cache_clear()
+            except Exception:
+                pass
+            with _JOB_LOCK:
+                _JOB.update({"running": False, "ok": not err, "error": err,
+                             "done_at": time.time()})
+            print("[后台] %s 结束%s" % (kind, ("：" + err) if err else ""))
+
+    threading.Thread(target=_w, daemon=True, name="job-" + kind).start()
+    return True, ""
+
+
+def _ensure_port_once(tid, port):
+    """幂等：端口已存在时 CLI 会报错，忽略即可（一次调用 ~2 秒）。"""
+    tunnel._run(["port", "create", tid, "-p", str(int(port)),
+                 "--protocol", "http"], timeout=90)
+    tunnel._run(["access", "create", tid, "--anonymous"], timeout=90)
+
+
+def _work_create(tid):
+    cfg = get_config()
+    port = int(cfg.get("public_port", 9444) or 9444)
+    ids = _my_tunnel_ids(max_age=0)
+    if tid not in ids:
+        rc, out = tunnel._run(["create", tid, "--expiration",
+                               "%dh" % int(cfg.get("tunnel_expiration_hours", 720) or 720)],
+                              timeout=120)
+        if rc != 0 and "rate limit" in (out or "").lower():
+            raise RuntimeError("微软限流：等一分钟再试（已建好的不会重复）")
+    _ensure_port_once(tid, port)
+    cfg["tunnel_id"] = tid
+    cfg["public_enabled"] = True
+    save_config(cfg)
+    tunnel.start(port, tid, int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                 log=lambda m: print(m), prepare=False)
+
+
+def _work_enable(on):
+    cfg = get_config()
+    cfg["public_enabled"] = bool(on)
+    save_config(cfg)
+    port = int(cfg.get("public_port", 9444) or 9444)
+    tid = _clean_tid(cfg.get("tunnel_id", ""))
+    if not on:
+        tunnel.stop(log=lambda m: print(m))
+        return
+    if not tid:
+        raise RuntimeError("先在②里选一条隧道")
+    if not tunnel.login_user():
+        raise RuntimeError("还没登录 GitHub 账号")
+    _ensure_port_once(tid, port)
+    tunnel.start(port, tid, int(cfg.get("tunnel_expiration_hours", 720) or 720),
+                 log=lambda m: print(m), prepare=False)
+
+
+def _clean_tid(name):
+    return re.sub(r"[^a-z0-9\-]", "", str(name or "").split(".")[0].lower())[:32]
+
+
+@app.route("/api/tunnel/job")
+def api_tunnel_job():
+    return jsonify({"ok": True, "job": _job_state()})
+
+
+@app.route("/api/tunnel/create_async", methods=["POST"])
+def api_tunnel_create_async():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    tid = _clean_tid(data.get("tunnel_id"))
+    if len(tid) < 3:
+        return jsonify({"ok": False, "error": "名字至少 3 个字符"})
+    if not tunnel.login_user():
+        return jsonify({"ok": False, "error": "还没登录 GitHub 账号"})
+    ok, err = _job_run("create:" + tid, lambda: _work_create(tid))
+    if not ok:
+        return jsonify({"ok": False, "error": err})
+    return jsonify({"ok": True, "queued": True, "tunnel_id": tid})
+
+
+@app.route("/api/tunnel/enable_async", methods=["POST"])
+def api_tunnel_enable_async():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    on = bool(data.get("on"))
+    ok, err = _job_run("enable" if on else "disable", lambda: _work_enable(on))
+    if not ok:
+        return jsonify({"ok": False, "error": err})
+    return jsonify({"ok": True, "queued": True, "on": on})
 
 
 
@@ -3852,6 +3991,15 @@ def _main():
                          name="public-server").start()
 
         # 教室端凭据：先起"定时拉取"，再把隧道挂上（令牌模式，不需要登录账号）
+        # 预热隧道列表缓存（CLI 一次要 5~9 秒，先跑一次，界面打开就不卡）
+        def _warm_ids():
+            try:
+                if tunnel.login_user():
+                    _my_tunnel_ids(max_age=0)
+            except Exception:
+                pass
+        threading.Thread(target=_warm_ids, daemon=True, name="ids-warm").start()
+
         if cfg.get("creds_enabled"):
             try:
                 creds.start(get_config, on_update=tunnel.set_token,
@@ -3925,7 +4073,7 @@ def _main():
                 relief = None
                 if sp and _port_excluded(sp, _excluded_tcp_ranges()):
                     # 端口被系统保留：只有开启“抢占保留端口”且是管理员时才尝试
-                    if not (cfg.get("secure_port_force", False) and _is_admin()):
+                    if True:   # 端口抢占功能已移除（不再停 WinNAT / Hyper-V 网络）
                         print("[HTTPS] 端口 %s 被系统保留，跳过（可在设置里开启抢占）" % sp)
                         continue
                     ok, relief = _release_reserved_port(sp)
