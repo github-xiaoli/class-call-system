@@ -3,6 +3,13 @@
 
 const $ = (id) => document.getElementById(id);
 
+// 安全绑定：元素缺失时跳过，避免一个缺失元素打断后面整段初始化
+function on(id, evt, fn) {
+  const el = $(id);
+  if (el) el.addEventListener(evt, fn);
+  return el;
+}
+
 const state = {
   roster: [],
   calls: [],
@@ -636,7 +643,7 @@ async function uploadSound(file) {
 
 /* ---------- 事件绑定 ---------- */
 function bindEvents() {
-  $("numpad").addEventListener("click", (e) => {
+  on("numpad", "click", (e) => {
     const btn = e.target.closest("button[data-k]");
     if (btn) pressKey(btn.dataset.k);
   });
@@ -647,10 +654,10 @@ function bindEvents() {
     else if (e.key === "Escape" || e.key.toLowerCase() === "c") pressKey("clear");
     else if (e.key === "Enter") doCall();
   });
-  $("btn-call").addEventListener("click", () => doCall());
-  $("search").addEventListener("input", renderRoster);
-  $("btn-refresh-calls").addEventListener("click", loadCalls);
-  $("btn-clear-calls").addEventListener("click", async () => {
+  on("btn-call", "click", () => doCall());
+  on("search", "input", renderRoster);
+  on("btn-refresh-calls", "click", loadCalls);
+  on("btn-clear-calls", "click", async () => {
     if (!confirm("确定清空全部叫号记录吗？")) return;
     try {
       await api("/api/calls/clear", { method: "POST", body: JSON.stringify({}) });
@@ -660,28 +667,28 @@ function bindEvents() {
   });
 
   // 文本消息
-  $("btn-send-msg").addEventListener("click", sendMessage);
-  $("msg-text").addEventListener("keydown", (e) => {
+  on("btn-send-msg", "click", sendMessage);
+  on("msg-text", "keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); sendMessage(); }
   });
 
   // 老师名称（存 cookie，不受密码保护）
-  $("btn-save-teacher").addEventListener("click", () => {
+  on("btn-save-teacher", "click", () => {
     state.teacher = $("teacher-name").value.trim();
     setCookie("teacher_name", state.teacher, 365);
     toast("老师名称已保存到本浏览器");
   });
-  $("teacher-name").addEventListener("change", () => {
+  on("teacher-name", "change", () => {
     state.teacher = $("teacher-name").value.trim();
     setCookie("teacher_name", state.teacher, 365);
   });
 
   // 顶部功能入口
-  $("btn-monitor").addEventListener("click", () => { location.href = "/monitor"; });
-  $("btn-remote").addEventListener("click", () => { location.href = "/remote"; });
-  $("btn-files").addEventListener("click", () => { location.href = "/files"; });
-  $("btn-account").addEventListener("click", () => { location.href = "/account"; });
-  $("btn-admin").addEventListener("click", () => { location.href = "/admin"; });
+  on("btn-monitor", "click", () => { location.href = "/monitor"; });
+  on("btn-remote", "click", () => { location.href = "/remote"; });
+  on("btn-files", "click", () => { location.href = "/files"; });
+  on("btn-account", "click", () => { location.href = "/account"; });
+  on("btn-admin", "click", () => { location.href = "/admin"; });
 
   // 设置
   /* ---------- 全屏叫号 ---------- */
@@ -711,37 +718,37 @@ async function toggleFullscreen() {
 }
 document.addEventListener("fullscreenchange", syncFsClass);
 document.addEventListener("webkitfullscreenchange", syncFsClass);
-$("btn-fullscreen").addEventListener("click", toggleFullscreen);
+on("btn-fullscreen", "click", toggleFullscreen);
 
-$("btn-settings").addEventListener("click", () => {
+on("btn-settings", "click", () => {
     loadConfig().then(() => { fillSettingsForm(); openModal("modal-settings"); });
   });
-  $("btn-update").addEventListener("click", () => { location.href = "/update"; });
-  $("set-phrase").addEventListener("input", updatePhrasePreview);
-  $("set-volume-enabled").addEventListener("change", () => {
+  on("btn-update", "click", () => { location.href = "/update"; });
+  on("set-phrase", "input", updatePhrasePreview);
+  on("set-volume-enabled", "change", () => {
     $("set-volume").disabled = !$("set-volume-enabled").checked;
   });
-  $("btn-save-settings").addEventListener("click", saveSettings);
-  $("btn-restart").addEventListener("click", restartApp);
-  $("set-sound-file").addEventListener("change", (e) => uploadSound(e.target.files[0]));
+  on("btn-save-settings", "click", saveSettings);
+  on("btn-restart", "click", restartApp);
+  on("set-sound-file", "change", (e) => uploadSound(e.target.files[0]));
 
   // CSV
-  $("btn-import").addEventListener("click", () => openModal("modal-import"));
-  $("csv-file").addEventListener("change", async (e) => {
+  on("btn-import", "click", () => openModal("modal-import"));
+  on("csv-file", "change", async (e) => {
     const f = e.target.files[0];
     if (!f) return;
     try { await uploadCsv(f); } catch (err) { toast(err.message); }
   });
-  $("csv-has-header").addEventListener("change", () => {
+  on("csv-has-header", "change", () => {
     const f = $("csv-file").files[0];
     if (f) uploadCsv(f).catch((err) => toast(err.message));
   });
-  $("btn-csv-import").addEventListener("click", doImportCsv);
+  on("btn-csv-import", "click", doImportCsv);
 
   // 名条管理
-  $("btn-manage").addEventListener("click", () => { renderManage(); openModal("modal-manage"); });
-  $("btn-add").addEventListener("click", addStudent);
-  $("btn-clear-all").addEventListener("click", clearAll);
+  on("btn-manage", "click", () => { renderManage(); openModal("modal-manage"); });
+  on("btn-add", "click", addStudent);
+  on("btn-clear-all", "click", clearAll);
 }
 
 /* ---------- 启动 ---------- */

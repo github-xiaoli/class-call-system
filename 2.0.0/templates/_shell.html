@@ -1,0 +1,52 @@
+{# 子页面通用壳：图标 + 左边缘滑出的应用列表 #}
+{% include "_icons.html" %}
+<div id="drawer-mask" class="drawer-mask"></div>
+<aside id="app-drawer" class="app-drawer" aria-hidden="true">
+  <div class="drawer-head"><span>应用</span><button class="drawer-close" id="drawer-close">关闭</button></div>
+  <div class="drawer-list">
+    <a class="app-item home" href="/"><svg class="ic"><use href="#ic-arrow-left"/></svg><span>返回主界面</span></a>
+    <a class="app-item" href="/"><svg class="ic"><use href="#ic-call"/></svg><span>叫号主界面</span></a>
+    <a class="app-item" href="/monitor"><svg class="ic"><use href="#ic-monitor"/></svg><span>屏幕监控</span></a>
+    <a class="app-item" href="/roster"><svg class="ic"><use href="#ic-roster"/></svg><span>名条管理</span></a>
+    <a class="app-item" href="/files"><svg class="ic"><use href="#ic-files"/></svg><span>文件传输</span></a>
+    <a class="app-item" href="/remote"><svg class="ic"><use href="#ic-remote"/></svg><span>手机远控</span></a>
+    <a class="app-item" href="/admin"><svg class="ic"><use href="#ic-admin"/></svg><span>管理员后台</span></a>
+    <div class="drawer-sep"></div>
+    <a class="app-item" href="/settings/personal"><svg class="ic"><use href="#ic-personal"/></svg><span>个性化</span></a>
+    <a class="app-item" href="/settings/network"><svg class="ic"><use href="#ic-network"/></svg><span>内网服务</span></a>
+    <a class="app-item" href="/settings/control"><svg class="ic"><use href="#ic-control"/></svg><span>监控和远控</span></a>
+    <a class="app-item" href="/settings/tunnel"><svg class="ic"><use href="#ic-tunnel"/></svg><span>内网穿透</span></a>
+  </div>
+  <div class="drawer-foot">版本 2.0.36</div>
+</aside>
+<div class="edge-hot" id="edge-hot" title="鼠标移到最左侧可打开应用列表"></div>
+<div class="edge-tab" id="edge-tab" title="应用列表">‹</div>
+<style>
+  .drawer-mask{position:fixed;inset:0;background:rgba(12,20,40,.38);opacity:0;pointer-events:none;
+    transition:opacity .22s ease;z-index:60}
+  body.edge-open .drawer-mask,body.drawer-open .drawer-mask{opacity:1;pointer-events:auto}
+  .app-drawer{position:fixed;top:0;left:0;height:100%;width:270px;max-width:86vw;z-index:61;
+    background:#fff;box-shadow:6px 0 24px rgba(16,28,60,.16);display:flex;flex-direction:column;
+    transform:translateX(-104%);transition:transform .26s cubic-bezier(.22,.8,.3,1);font:14px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  body.edge-open .app-drawer,body.drawer-open .app-drawer{transform:translateX(0)}
+  .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+    border-bottom:1px solid #e6ebf5;font-weight:600;font-size:14px;color:#1d2437}
+  .drawer-close{background:#f1f4fb;border:0;border-radius:8px;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .drawer-list{padding:10px;display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1}
+  .app-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:11px;
+    color:#1d2437;text-decoration:none;font-size:14px}
+  .app-item:hover{background:#f2f6ff}
+  .app-item.active{background:#e8f0ff;color:#2a5bd7;font-weight:600}
+  .app-item.active .ic{stroke:#1b47b8}
+  .app-item.home{border-bottom:1px solid #eef2f9;margin-bottom:4px;border-radius:0 0 11px 11px}
+  .app-item .ic{width:22px;height:22px;flex:none;fill:none;stroke:#2a5bd7;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .drawer-sep{height:1px;background:#eef2f9;margin:8px 12px}
+  .drawer-foot{padding:12px 16px;border-top:1px solid #eef2f9;color:#8b96ad;font-size:12px}
+  .edge-hot{position:fixed;left:0;top:0;width:16px;height:100%;z-index:59}
+  .edge-tab{position:fixed;left:0;top:46%;width:14px;height:56px;border-radius:0 10px 10px 0;
+    background:#dbe6ff;color:#2a5bd7;display:flex;align-items:center;justify-content:center;
+    font-size:11px;cursor:pointer;z-index:58;box-shadow:2px 0 6px rgba(20,40,90,.12)}
+  .edge-tab:hover{background:#c7d8ff}
+</style>
+<script src="/static/shell.js?v=20261125c"></script>

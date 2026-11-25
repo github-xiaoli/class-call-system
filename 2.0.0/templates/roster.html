@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>名条管理 · 班级叫号器</title>
+<style nonce="{{ csp_nonce }}">
+  *{box-sizing:border-box}
+  body{margin:0;background:#f2f5fb;color:#1d2437;
+    font:14px/1.6 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+  .sub-top{display:flex;align-items:center;gap:12px;background:#2a5bd7;color:#fff;
+    padding:10px 16px;position:sticky;top:0;z-index:30}
+  .sub-back{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);border:0;
+    color:#fff;border-radius:9px;padding:7px 12px;font:inherit;font-size:13px;cursor:pointer}
+  .sub-back:hover{background:rgba(255,255,255,.26)}
+  .sub-back svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .wrap{max-width:880px;margin:18px auto 60px;padding:0 16px}
+  .card{background:#fff;border:1px solid #e3e8f2;border-radius:14px;padding:18px 20px;
+    box-shadow:0 1px 2px rgba(20,40,90,.05)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  input[type=text]{font:inherit;padding:8px 10px;border:1px solid #d9e0ee;border-radius:9px;width:140px}
+  .btn{font:inherit;border:1px solid #d9e0ee;background:#fff;border-radius:9px;padding:8px 14px;cursor:pointer}
+  .btn.primary{background:#2a5bd7;border-color:#2a5bd7;color:#fff}
+  .btn.danger{background:#e5484d;border-color:#e5484d;color:#fff}
+  .btn.ghost:hover{background:#f2f6ff}
+  .btn svg.ic-btn{width:16px;height:16px;vertical-align:-3px;margin-right:5px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .hint{color:#6b7590;font-size:12.5px;margin:4px 0}
+  ol.list{list-style:none;margin:0;padding:0;max-height:60vh;overflow:auto}
+  ol.list li{display:flex;gap:10px;align-items:center;padding:8px 6px;border-bottom:1px solid #f0f3f9}
+  ol.list li .num{width:90px;color:#6b7590;font-variant-numeric:tabular-nums}
+  ol.list li .nm{flex:1}
+  .mini{border:1px solid #e3e8f2;background:#fff;border-radius:8px;padding:4px 9px;font:inherit;
+    font-size:12.5px;cursor:pointer}
+  .mini.danger{color:#b3261e;border-color:#f2d3d3}
+</style>
+</head>
+<body>
+{% include "_shell.html" %}
+<header class="sub-top">
+  <button class="sub-back" id="sub-back"><svg><use href="#ic-arrow-left"/></svg>返回主页</button>
+  <span class="sub-title">名条管理</span>
+</header>
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <input id="add-number" type="text" placeholder="学号" />
+      <input id="add-name" type="text" placeholder="姓名" />
+      <button id="btn-add" class="btn primary">添加</button>
+      <button id="btn-import" class="btn ghost"><svg class="ic-btn"><use href="#ic-upload"/></svg>导入 CSV</button>
+      <input id="csv-file" type="file" accept=".csv,text/csv" style="display:none" />
+      <span class="hint" id="msg"></span>
+    </div>
+    <p class="hint">CSV 支持两列：学号,姓名（可带表头）。导入后自动按学号排序，同学号会覆盖。</p>
+    <ol class="list" id="list"></ol>
+    <p class="hint" id="summary"></p>
+    <div class="row" style="margin:14px 0 0">
+      <button id="btn-clear-all" class="btn danger">清空全部名条</button>
+    </div>
+  </div>
+</div>
+<script src="/static/roster.js?v=20261125c"></script>
+</body>
+</html>

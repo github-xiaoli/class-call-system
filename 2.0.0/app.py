@@ -1631,6 +1631,12 @@ def page_settings_section(key):
     return render_template(tpl)
 
 
+@app.route("/roster")
+def page_roster():
+    """名条管理子页面（含导入 CSV）。"""
+    return render_template("roster.html")
+
+
 @app.route("/settings")
 def page_settings():
     """设置子页面（四分组，左上角返回，左边缘悬停出应用列表）。"""
