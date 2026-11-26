@@ -155,8 +155,96 @@ class _WS(object):
 # ---------------------------------------------------------------------------
 # 浏览器会话
 # ---------------------------------------------------------------------------
+def _is_admin():
+    """当前进程是否是管理员（提权后启动的 Chromium 不会开放调试端口）。"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+
+def _launch_unelevated(exe, args, cwd=None):
+    """用资源管理器的令牌启动进程 —— 从管理员进程里"降权"拉起浏览器。
+
+    原理：explorer.exe 一定跑在普通用户权限下，复制它的令牌创建进程，
+    子进程就不再是管理员，Chromium 也就会正常开放 DevTools 端口。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR),
+                    ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR),
+                    ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+                    ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD),
+                    ("dwXCountChars", wintypes.DWORD), ("dwYCountChars", wintypes.DWORD),
+                    ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
+                    ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
+                    ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE),
+                    ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+
+    # 1) 找 shell 窗口 → 取它的进程（就是 explorer）
+    hwnd = u32.GetShellWindow()
+    if not hwnd:
+        raise RuntimeError("找不到 shell 窗口")
+    pid = wintypes.DWORD()
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    hproc = k32.OpenProcess(0x0400, False, pid.value)          # PROCESS_QUERY_INFORMATION
+    if not hproc:
+        raise RuntimeError("打开 explorer 进程失败")
+    htok = wintypes.HANDLE()
+    if not adv.OpenProcessToken(hproc, 0x0002 | 0x0008 | 0x0001, ctypes.byref(htok)):
+        raise RuntimeError("取 explorer 令牌失败")
+    hdup = wintypes.HANDLE()
+    if not adv.DuplicateTokenEx(htok, 0x02000000, None, 2, 1, ctypes.byref(hdup)):
+        raise RuntimeError("复制令牌失败")
+
+    si = STARTUPINFOW()
+    si.cb = ctypes.sizeof(si)
+    pi = PROCESS_INFORMATION()
+    cmdline = " ".join(['"%s"' % exe] + [('"%s"' % a) if " " in a else a for a in args])
+    buf = ctypes.create_unicode_buffer(cmdline)
+    ok = adv.CreateProcessWithTokenW(hdup, 0, None, buf, 0, None,
+                                     cwd, ctypes.byref(si), ctypes.byref(pi))
+    if not ok:
+        raise RuntimeError("CreateProcessWithTokenW 失败：%d" % ctypes.get_last_error())
+    k32.CloseHandle(pi.hThread)
+    return pi.hProcess, pi.dwProcessId
+
+
+def _kill_by_profile(profile):
+    """经 explorer 代理启动时拿不到进程句柄，只能按命令行里的 profile 路径找。"""
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where", "name='msedge.exe'", "get", "processid,commandline"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=25, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
+    except Exception:
+        return
+    for line in out.splitlines():
+        if profile and profile.lower() in line.lower():
+            m = re.search(r"(\d+)\s*$", line.strip())
+            if m:
+                try:
+                    subprocess.run(["taskkill", "/F", "/PID", m.group(1)],
+                                   capture_output=True, timeout=15,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except Exception:
+                    pass
+
+
 class Browser(object):
-    def __init__(self, headless=True, log=None, timeout=30):
+    def __init__(self, headless=True, log=None, timeout=30, via_explorer=None):
         self.log = log or (lambda m: None)
         self.exe = find_browser()
         if not self.exe:
@@ -165,6 +253,7 @@ class Browser(object):
         self._id = 0
         self.timeout = timeout
         self.headless = headless
+        self.via_explorer = _is_admin() if via_explorer is None else bool(via_explorer)
         self.profile = tempfile.mkdtemp(prefix="cqt_browser_")
         self.errlog = os.path.join(self.profile, "browser.err.log")
         self._connect()
@@ -184,9 +273,20 @@ class Browser(object):
             self.errfh = open(self.errlog, "ab")
         except Exception:
             self.errfh = subprocess.DEVNULL
-        self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
-                                     stderr=self.errfh,
-                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if self.via_explorer:
+            # 关键：管理员进程直接 Popen 出来的 Edge 也是管理员，Chromium 会拒绝开调试端口。
+            # 交给 explorer.exe 代劳，Edge 就以普通权限启动，调试端口正常开放。
+            self.log("[浏览器] 管理员模式 → 用 shell 令牌降权启动")
+            hproc, pid = _launch_unelevated(args[0], args[1:], cwd=os.path.expanduser("~"))
+            self.proc = subprocess.Popen(["cmd", "/c", "exit"], stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL,
+                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._browser_pid = pid
+            self._browser_h = hproc
+        else:
+            self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
+                                         stderr=self.errfh,
+                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _tail_err(self, n=260):
         try:
@@ -198,6 +298,9 @@ class Browser(object):
 
     def _kill(self):
         try:
+            if getattr(self, "via_explorer", False):
+                _kill_by_profile(self.profile)
+                return
             if getattr(self, "proc", None) and self.proc.poll() is None:
                 self.proc.kill()
         except Exception:
@@ -207,7 +310,8 @@ class Browser(object):
         deadline = time.time() + seconds
         last = ""
         while time.time() < deadline:
-            if getattr(self, "proc", None) and self.proc.poll() is not None:
+            if (not getattr(self, "via_explorer", False)) and getattr(self, "proc", None) \
+                    and self.proc.poll() is not None:
                 return False, "浏览器进程已退出（退出码 %s）" % self.proc.returncode
             try:
                 with urllib.request.urlopen(

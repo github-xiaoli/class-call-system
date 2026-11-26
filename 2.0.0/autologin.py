@@ -120,8 +120,9 @@ def _wait_for(br, expr, timeout=20, log=None, what=""):
     return False
 
 
-def run(exe_path, env_fn, log=print, headless=True, timeout=180):
+def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
     """跑一整轮自动登录。返回 (ok, 说明)。"""
+    progress = progress or (lambda *_: None)
     import edge_cdp
 
     cred = load_credentials()
@@ -141,9 +142,12 @@ def run(exe_path, env_fn, log=print, headless=True, timeout=180):
 
     br = None
     try:
+        progress("启动浏览器")
         br = edge_cdp.Browser(headless=headless, log=log)
         log("[自动登录] 打开 GitHub 登录页")
+        progress("打开 GitHub 登录页", br)
         br.nav("https://github.com/login", wait=1.0)
+        progress("已定位登录表单", br)
         _wait_for(br, "document.querySelector('#login_field')", 25, log, "登录输入框")
 
         # 1) 填账号密码并提交
@@ -196,6 +200,7 @@ def run(exe_path, env_fn, log=print, headless=True, timeout=180):
 
         # 3) 设备码页（先过"用这个账号继续"的中间页）
         log("[自动登录] 打开设备码页面")
+        progress("正在处理设备码授权", br)
         br.nav("https://github.com/login/device", wait=1.5)
         for i in range(3):
             if br.js("return !!document.querySelector('#user-code-0');", wait=0.3):

@@ -32,6 +32,70 @@
     }
   });
 
+
+  /* ---------- 手动登录（设备码，备用通道） ---------- */
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target && ev.target.closest ? ev.target.closest("#btn-tunnel-login") : null;
+    if (!btn) return;
+    ev.preventDefault();
+    btn.disabled = true;
+    note("正在申请设备码…");
+    try {
+      const d = await fetch("/api/tunnel/login/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "same-origin", body: "{}",
+      }).then((r) => r.json());
+      const t = (d && d.tunnel) || d || {};
+      const code = t.user_code || t.userCode || (d && d.user_code) || "";
+      const box = $("tunnel-login-box");
+      if (box) box.style.display = "";
+      const el = $("tunnel-user-code");
+      if (el) el.textContent = code || "--------";
+      note(code ? ("设备码 " + code + " —— 请到 github.com/login/device 输入")
+                : "已发起登录，请按页面提示操作", code ? "ok" : "");
+      for (let i = 0; i < 90; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let st = {};
+        try { st = (await jget("/api/tunnel/status")).tunnel || {}; } catch (e) { break; }
+        if (st.user_code) {
+          const cel = $("tunnel-user-code");
+          if (cel) cel.textContent = st.user_code;
+          note("设备码 " + st.user_code + " —— 请到 github.com/login/device 输入", "ok");
+        }
+        if (st.login_state === "logged_in") { note("手动登录成功", "ok"); refreshTunnel(); break; }
+        if (st.login_state === "error") { note("手动登录失败：" + (st.login_error || ""), "err"); break; }
+      }
+    } catch (e) {
+      note("申请设备码失败：" + e.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ---------- 有头/无头 + 进度显示 ---------- */
+  function showProgress(step, page) {
+    const box = $("auto-progress");
+    if (!box) return;
+    if (!step) { box.style.display = "none"; return; }
+    box.style.display = "";
+    const s1 = $("auto-step"), s2 = $("auto-page");
+    if (s1) s1.textContent = "当前步骤：" + step;
+    if (s2) s2.textContent = page ? ("页面：" + page) : "";
+  }
+
+  (async function initHeaded() {
+    const cb = $("chk-gh-headed");
+    if (!cb) return;
+    try {
+      const st = await jget("/api/tunnel/status");
+      cb.checked = st.headed !== false;
+    } catch (e) { cb.checked = true; }
+    cb.addEventListener("change", async () => {
+      await jpost("/api/tunnel/autologin_mode", { headed: !!cb.checked });
+      note(cb.checked ? "登录时会显示浏览器窗口" : "登录时后台运行（不显示窗口）", "ok");
+    });
+  })();
+
   /* 返回主页 + 左边缘悬停出应用列表 */
   if ($("sub-back")) $("sub-back").addEventListener("click", () => { location.href = "/"; });
   const edge = $("edge-hot");
@@ -135,15 +199,65 @@
     const box = $("tunnel-list");
     if (!box) return;
     let d;
-    try { d = await jget("/api/tunnel/list_names"); } catch (e) { return; }
-    if (!d.ok) { box.textContent = d.error || "读取失败"; return; }
+    try { d = await jget("/api/tunnel/list_names"); } catch (e) {
+      box.textContent = "读取失败：" + e.message;
+      return;
+    }
+    if (!d.ok) {
+      box.innerHTML = '<span style="color:#b45309">' + (d.error || "读取失败") +
+        "</span>（点上面的「保存并登录」或展开手动登录先登录）";
+      return;
+    }
     const cur = (d.current || "").trim();
     const list = d.tunnels || [];
-    box.innerHTML = list.length
-      ? list.map((n) => '<div class="hint" style="display:flex;gap:8px;align-items:center">' +
-          '<code style="min-width:120px">' + n + "</code>" +
-          (n === cur ? '<span class="badge ok">当前</span>' : "") + "</div>").join("")
-      : "还没有隧道，在下面填个名字新建。";
+    if (!list.length) {
+      box.textContent = "这个账号下还没有隧道，在下面填个名字点「新建隧道」。";
+      return;
+    }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13.5px">' +
+      '<thead><tr>' +
+      '<th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e6ebf5">隧道名字</th>' +
+      '<th style="width:64px;padding:6px 4px;border-bottom:1px solid #e6ebf5">状态</th>' +
+      '<th style="width:132px;padding:6px 4px;border-bottom:1px solid #e6ebf5;text-align:right">操作</th>' +
+      "</tr></thead><tbody>";
+    for (const n of list) {
+      const isCur = n === cur;
+      html += "<tr>" +
+        '<td style="padding:7px 4px;border-bottom:1px solid #f2f5fb;font-family:Consolas,monospace">' +
+        n + "</td>" +
+        '<td style="padding:7px 4px;border-bottom:1px solid #f2f5fb">' +
+        (isCur ? '<span class="badge ok">当前</span>' : "") + "</td>" +
+        '<td style="padding:7px 4px;border-bottom:1px solid #f2f5fb;text-align:right">' +
+        '<button class="btn ghost" data-use="' + n + '" style="padding:4px 10px;font-size:12.5px">使用</button> ' +
+        '<button class="btn danger" data-del="' + n + '" style="padding:4px 10px;font-size:12.5px">删除</button>' +
+        "</td></tr>";
+    }
+    box.innerHTML = html + "</tbody></table>";
+
+    box.querySelectorAll("button[data-use]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const name = b.getAttribute("data-use");
+        const tid = $("set-tunnel-id");
+        if (tid) tid.value = name;
+        note("正在切到 " + name + "…");
+        const r = await jpost("/api/tunnel/create_async", { tunnel_id: name });
+        if (!r.ok) { note(r.error || "切换失败", "err"); return; }
+        const job = await waitJob();
+        note(job.ok ? ("已切换到 " + name) : ("失败：" + (job.error || "")), job.ok ? "ok" : "err");
+        refreshNames();
+        refreshTunnel();
+      });
+    });
+    box.querySelectorAll("button[data-del]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const name = b.getAttribute("data-del");
+        if (!confirm("删除隧道 " + name + "？这个地址会失效。")) return;
+        note("正在删除 " + name + "…");
+        const r = await jpost("/api/tunnel/delete_name", { tunnel_id: name });
+        note(r.ok ? ("已删除 " + name) : (r.error || "删除失败"), r.ok ? "ok" : "err");
+        refreshNames();
+      });
+    });
   }
 
   async function waitJob() {
@@ -161,8 +275,9 @@
     while (Date.now() < end) {
       let s = {};
       try { s = (await jget("/api/tunnel/auto_status")).auto || {}; } catch (e) { break; }
+      showProgress(s.step || (s.state === "running" ? s.message : ""), s.page || "");
       const st = String(s.state || "");
-      if (st === "ok" || st === "fail" || st === "error") return s;
+      if (st === "ok" || st === "fail" || st === "error") { showProgress(""); return s; }
       await new Promise((r) => setTimeout(r, 1500));
     }
     return null;

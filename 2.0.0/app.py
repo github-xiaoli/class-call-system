@@ -85,7 +85,7 @@ DEFAULT_CONFIG = {
     "volume": 100,                  # 叫号时系统音量 0-100
     "volume_enabled": True,         # 叫号时是否切换系统音量
     "autostart": False,             # 开机自启
-    "require_admin": True,          # 启动时自动申请管理员（自启用计划任务，登录不再弹 UAC）
+    "require_admin": False,          # 启动时自动申请管理员（自启用计划任务，登录不再弹 UAC）
     "secure_enabled": True,         # 是否启用 HTTPS 安全端口（手机端激活/敏感功能用）
     "monitor_quality": "standard",   # 监控画质：smooth(480p) / standard(720p) / hd(1080p)
     "remote_touch_mode": "auto",      # 手机触控：auto(触摸优先,失败降级鼠标) / touch / mouse
@@ -604,7 +604,7 @@ def _relaunch_as_admin():
 def ensure_admin():
     """启动时自动申请管理员权限；已提权或用户拒绝时直接继续。"""
     try:
-        if not get_config().get("require_admin", True):
+        if not get_config().get("require_admin", False):
             return
     except Exception:
         pass
@@ -1711,6 +1711,7 @@ def api_tunnel_status():
                     "enabled": bool(cfg.get("public_enabled")),
                     "public_port": int(cfg.get("public_port", 9444) or 9444),
                     "autostart": bool(cfg.get("tunnel_autostart", True)),
+                    "headed": bool(cfg.get("autologin_headed", True)),
                     "creds": creds.status()})
 
 
@@ -3395,8 +3396,23 @@ def _auto_run(log=None):
                       "started": time.time()})
     try:
         _headed = bool(get_config().get("autologin_headed", True))
+
+        def _prog(text, br=None):
+            page = ""
+            try:
+                page = br.url() if br is not None else ""
+            except Exception:
+                page = ""
+            with _AUTO_LOCK:
+                _AUTO["message"] = text
+                _AUTO["step"] = text
+                _AUTO["page"] = page
+                _AUTO["updated"] = time.time()
+            if log:
+                log("[自动登录] %s %s" % (text, page))
+
         ok, msg = autologin.run(tunnel.EXE_PATH, tunnel._env, log=log or print,
-                                headless=not _headed)
+                                headless=not _headed, progress=_prog)
     except Exception as exc:
         ok, msg = False, repr(exc)
     with _AUTO_LOCK:
@@ -3453,7 +3469,10 @@ def api_tunnel_login_auto():
     user = str(data.get("username", "") or "").strip()
     pwd = str(data.get("password", "") or "")
     if user and pwd:
-        ok, err = autologin.save_credentials(user, pwd)
+        try:
+            ok, err = autologin.save_credentials(user, pwd)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": "保存账号密码失败（可能被占用）：%r" % (exc,)})
         if not ok:
             return jsonify({"ok": False, "error": err})
     elif not autologin.has_credentials():
@@ -3461,7 +3480,10 @@ def api_tunnel_login_auto():
     if tunnel.login_user():
         return jsonify({"ok": True, "auto": _auto_snapshot(),
                         "message": "已经是登录状态"})
-    _auto_start(log=lambda m: print(m))
+    started = _auto_start(log=lambda m: print(m))
+    if not started:
+        return jsonify({"ok": True, "queued": True,
+                        "message": "正在登录中，请稍候…", "auto": _auto_snapshot()})
     return jsonify({"ok": True, "auto": _auto_snapshot()})
 
 
@@ -3770,6 +3792,20 @@ def api_tunnel_logout():
     print("[隧道] 退出登录：%s" % " | ".join(msgs))
     return jsonify({"ok": True, "logged_in": tunnel.login_user(),
                     "cleared": clear, "detail": " | ".join(msgs)[-300:]})
+
+
+@app.route("/api/tunnel/autologin_mode", methods=["POST"])
+def api_tunnel_autologin_mode():
+    """自动登录时是否显示浏览器窗口。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    headed = bool(data.get("headed"))
+    cfg = get_config()
+    cfg["autologin_headed"] = headed
+    save_config(cfg)
+    return jsonify({"ok": True, "headed": headed})
 
 
 @app.route("/api/tunnel/relogin", methods=["POST"])

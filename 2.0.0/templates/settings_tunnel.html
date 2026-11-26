@@ -146,6 +146,16 @@
           密码用 Windows DPAPI 加密存在本机（换电脑解不开、不上传）。
           登录失效、或你改了上面的账号密码，程序会自己重登。
         </p>
+        <div class="form-grid">
+          <label style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="chk-gh-headed" /> 登录时显示浏览器窗口（看得见过程，兼容性更好）
+          </label>
+        </div>
+        <div id="auto-progress" style="display:none;margin:2px 0 6px;padding:8px 10px;
+             background:#f6f9ff;border:1px solid #e3ecfb;border-radius:9px">
+          <div class="hint" id="auto-step" style="margin:0;color:#1d2437"></div>
+          <div class="hint" id="auto-page" style="margin:2px 0 0;color:#8b96ad;word-break:break-all"></div>
+        </div>
         <p class="hint" id="auto-msg" style="min-height:18px"></p>
         <details style="margin:2px 0 0">
           <summary style="cursor:pointer">手动登录（备用：自动登录失败时用）</summary>
