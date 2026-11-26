@@ -3430,6 +3430,10 @@ def _auto_start(log=None):
     with _AUTO_LOCK:
         if _AUTO.get("state") == "running":
             return False
+        # 先在锁内把状态置为 running（占位），否则连点两次会同时通过检查、开两个浏览器
+        _AUTO.update({"state": "running", "message": "正在自动登录…",
+                      "step": "排队中", "page": "", "started": time.time(),
+                      "tries": 0, "ok": False, "error": ""})
     _AUTO_THREAD = threading.Thread(target=_auto_run, kwargs={"log": log},
                                     daemon=True, name="auto-login")
     _AUTO_THREAD.start()

@@ -155,6 +155,34 @@ class _WS(object):
 # ---------------------------------------------------------------------------
 # 浏览器会话
 # ---------------------------------------------------------------------------
+def _kill_stray_login_browsers(keep_profile=None):
+    """清掉上一次没退干净的登录用浏览器（命令行里带 cqt_browser_ 的）。"""
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where", "name='msedge.exe'", "get", "processid,commandline"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=25, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
+    except Exception:
+        return 0
+    killed = 0
+    for line in out.splitlines():
+        if "cqt_browser_" not in line.lower():
+            continue
+        if keep_profile and keep_profile.lower() in line.lower():
+            continue
+        m = re.search(r"(\d+)\s*$", line.strip())
+        if not m:
+            continue
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", m.group(1)],
+                           capture_output=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+
 def _is_admin():
     """当前进程是否是管理员（提权后启动的 Chromium 不会开放调试端口）。"""
     try:
@@ -269,6 +297,12 @@ class Browser(object):
                 "--disable-extensions", "--disable-background-networking",
                 "--disable-gpu", "--remote-allow-origins=*",
                 "--window-size=1280,900"] + list(extra)
+        try:
+            killed = _kill_stray_login_browsers(keep_profile=self.profile)
+            if killed:
+                self.log("[浏览器] 清掉 %d 个残留的登录用浏览器" % killed)
+        except Exception:
+            pass
         try:
             self.errfh = open(self.errlog, "ab")
         except Exception:

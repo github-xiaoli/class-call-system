@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import sys
 import time
 
@@ -120,8 +121,21 @@ def _wait_for(br, expr, timeout=20, log=None, what=""):
     return False
 
 
+_RUN_LOCK = threading.Lock()
+
+
 def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
-    """跑一整轮自动登录。返回 (ok, 说明)。"""
+    """跑一整轮自动登录（同一时刻只允许一次）。返回 (ok, 说明)。"""
+    if not _RUN_LOCK.acquire(blocking=False):
+        return False, "已经有一次登录在进行中，请等它结束"
+    try:
+        return _run_inner(exe_path, env_fn, log, headless, timeout, progress)
+    finally:
+        _RUN_LOCK.release()
+
+
+def _run_inner(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
+    """真正的流程实现。"""
     progress = progress or (lambda *_: None)
     import edge_cdp
 
