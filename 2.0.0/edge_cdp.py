@@ -227,7 +227,11 @@ class Browser(object):
         if self.headless:
             langs.append(["--headless=new"])
             langs.append(["--headless"])
-        langs.append([])
+            langs.append([])          # 兜底：真弹一个有头窗口
+        else:
+            langs.append([])          # 有头优先（最兼容）
+            langs.append(["--headless=new"])
+            langs.append(["--headless"])
         problems = []
         for extra in langs:
             try:

@@ -3394,7 +3394,9 @@ def _auto_run(log=None):
         _AUTO.update({"state": "running", "message": "正在自动登录…",
                       "started": time.time()})
     try:
-        ok, msg = autologin.run(tunnel.EXE_PATH, tunnel._env, log=log or print)
+        _headed = bool(get_config().get("autologin_headed", True))
+        ok, msg = autologin.run(tunnel.EXE_PATH, tunnel._env, log=log or print,
+                                headless=not _headed)
     except Exception as exc:
         ok, msg = False, repr(exc)
     with _AUTO_LOCK:
