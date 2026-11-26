@@ -1,6 +1,13 @@
 /* 首次设置向导逻辑：分步、许可证阅读门禁、二维码、提交 */
 "use strict";
 const $ = (id) => document.getElementById(id);
+
+// 安全绑定：元素不存在就跳过（个别页面元素被移除后，不能把整段初始化带崩）
+function on(id, evt, fn) {
+  const el = $(id);
+  if (el) el.addEventListener(evt, fn);
+  return el;
+}
 const scenes = ["forest", "desert", "ocean", "snow", "starry", "grass", "sakura"];
 const decos = {
   forest: ["🌲", "🌳", "🍄", "🦋", "🌿"],
@@ -127,7 +134,7 @@ function go(step) {
   $("btn-next").classList.toggle("hidden", step === totalSteps - 1);
   if (step === 0) fireworks(1600);
   if (step === totalSteps - 1) { buildSummary(); confetti(); }
-  if (step === 1) loadLicense();   // 进到许可证这一屏必定加载一次
+  if (step === 1) loadLicense();
   if (step === 2) $("host-name").focus();
   if (step === 5) { if (state.pairToken) drawQR(); else makePairQR(); }
   if (step === 5) {
@@ -162,14 +169,14 @@ function refreshGate() {
 /* ---------- 许可证 ---------- */
 async function loadLicense() {
   const box = $("lic-box");
+  if (!box) return;
   const put = (zh, en, note) => {
     box.dataset.zh = zh;
     box.dataset.en = en;
-    box.textContent = ($("lic-tabs") && document.querySelector(".lic-tabs .tab.active") &&
-                       document.querySelector(".lic-tabs .tab.active").dataset.lang === "en") ? en : zh;
+    const tab = document.querySelector(".lic-tabs .tab.active");
+    box.textContent = (tab && tab.dataset.lang === "en") ? en : zh;
     box.scrollTop = 0;
     if (note && $("lic-note")) $("lic-note").textContent = note;
-    // 加载完就把"划到底 10 秒"的计时重置，让用户从头读
     try {
       if (state && state.lic) {
         state.lic.zh = { t0: 0, bottom: false };
@@ -178,9 +185,8 @@ async function loadLicense() {
     } catch (e) {}
     const cb = $("lic-agree");
     if (cb) { cb.checked = false; cb.disabled = true; }
-    refreshGate();
+    if (typeof refreshGate === "function") refreshGate();
   };
-
   try {
     const d = await Promise.race([
       api("/api/wizard/license"),
@@ -188,19 +194,18 @@ async function loadLicense() {
     ]);
     const zh = (d && d.zh) || "";
     const en = (d && d.en) || "";
-    if (!zh && !en) throw new Error("服务器上没有找到许可证文件");
+    if (!zh && !en) throw new Error("没有找到许可证文件");
     put(zh || en, en || zh, "");
   } catch (e) {
-    const txt = "本地许可证文件读取失败（" + (e.message || "未知原因") + "）。\n\n" +
-      "本软件以 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）发布，全文可在此查看／下载：\n" +
+    const txt = "本地许可证文件读取失败（" + (e.message || "未知") + "）。\n\n" +
+      "本软件以 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）发布，全文：\n" +
       "  英文原文（具法律效力）: https://www.gnu.org/licenses/gpl-3.0.txt\n" +
       "  中文参考（非官方）    : https://www.gnu.org/licenses/gpl-3.0.zh-cn.html\n\n" +
-      "安装目录里也带了一份 LICENSE 文件，可直接打开。\n\n" +
-      "阅读后可勾选下方「我已阅读并同意上述许可证条款」继续。";
-    put(txt, txt, "已切换到离线兜底说明");
+      "安装目录里也带了一份 LICENSE 文件。阅读后可勾选下方同意项继续。";
+    put(txt, txt, "已显示离线兜底说明");
     const cb = $("lic-agree");
     if (cb) cb.disabled = false;
-    refreshGate();
+    if (typeof refreshGate === "function") refreshGate();
   }
 }
 
@@ -571,7 +576,7 @@ function loopFx() {
 }
 
 /* ---------- 事件 ---------- */
-$("btn-next").addEventListener("click", async () => {
+on("btn-next", "click", async () => {
   if (!canNext()) return;
   // 第 3 步（设备名）：先落库并重新注册 mDNS，再进入下一步
   if (state.step === 2) {
@@ -585,15 +590,15 @@ $("btn-next").addEventListener("click", async () => {
   }
   go(state.step + 1);
 });
-$("btn-prev").addEventListener("click", () => go(state.step - 1));
-$("lic-box").addEventListener("scroll", onLicScroll);
+on("btn-prev", "click", () => go(state.step - 1));
+on("lic-box", "scroll", onLicScroll);
 document.querySelectorAll(".lic-tabs .tab").forEach((b) =>
   b.addEventListener("click", () => showLang(b.dataset.lang)));
-$("lic-agree").addEventListener("change", () => { tickLic(); refreshGate(); });
+on("lic-agree", "change", () => { tickLic(); refreshGate(); });
 // 任何一项改动都即时保存（异步防抖，不会打断输入）
 function autosaveField() { saveStep(state.step); }
-$("host-name").addEventListener("input", syncHost);
-$("host-name").addEventListener("change", autosaveField);
+on("host-name", "input", syncHost);
+on("host-name", "change", autosaveField);
 function previewWizPhrase() {
   const el = $("wiz-phrase-preview");
   const src = $("wiz-phrase");
@@ -602,7 +607,7 @@ function previewWizPhrase() {
     .replace(/%number%/g, "12").replace(/%name%/g, "张子墨")
     .replace(/%note%/g, "数学课代表").replace(/%teacher%/g, "王老师") || "（未设置叫号语）";
 }
-$("wiz-phrase").addEventListener("input", () => { previewWizPhrase(); autosaveField(); });
+on("wiz-phrase", "input", () => { previewWizPhrase(); autosaveField(); });
 ["wiz-play-count", "wiz-volume", "wiz-prompt-sound", "wiz-prompt-enabled", "wiz-tts-engine"]
   .forEach((id) => { const el = $(id); if (el) { el.addEventListener("change", autosaveField); el.addEventListener("input", autosaveField); } });
 
@@ -613,9 +618,9 @@ $("wiz-phrase").addEventListener("input", () => { previewWizPhrase(); autosaveFi
     el.addEventListener("input", autosaveField);
   }
 });
-$("roster-text").addEventListener("input", syncRoster);
-$("btn-pick-file").addEventListener("click", () => $("roster-file").click());
-$("roster-file").addEventListener("change", (e) => {
+on("roster-text", "input", syncRoster);
+on("btn-pick-file", "click", () => $("roster-file").click());
+on("roster-file", "change", (e) => {
   const f = e.target.files[0];
   if (!f) return;
   const fr = new FileReader();
@@ -627,19 +632,19 @@ $("roster-file").addEventListener("change", (e) => {
   };
   fr.readAsText(f, "utf-8");
 });
-$("btn-sample").addEventListener("click", () => {
+on("btn-sample", "click", () => {
   $("roster-text").value = "1,张子墨\n2,王欣然\n3,李嘉怡\n4,赵晨曦\n5,陈思远\n6,刘雨桐";
   syncRoster();
 });
-$("btn-genpw").addEventListener("click", makePairQR);
-$("btn-copy").addEventListener("click", async () => {
+on("btn-genpw", "click", makePairQR);
+on("btn-copy", "click", async () => {
   const t = $("pw-value").textContent;
   try {
     await navigator.clipboard.writeText(t);
     toast("已复制");
   } catch (e) { toast("请手动选中复制：" + t); }
 });
-$("btn-start").addEventListener("click", finish);
+on("btn-start", "click", finish);
 
 /* ---------- 启动 ---------- */
 (async function init() {
@@ -671,7 +676,7 @@ $("btn-start").addEventListener("click", finish);
     previewWizPhrase();
   } catch (e) { /* 忽略，用默认值 */ }
   syncHost();
-  await loadLicense();
+  loadLicense();   // 不阻塞：加载完自己刷新文本框
   // 恢复"已同意许可证"（必须放在 loadLicense 之后，否则会被初始化重置）
   if (state.resumeAgreed) {
     const agree = $("lic-agree");
@@ -691,4 +696,18 @@ $("btn-start").addEventListener("click", finish);
   state.restoring = false;
   if (resume > 0) toast("已从第 " + (resume + 1) + " 步继续");
   setInterval(() => { if (state.step === 1) tickLic(); }, 500);
+})();
+
+/* 兜底：无论 init 里哪个 await 卡住，都保证界面能渲染出来 */
+(function () {
+  let tries = 0;
+  const tick = setInterval(function () {
+    tries += 1;
+    if (document.querySelector(".step.active")) { clearInterval(tick); return; }
+    try {
+      const st = (typeof state !== "undefined" && state && typeof state.step === "number") ? state.step : 0;
+      go(st);
+    } catch (e) { /* 下一轮再试 */ }
+    if (tries > 12) clearInterval(tick);
+  }, 250);
 })();
