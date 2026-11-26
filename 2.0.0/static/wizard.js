@@ -127,6 +127,7 @@ function go(step) {
   $("btn-next").classList.toggle("hidden", step === totalSteps - 1);
   if (step === 0) fireworks(1600);
   if (step === totalSteps - 1) { buildSummary(); confetti(); }
+  if (step === 1) loadLicense();   // 进到许可证这一屏必定加载一次
   if (step === 2) $("host-name").focus();
   if (step === 5) { if (state.pairToken) drawQR(); else makePairQR(); }
   if (step === 5) {
@@ -161,23 +162,25 @@ function refreshGate() {
 /* ---------- 许可证 ---------- */
 async function loadLicense() {
   const box = $("lic-box");
-  const fallback = (why) => {
-    // 本地文件读不到 / 超时：给官方下载地址，并允许用户继续
-    const zh = "本地许可证文件读取失败（" + why + "）。\n\n" +
-      "本软件以 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）发布，全文可在此下载：\n" +
-      "  https://www.gnu.org/licenses/gpl-3.0.txt      （GNU 官方英文原文，具法律效力）\n" +
-      "  https://www.gnu.org/licenses/gpl-3.0.zh-cn.html （非官方中文参考）\n\n" +
-      "安装目录里也带了一份 LICENSE 文件，可直接打开查看。\n\n" +
-      "勾选下面的「我已阅读并同意」后即可继续安装设置。";
+  const put = (zh, en, note) => {
     box.dataset.zh = zh;
-    box.dataset.en = zh;
-    showLang("zh");
-    box.textContent = zh;
+    box.dataset.en = en;
+    box.textContent = ($("lic-tabs") && document.querySelector(".lic-tabs .tab.active") &&
+                       document.querySelector(".lic-tabs .tab.active").dataset.lang === "en") ? en : zh;
     box.scrollTop = 0;
+    if (note && $("lic-note")) $("lic-note").textContent = note;
+    // 加载完就把"划到底 10 秒"的计时重置，让用户从头读
+    try {
+      if (state && state.lic) {
+        state.lic.zh = { t0: 0, bottom: false };
+        state.lic.en = { t0: 0, bottom: false };
+      }
+    } catch (e) {}
     const cb = $("lic-agree");
-    if (cb) { cb.disabled = false; }
+    if (cb) { cb.checked = false; cb.disabled = true; }
     refreshGate();
   };
+
   try {
     const d = await Promise.race([
       api("/api/wizard/license"),
@@ -185,12 +188,19 @@ async function loadLicense() {
     ]);
     const zh = (d && d.zh) || "";
     const en = (d && d.en) || "";
-    if (!zh && !en) { fallback("服务器上没有找到许可证文件"); return; }
-    box.dataset.zh = zh || en;
-    box.dataset.en = en || zh;
-    showLang("zh");
+    if (!zh && !en) throw new Error("服务器上没有找到许可证文件");
+    put(zh || en, en || zh, "");
   } catch (e) {
-    fallback(e.message || "读取超时");
+    const txt = "本地许可证文件读取失败（" + (e.message || "未知原因") + "）。\n\n" +
+      "本软件以 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）发布，全文可在此查看／下载：\n" +
+      "  英文原文（具法律效力）: https://www.gnu.org/licenses/gpl-3.0.txt\n" +
+      "  中文参考（非官方）    : https://www.gnu.org/licenses/gpl-3.0.zh-cn.html\n\n" +
+      "安装目录里也带了一份 LICENSE 文件，可直接打开。\n\n" +
+      "阅读后可勾选下方「我已阅读并同意上述许可证条款」继续。";
+    put(txt, txt, "已切换到离线兜底说明");
+    const cb = $("lic-agree");
+    if (cb) cb.disabled = false;
+    refreshGate();
   }
 }
 
