@@ -3739,6 +3739,37 @@ def api_tunnel_autostart():
     return jsonify({"ok": True, "autostart": cfg["tunnel_autostart"]})
 
 
+@app.route("/api/tunnel/logout", methods=["POST"])
+def api_tunnel_logout():
+    """退出 GitHub 登录（可选同时清掉本机保存的账号密码）。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    clear = bool(data.get("clear_credentials"))
+    msgs = []
+    try:
+        tunnel.stop(log=lambda m: msgs.append(m))
+    except Exception:
+        pass
+    rc, out = tunnel._run(["user", "logout"], timeout=90)
+    msgs.append("logout rc=%s %s" % (rc, (out or "").strip()[:120]))
+    if clear:
+        try:
+            autologin.clear_credentials()
+            msgs.append("已清除本机保存的密码")
+        except Exception as exc:
+            msgs.append("清除密码失败：%r" % (exc,))
+    with _AUTO_LOCK:
+        _AUTO.update({"state": "idle", "message": "", "user": "", "tries": 0})
+    cfg = get_config()
+    cfg["public_enabled"] = False
+    save_config(cfg)
+    print("[隧道] 退出登录：%s" % " | ".join(msgs))
+    return jsonify({"ok": True, "logged_in": tunnel.login_user(),
+                    "cleared": clear, "detail": " | ".join(msgs)[-300:]})
+
+
 @app.route("/api/tunnel/relogin", methods=["POST"])
 def api_tunnel_relogin():
     """① 强制重新登录：先退掉旧登录态，再用保存的账号密码登一次。"""

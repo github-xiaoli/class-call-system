@@ -1596,10 +1596,21 @@ init();
   const body = document.body;
   const open = () => body.classList.add("drawer-open", "edge-open");
   const close = () => body.classList.remove("edge-open", "drawer-open");
+  let awayTimer = null;
   document.addEventListener("mousemove", (e) => {
     const opened = body.classList.contains("drawer-open");
-    if (!opened && e.clientX <= 16) open();
-    else if (opened && e.clientX > 300) close();
+    if (!opened && e.clientX <= 16) {
+      if (awayTimer) { clearTimeout(awayTimer); awayTimer = null; }
+      open();
+      return;
+    }
+    if (opened && e.clientX > 340) {
+      // 离开抽屉区域 220ms 再收，避免手一抖就关掉
+      if (!awayTimer) awayTimer = setTimeout(() => { close(); awayTimer = null; }, 220);
+    } else if (awayTimer) {
+      clearTimeout(awayTimer);
+      awayTimer = null;
+    }
   });
   const tab = document.getElementById("edge-tab");
   if (tab) tab.addEventListener("click", open);

@@ -267,3 +267,21 @@
       note("申请设备码失败：" + e.message, "err");
     }
   });
+
+  /* ---------- 退出 GitHub 登录 ---------- */
+  if ($("btn-gh-logout")) $("btn-gh-logout").addEventListener("click", async () => {
+    const clear = confirm("退出 GitHub 登录？\n\n点「确定」= 退出并删除本机保存的账号密码\n点「取消」= 只退出登录，密码保留在本机");
+    note(clear ? "正在退出并清除本机密码…" : "正在退出登录…");
+    try {
+      const r = await jpost("/api/tunnel/logout", { clear_credentials: clear });
+      if (!r.ok) { note(r.error || "退出失败", "err"); return; }
+      note(r.logged_in ? "已退出，但仍检测到登录态" : ("已退出 GitHub 登录" + (clear ? "，本机密码已删除" : "")), r.logged_in ? "err" : "ok");
+      const gh = $("set-gh-user");
+      if (clear && gh) gh.value = "";
+      const pwd = $("set-gh-pwd");
+      if (pwd) pwd.value = "";
+      refreshTunnel();
+    } catch (e) {
+      note("退出失败：" + e.message, "err");
+    }
+  });
