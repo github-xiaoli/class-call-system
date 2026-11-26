@@ -213,23 +213,41 @@ def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
             "document.querySelector('form[action=\"/login/device/select_account\"]')",
             30, log, "设备码页面")
 
-        # 3) 设备码页（先过"用这个账号继续"的中间页）
+        # 3) 设备码页（先自动过"已登录为 xxx / Continue"这一页）
         log("[自动登录] 打开设备码页面")
         progress("正在处理设备码授权", br)
         br.nav("https://github.com/login/device", wait=1.5)
-        for i in range(3):
+        for i in range(6):
             if br.js("return !!document.querySelector('#user-code-0');", wait=0.3):
                 break
             clicked = br.js("""
+                // ① 标准中间页：表单 action=/login/device/select_account
                 const f = document.querySelector('form[action="/login/device/select_account"]');
-                if (f) { const b = f.querySelector('input[type=submit], button'); if (b) { b.click(); return 'ok'; } }
-                const btn = document.querySelector('button[type=submit], input[type=submit]');
-                if (btn) { btn.click(); return 'submit'; }
+                if (f) {
+                    const b = f.querySelector('button, input[type=submit]');
+                    if (b) { b.disabled = false; b.click(); return 'form-btn'; }
+                    f.submit(); return 'form-submit';
+                }
+                // ② 按文字找 Continue / 继续 / 用这个账号继续
+                const nodes = Array.from(document.querySelectorAll('button, a, input[type=submit]'));
+                for (const el of nodes) {
+                    const t = ((el.innerText || el.value || '') + '').trim().toLowerCase();
+                    if (t === 'continue' || t.indexOf('continue') === 0
+                        || t.indexOf('继续') >= 0 || t.indexOf('用这个账号') >= 0) {
+                        el.disabled = false;
+                        el.click();
+                        return 'text:' + t.slice(0, 20);
+                    }
+                }
+                // ③ 兜底：页面里唯一的提交按钮
+                const only = document.querySelector('form button[type=submit], form input[type=submit]');
+                if (only) { only.click(); return 'fallback'; }
                 return 'none';
-            """, wait=2.0)
-            log("[自动登录] 中间页：%s" % clicked)
-            if clicked == 'none':
+            """, wait=2.5)
+            log("[自动登录] 中间页：%s（第 %d 次）" % (clicked, i + 1))
+            if clicked == "none":
                 time.sleep(1.5)
+        progress("中间页已过，等待输入设备码", br)
 
         # 4) 8 个单字符框逐格填（第 4 格是横杠，跳过）
         raw = code.replace("-", "").upper()
