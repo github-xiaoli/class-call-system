@@ -2056,10 +2056,26 @@ def api_wizard_hostname():
 def api_wizard_license():
     """给向导返回两份文本：中文全文译文 + GNU 英文原文（两个独立文件）。"""
     out = {"ok": True, "zh": "", "en": "", "legal": True}
+    # 安装包里许可证在版本目录下（如 <安装目录>/2.0.36/LICENSE），所以要把这些位置都找一遍
+    bases = [BASE_DIR, ROOT_DIR]
+    try:
+        for name in sorted(os.listdir(ROOT_DIR)):
+            d = os.path.join(ROOT_DIR, name)
+            if os.path.isdir(d) and re.match(r"^\d+\.\d+", name):
+                bases.append(d)
+    except Exception:
+        pass
+    try:
+        for name in sorted(os.listdir(BASE_DIR)):
+            d = os.path.join(BASE_DIR, name)
+            if os.path.isdir(d) and re.match(r"^\d+\.\d+", name):
+                bases.append(d)
+    except Exception:
+        pass
     for key, names in (("zh", ("LICENSE-中文全文译文.txt", "LICENSE-中文参考译文.txt")),
                        ("en", ("LICENSE", "COPYING"))):
         for name in names:
-            for base in (BASE_DIR, ROOT_DIR):
+            for base in bases:
                 p = os.path.join(base, name)
                 if os.path.isfile(p):
                     try:

@@ -172,7 +172,26 @@ def run(exe_path, env_fn, log=print, headless=True, timeout=180):
             except Exception:
                 pass
             shot = br.shot(os.path.join(_log_dir(), "autologin_login_fail.png"))
-            return False, "GitHub 登录失败：%s%s" % (
+            # 两步验证 / 邮箱验证码：这不是密码错，需要用户介入
+        try:
+            probe = br.js("""
+                const t = (document.body ? document.body.innerText : "").toLowerCase();
+                if (document.querySelector('#otp, input[name="otp"], [autocomplete="one-time-code"]')) return "NEED_2FA";
+                if (t.indexOf("two-factor") >= 0 || t.indexOf("two factor") >= 0) return "NEED_2FA";
+                if (t.indexOf("verify your email") >= 0 || t.indexOf("check your email") >= 0
+                    || t.indexOf("verification code") >= 0) return "NEED_EMAIL";
+                return "";
+            """)
+        except Exception:
+            probe = ""
+        probe = (probe or "").strip().strip('"')
+        if probe == "NEED_2FA":
+            return False, ("NEED_2FA|GitHub 账号开了两步验证（2FA）。请先在本机浏览器打开 "
+                           "github.com 手动登录一次（勾选记住此设备），再回来点「保存并登录」。")
+        if probe == "NEED_EMAIL":
+            return False, ("NEED_EMAIL|GitHub 要求邮箱验证码。请先在本机浏览器打开 github.com "
+                           "手动登录一次，按要求填邮箱验证码，之后再回来点「保存并登录」。")
+        return False, "GitHub 登录失败：%s%s" % (
                 (err or "账号或密码不对"), ("（截图：%s）" % shot) if shot else "")
 
         # 3) 设备码页（先过"用这个账号继续"的中间页）

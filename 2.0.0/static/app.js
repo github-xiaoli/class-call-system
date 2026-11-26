@@ -1589,3 +1589,23 @@ init();
   fillPublic();
   setInterval(fillPublic, 20000);
 })();
+
+
+/* 主页左边缘：鼠标移入自动滑出应用列表；点击把手也能开；移到中间收起 */
+(function () {
+  const body = document.body;
+  const open = () => body.classList.add("drawer-open", "edge-open");
+  const close = () => body.classList.remove("edge-open", "drawer-open");
+  document.addEventListener("mousemove", (e) => {
+    const opened = body.classList.contains("drawer-open");
+    if (!opened && e.clientX <= 16) open();
+    else if (opened && e.clientX > 300) close();
+  });
+  const tab = document.getElementById("edge-tab");
+  if (tab) tab.addEventListener("click", open);
+  // 高亮当前所在应用（主页 = 叫号主界面）
+  document.querySelectorAll(".app-item").forEach((a) => {
+    const href = a.getAttribute("href");
+    if (href === "/" && a.classList.contains("home")) a.classList.add("active");
+  });
+})();

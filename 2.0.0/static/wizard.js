@@ -160,13 +160,37 @@ function refreshGate() {
 
 /* ---------- 许可证 ---------- */
 async function loadLicense() {
+  const box = $("lic-box");
+  const fallback = (why) => {
+    // 本地文件读不到 / 超时：给官方下载地址，并允许用户继续
+    const zh = "本地许可证文件读取失败（" + why + "）。\n\n" +
+      "本软件以 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）发布，全文可在此下载：\n" +
+      "  https://www.gnu.org/licenses/gpl-3.0.txt      （GNU 官方英文原文，具法律效力）\n" +
+      "  https://www.gnu.org/licenses/gpl-3.0.zh-cn.html （非官方中文参考）\n\n" +
+      "安装目录里也带了一份 LICENSE 文件，可直接打开查看。\n\n" +
+      "勾选下面的「我已阅读并同意」后即可继续安装设置。";
+    box.dataset.zh = zh;
+    box.dataset.en = zh;
+    showLang("zh");
+    box.textContent = zh;
+    box.scrollTop = 0;
+    const cb = $("lic-agree");
+    if (cb) { cb.disabled = false; }
+    refreshGate();
+  };
   try {
-    const d = await api("/api/wizard/license");
-    $("lic-box").dataset.zh = d.zh || "（缺少中文译文文件）";
-    $("lic-box").dataset.en = d.en || "（缺少英文 LICENSE 文件）";
+    const d = await Promise.race([
+      api("/api/wizard/license"),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("超过 10 秒未返回")), 10000)),
+    ]);
+    const zh = (d && d.zh) || "";
+    const en = (d && d.en) || "";
+    if (!zh && !en) { fallback("服务器上没有找到许可证文件"); return; }
+    box.dataset.zh = zh || en;
+    box.dataset.en = en || zh;
     showLang("zh");
   } catch (e) {
-    $("lic-box").textContent = "许可证读取失败：" + e.message;
+    fallback(e.message || "读取超时");
   }
 }
 

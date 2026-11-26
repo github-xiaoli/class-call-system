@@ -131,22 +131,51 @@
     return {};
   }
 
+  async function waitAuto(maxSec) {
+    const end = Date.now() + (maxSec || 150) * 1000;
+    while (Date.now() < end) {
+      let s = {};
+      try { s = (await jget("/api/tunnel/auto_status")).auto || {}; } catch (e) { break; }
+      const st = String(s.state || "");
+      if (st === "ok" || st === "fail" || st === "error") return s;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return null;
+  }
+
   if ($("btn-auto-login")) $("btn-auto-login").addEventListener("click", async () => {
     const u = ($("set-gh-user") || {}).value || "";
     const p = ($("set-gh-pwd") || {}).value || "";
     if (!u || !p) { note("请先填 GitHub 账号和密码", "err"); return; }
-    note("正在登录 GitHub（约 30~60 秒）…");
+    note("正在登录 GitHub，请不要关闭这个页面（通常 30~60 秒）…");
     const r = await jpost("/api/tunnel/login_auto", { username: u, password: p });
-    note(r.ok ? "登录成功" : ("失败：" + (r.error || "")), r.ok ? "ok" : "err");
-    refreshTunnel();
+    if (!r.ok) { note(r.error || "启动登录失败", "err"); return; }
+    if (r.message === "已经是登录状态") { note("已经是登录状态", "ok"); refreshTunnel(); return; }
+    const s = await waitAuto(180);
+    if (!s) { note("登录还在进行中，稍后再点一次「重新登录」看结果", "err"); return; }
+    if (s.state === "ok") {
+      note("登录成功：" + (s.user || s.logged_in || ""), "ok");
+      refreshTunnel();
+      return;
+    }
+    const msg = String(s.message || "登录失败");
+    if (msg.indexOf("NEED_2FA") >= 0 || msg.indexOf("两步验证") >= 0) {
+      note(msg.replace("NEED_2FA|", ""), "err");
+    } else if (msg.indexOf("NEED_EMAIL") >= 0 || msg.indexOf("邮箱验证") >= 0) {
+      note(msg.replace("NEED_EMAIL|", ""), "err");
+    } else {
+      note("登录失败：" + msg, "err");
+    }
   });
 
   if ($("btn-relogin")) $("btn-relogin").addEventListener("click", async () => {
     note("正在强制重新登录…");
     const r = await jpost("/api/tunnel/relogin", {});
     if (!r.ok) { note(r.error || "失败", "err"); return; }
-    const j = await waitJob();
-    note(j.ok ? "已重新登录" : ("失败：" + (j.error || "")), j.ok ? "ok" : "err");
+    const s = await waitAuto(180);
+    if (s && s.state === "ok") { note("已重新登录：" + (s.user || s.logged_in || ""), "ok"); }
+    else if (s) { note("失败：" + String(s.message || "").replace(/^NEED_(2FA|EMAIL)\|/, ""), "err"); }
+    else { note("还在进行中，稍后再看结果", "err"); }
     refreshTunnel();
   });
 
@@ -206,3 +235,35 @@
       if (a.classList.contains("home")) a.classList.toggle("active", here === "/");
     });
   })();
+
+  /* ---------- 手动登录（设备码，备用） ---------- */
+  async function pollManual() {
+    for (let i = 0; i < 60; i++) {
+      let d = {};
+      try { d = await jget("/api/tunnel/status"); } catch (e) { break; }
+      const t = (d.tunnel || {});
+      if (t.login_state === "logged_in") { note("手动登录成功", "ok"); refreshTunnel(); return; }
+      if (t.login_state === "error") { note("手动登录失败：" + (t.login_error || ""), "err"); return; }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
+  if ($("btn-tunnel-login")) $("btn-tunnel-login").addEventListener("click", async () => {
+    note("正在申请设备码…");
+    try {
+      const d = await fetch("/api/tunnel/login/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "same-origin", body: "{}",
+      }).then((r) => r.json());
+      const t = (d && d.tunnel) || d || {};
+      const code = t.user_code || t.userCode || "";
+      const box = $("tunnel-login-box");
+      if (box) box.style.display = "";
+      const el = $("tunnel-user-code");
+      if (el) el.textContent = code || "--------";
+      note(code ? ("设备码 " + code + "，请到 github.com/login/device 输入") : "已发起登录，请查看提示", code ? "ok" : "err");
+      pollManual();
+    } catch (e) {
+      note("申请设备码失败：" + e.message, "err");
+    }
+  });

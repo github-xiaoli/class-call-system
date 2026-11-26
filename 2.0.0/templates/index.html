@@ -91,6 +91,8 @@ body.fs .msg-row input { padding: 10px 12px; }
     border-radius:11px;padding:11px 12px;font:inherit;font-size:14px;color:#1d2437;cursor:pointer;
     text-align:left;transition:background .15s ease}
   .app-item:hover{background:#f2f6ff}
+  .app-item.active{background:#e8f0ff;color:#2a5bd7;font-weight:600}
+  .app-item.active .ic{stroke:#1b47b8}
   .app-item:active{background:#e8f0ff}
   .app-item .ic{width:22px;height:22px;flex:none;fill:none;stroke:#2a5bd7;stroke-width:1.8;
     stroke-linecap:round;stroke-linejoin:round}
@@ -111,6 +113,11 @@ body.fs .msg-row input { padding: 10px 12px; }
   .drawer-teacher label{display:block;font-size:12.5px;color:#6b7590;margin-bottom:6px}
   .drawer-teacher input{font:inherit;font-size:13.5px;padding:7px 9px;border:1px solid #d9e0ee;
     border-radius:9px;width:100%}
+  .edge-hot{position:fixed;left:0;top:0;width:16px;height:100%;z-index:59}
+  .edge-tab{position:fixed;left:0;top:46%;width:14px;height:56px;border-radius:0 10px 10px 0;
+    background:#dbe6ff;color:#2a5bd7;display:flex;align-items:center;justify-content:center;
+    font-size:11px;cursor:pointer;z-index:58;box-shadow:2px 0 6px rgba(20,40,90,.12)}
+  .edge-tab:hover{background:#c7d8ff}
   .drawer-sep{height:1px;background:#eef2f9;margin:8px 12px}
   .drawer-foot{padding:12px 16px;border-top:1px solid #eef2f9;color:#8b96ad;font-size:12px}
 
@@ -147,6 +154,8 @@ body.fs .msg-row input { padding: 10px 12px; }
 </svg>
 
 <div id="drawer-mask" class="drawer-mask"></div>
+<div class="edge-hot" id="edge-hot" title="鼠标移到最左侧可打开应用列表"></div>
+<div class="edge-tab" id="edge-tab" title="应用列表">‹</div>
 <aside id="app-drawer" class="app-drawer" aria-hidden="true">
   <div class="drawer-head">
     <span>应用</span>
@@ -166,6 +175,7 @@ body.fs .msg-row input { padding: 10px 12px; }
     </div>
   </div>
   <div class="drawer-list">
+    <a class="app-item home" href="/"><svg class="ic"><use href="#ic-call"/></svg><span>叫号主界面</span></a>
     <button class="app-item" data-target="btn-monitor"><svg class="ic"><use href="#ic-monitor"/></svg><span>屏幕监控</span></button>
     <a class="app-item" href="/roster"><svg class="ic"><use href="#ic-roster"/></svg><span>名条管理</span></a>
     <button class="app-item" data-target="btn-files"><svg class="ic"><use href="#ic-files"/></svg><span>文件传输</span></button>
