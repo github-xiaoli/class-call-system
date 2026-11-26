@@ -17,6 +17,7 @@ r"""用 Edge/Chrome 的调试协议（CDP）驱动浏览器，零第三方依赖
 import base64
 import json
 import os
+import os
 import re
 import shutil
 import socket
@@ -160,29 +161,54 @@ class Browser(object):
         self.exe = find_browser()
         if not self.exe:
             raise RuntimeError("这台电脑上找不到 Edge/Chrome")
+        self.ws = None
+        self._id = 0
+        self.timeout = timeout
+        self.headless = headless
+        self.profile = tempfile.mkdtemp(prefix="cqt_browser_")
+        self.errlog = os.path.join(self.profile, "browser.err.log")
+        self._connect()
+
+    def _spawn(self, extra):
+        """按不同参数组合启动浏览器；把 stderr 落到文件里，失败时能看原因。"""
         self.port = _free_port()
         if not self.port:
             raise RuntimeError("找不到可用调试端口")
-        self.profile = tempfile.mkdtemp(prefix="cqt_browser_")
         args = [self.exe, "--remote-debugging-port=%d" % self.port,
                 "--user-data-dir=%s" % self.profile,
                 "--no-first-run", "--no-default-browser-check",
                 "--disable-extensions", "--disable-background-networking",
-                "--window-size=1280,900"]
-        if headless:
-            args.insert(1, "--headless=new")
+                "--disable-gpu", "--remote-allow-origins=*",
+                "--window-size=1280,900"] + list(extra)
+        try:
+            self.errfh = open(self.errlog, "ab")
+        except Exception:
+            self.errfh = subprocess.DEVNULL
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL,
+                                     stderr=self.errfh,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.ws = None
-        self._id = 0
-        self.timeout = timeout
-        self._connect()
 
-    def _connect(self):
-        deadline = time.time() + 25
+    def _tail_err(self, n=260):
+        try:
+            with open(self.errlog, "rb") as f:
+                data = f.read()[-n:]
+            return data.decode("utf-8", "replace").replace("\r", " ").replace("\n", " ")
+        except Exception:
+            return ""
+
+    def _kill(self):
+        try:
+            if getattr(self, "proc", None) and self.proc.poll() is None:
+                self.proc.kill()
+        except Exception:
+            pass
+
+    def _wait_cdp(self, seconds):
+        deadline = time.time() + seconds
         last = ""
         while time.time() < deadline:
+            if getattr(self, "proc", None) and self.proc.poll() is not None:
+                return False, "浏览器进程已退出（退出码 %s）" % self.proc.returncode
             try:
                 with urllib.request.urlopen(
                         "http://127.0.0.1:%d/json/list" % self.port, timeout=2) as r:
@@ -190,11 +216,33 @@ class Browser(object):
                 for t in targets:
                     if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
                         self.ws = _WS(t["webSocketDebuggerUrl"], timeout=self.timeout)
-                        return
+                        return True, ""
             except Exception as exc:
                 last = repr(exc)
-            time.sleep(0.4)
-        raise RuntimeError("连不上浏览器调试接口：%s" % last)
+            time.sleep(0.5)
+        return False, last or "调试端口一直没响应"
+
+    def _connect(self):
+        langs = []
+        if self.headless:
+            langs.append(["--headless=new"])
+            langs.append(["--headless"])
+        langs.append([])
+        problems = []
+        for extra in langs:
+            try:
+                self.log("[浏览器] 启动方式 %s" % (" ".join(extra) or "普通窗口"))
+                self._spawn(extra)
+                ok, why = self._wait_cdp(45)
+                if ok:
+                    return
+                tail = self._tail_err()
+                problems.append("%s → %s%s" % (" ".join(extra) or "普通窗口", why,
+                                               ("｜浏览器输出：" + tail) if tail else ""))
+                self._kill()
+            except Exception as exc:
+                problems.append("%s → %r" % (" ".join(extra) or "普通窗口", exc))
+        raise RuntimeError("连不上浏览器调试接口：%s" % " ； ".join(problems)[:600])
 
     def call(self, method, params=None, timeout=None):
         self._id += 1
