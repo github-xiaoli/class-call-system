@@ -144,59 +144,74 @@ def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
     try:
         progress("启动浏览器")
         br = edge_cdp.Browser(headless=headless, log=log)
-        log("[自动登录] 打开 GitHub 登录页")
-        progress("打开 GitHub 登录页", br)
-        br.nav("https://github.com/login", wait=1.0)
-        progress("已定位登录表单", br)
-        _wait_for(br, "document.querySelector('#login_field')", 25, log, "登录输入框")
 
-        # 1) 填账号密码并提交
-        br.js("""
-            const u = document.querySelector('#login_field');
-            const p = document.querySelector('#password');
-            if (!u || !p) return 'noform';
-            u.value = %s; p.value = %s;
-            u.dispatchEvent(new Event('input', {bubbles:true}));
-            p.dispatchEvent(new Event('input', {bubbles:true}));
-            const btn = document.querySelector('input[type=submit][name=commit]')
-                     || document.querySelector('button[type=submit]');
-            if (btn) btn.click(); else u.form.submit();
-            return 'submitted';
-        """ % (json.dumps(user), json.dumps(pwd)), wait=3.0)
-        log("[自动登录] 已提交账号密码，当前页面：%s" % br.title())
+        # 直接打开设备码页：没登录时 GitHub 会自动跳到登录页，登录成功后自己回到设备码页
+        progress("打开设备码页 github.com/login/device", br)
+        br.nav("https://github.com/login/device", wait=1.5)
 
-        # 2) 只在"还停在登录页"时才判定失败
-        if _wait_for(br, "document.querySelector('#login_field')", 6, None):
-            err = ""
-            try:
-                err = br.js("""
-                    const e = document.querySelector('#js-flash-container .flash-error, .flash-error');
-                    return e ? e.innerText.trim() : '';
-                """, wait=0) or ""
-            except Exception:
-                pass
-            shot = br.shot(os.path.join(_log_dir(), "autologin_login_fail.png"))
-            # 两步验证 / 邮箱验证码：这不是密码错，需要用户介入
-        try:
-            probe = br.js("""
-                const t = (document.body ? document.body.innerText : "").toLowerCase();
-                if (document.querySelector('#otp, input[name="otp"], [autocomplete="one-time-code"]')) return "NEED_2FA";
-                if (t.indexOf("two-factor") >= 0 || t.indexOf("two factor") >= 0) return "NEED_2FA";
-                if (t.indexOf("verify your email") >= 0 || t.indexOf("check your email") >= 0
-                    || t.indexOf("verification code") >= 0) return "NEED_EMAIL";
-                return "";
-            """)
-        except Exception:
-            probe = ""
-        probe = (probe or "").strip().strip('"')
-        if probe == "NEED_2FA":
-            return False, ("NEED_2FA|GitHub 账号开了两步验证（2FA）。请先在本机浏览器打开 "
-                           "github.com 手动登录一次（勾选记住此设备），再回来点「保存并登录」。")
-        if probe == "NEED_EMAIL":
-            return False, ("NEED_EMAIL|GitHub 要求邮箱验证码。请先在本机浏览器打开 github.com "
-                           "手动登录一次，按要求填邮箱验证码，之后再回来点「保存并登录」。")
-        return False, "GitHub 登录失败：%s%s" % (
-                (err or "账号或密码不对"), ("（截图：%s）" % shot) if shot else "")
+        # 1) 落到登录页就先填账号密码
+        if _wait_for(br, "document.querySelector('#login_field')", 8, log, "登录表单"):
+            progress("填写账号密码", br)
+            filled = br.js("""
+                const u = document.querySelector('#login_field');
+                const p = document.querySelector('#password');
+                if (!u || !p) return 'noform';
+                u.value = %s; p.value = %s;
+                u.dispatchEvent(new Event('input', {bubbles:true}));
+                p.dispatchEvent(new Event('input', {bubbles:true}));
+                const btn = document.querySelector('input[type=submit][name=commit]')
+                         || document.querySelector('button[type=submit]');
+                if (btn) btn.click(); else u.form.submit();
+                return 'submitted';
+            """ % (json.dumps(user), json.dumps(pwd)), wait=3.5)
+            log("[自动登录] 填表结果：%s | 当前页面：%s" % (filled, br.title()))
+            progress("已提交账号密码，等待跳转", br)
+
+            # 还停在登录页 -> 分清是密码错还是需要人工验证
+            if _wait_for(br, "document.querySelector('#login_field')", 8, None):
+                probe = ""
+                try:
+                    probe = br.js("""
+                        const t = (document.body ? document.body.innerText : "").toLowerCase();
+                        if (document.querySelector('#otp, input[name="otp"], [autocomplete="one-time-code"]')) return "NEED_2FA";
+                        if (t.indexOf("two-factor") >= 0 || t.indexOf("two factor") >= 0) return "NEED_2FA";
+                        if (t.indexOf("verify your email") >= 0 || t.indexOf("check your email") >= 0
+                            || t.indexOf("verification code") >= 0) return "NEED_EMAIL";
+                        return "";
+                    """) or ""
+                except Exception:
+                    probe = ""
+                probe = probe.strip().strip('"')
+                shot = ""
+                try:
+                    shot = br.shot(os.path.join(_log_dir(), "autologin_login_fail.png"))
+                except Exception:
+                    pass
+                if probe == "NEED_2FA":
+                    return False, ("NEED_2FA|GitHub 账号开了两步验证。请先在本机浏览器登录一次 github.com"
+                                   "（勾选记住此设备），再回来点「保存并登录」。")
+                if probe == "NEED_EMAIL":
+                    return False, ("NEED_EMAIL|GitHub 要求邮箱验证码。请先在本机浏览器登录一次 github.com，"
+                                   "把邮箱验证过掉，再回来点「保存并登录」。")
+                err = ""
+                try:
+                    err = br.js("""
+                        const e = document.querySelector('#js-flash-container .flash-error, .flash-error');
+                        return e ? e.innerText.trim() : '';
+                    """, wait=0) or ""
+                except Exception:
+                    pass
+                return False, "GitHub 登录失败：%s%s" % (
+                    (err or "账号或密码不对"), ("（截图：%s）" % shot) if shot else "")
+            progress("已登录 GitHub，正在回到设备码页", br)
+
+        # 2) 等设备码页面出现（可能要经过"用这个账号继续"的中间页）
+        progress("等待设备码页面", br)
+        _wait_for(
+            br,
+            "document.querySelector('#user-code-0') || "
+            "document.querySelector('form[action=\"/login/device/select_account\"]')",
+            30, log, "设备码页面")
 
         # 3) 设备码页（先过"用这个账号继续"的中间页）
         log("[自动登录] 打开设备码页面")
