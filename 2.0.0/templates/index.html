@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="/static/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>班级叫号器</title>
-<link rel="stylesheet" href="/static/style.css?v=20261119f">
+<link rel="stylesheet" href="/static/style.css?v=20261126a">
 <style>
 /* ---------- 全屏叫号模式：一屏放完，不出现滚动条 ---------- */
 body.fs { overflow: hidden; height: 100dvh; }
@@ -56,7 +56,7 @@ body.fs .msg-row input { padding: 10px 12px; }
 
 <style>
   /* ---- 顶栏：左上角账号 / 右上角启动器 ---- */
-  .brand{display:flex;align-items:center;gap:9px}
+  .brand{position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:9px}
   .brand .brand-icon{width:26px;height:26px;border-radius:7px;object-fit:contain;flex:none}
   .brand .appname{font-weight:600;font-size:15.5px;letter-spacing:.5px;color:#fff}
   .btn.primary.big svg.ic-btn{width:22px;height:22px;vertical-align:-5px;margin-right:8px}
@@ -188,9 +188,12 @@ body.fs .msg-row input { padding: 10px 12px; }
     <a class="app-item" href="/settings/control"><svg class="ic"><use href="#ic-control"/></svg><span>监控和远控</span></a>
     <a class="app-item" href="/settings/tunnel"><svg class="ic"><use href="#ic-tunnel"/></svg><span>内网穿透</span></a>
   </div>
-  <div class="drawer-foot">版本 2.0.36</div>
+  <div class="drawer-foot">版本 2.0.36 · 构建 2026-11-26 19:21</div>
 </aside>
 <header class="topbar">
+  <button id="btn-apps" class="btn ghost icon-only" title="应用列表" aria-label="应用列表">
+      <svg><use href="#ic-apps"/></svg>
+    </button>
   <div class="brand">
     <img class="brand-icon" src="/static/icon.svg" alt="">
     <span class="appname">班级叫号器</span>
@@ -203,9 +206,6 @@ body.fs .msg-row input { padding: 10px 12px; }
     <button id="btn-account" class="account-chip" title="我的账号">
       <span class="avatar"><svg><use href="#ic-user"/></svg></span>
       <span class="account-name" id="account-name">我的账号</span>
-    </button>
-    <button id="btn-apps" class="btn ghost icon-only" title="应用列表" aria-label="应用列表">
-      <svg><use href="#ic-apps"/></svg>
     </button>
   </nav>
 </header>
@@ -534,9 +534,9 @@ body.fs .msg-row input { padding: 10px 12px; }
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/static/qrcode.js?v=20261123a"></script>
-<script src="/static/auth.js?v=20261123a"></script>
-<script src="/static/app.js?v=20261125c"></script>
+<script src="/static/qrcode.js?v=20261126a"></script>
+<script src="/static/auth.js?v=20261126a"></script>
+<script src="/static/app.js?v=20261126a"></script>
 
 
 </body>

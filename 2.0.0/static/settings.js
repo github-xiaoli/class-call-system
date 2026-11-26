@@ -7,6 +7,31 @@
     credentials: "same-origin", body: JSON.stringify(b || {}),
   }).then((r) => r.json());
 
+
+  /* ---------- 退出 GitHub 登录（事件委托，确保一定生效） ---------- */
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target && ev.target.closest ? ev.target.closest("#btn-gh-logout") : null;
+    if (!btn) return;
+    ev.preventDefault();
+    const clear = confirm("退出 GitHub 登录？\n\n点「确定」= 退出并删除本机保存的账号密码\n点「取消」= 只退出登录，密码保留在本机");
+    note(clear ? "正在退出并清除本机密码…" : "正在退出登录…");
+    btn.disabled = true;
+    try {
+      const r = await jpost("/api/tunnel/logout", { clear_credentials: clear });
+      if (!r.ok) { note(r.error || "退出失败", "err"); return; }
+      note(r.logged_in ? "已退出，但仍检测到登录态"
+                       : ("已退出 GitHub 登录" + (clear ? "，本机密码已删除" : "")),
+           r.logged_in ? "err" : "ok");
+      const gh = $("set-gh-user"); if (gh) gh.value = "";
+      const pw = $("set-gh-pwd"); if (pw) pw.value = "";
+      refreshTunnel();
+    } catch (e) {
+      note("退出失败：" + e.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   /* 返回主页 + 左边缘悬停出应用列表 */
   if ($("sub-back")) $("sub-back").addEventListener("click", () => { location.href = "/"; });
   const edge = $("edge-hot");
@@ -234,54 +259,16 @@
       if (href === here) a.classList.add("active");
       if (a.classList.contains("home")) a.classList.toggle("active", here === "/");
     });
-  })();
-
-  /* ---------- 手动登录（设备码，备用） ---------- */
-  async function pollManual() {
-    for (let i = 0; i < 60; i++) {
-      let d = {};
-      try { d = await jget("/api/tunnel/status"); } catch (e) { break; }
-      const t = (d.tunnel || {});
-      if (t.login_state === "logged_in") { note("手动登录成功", "ok"); refreshTunnel(); return; }
-      if (t.login_state === "error") { note("手动登录失败：" + (t.login_error || ""), "err"); return; }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+  
+  async function fillGhUser() {
+    const el = $("set-gh-user");
+    if (!el) return;
+    try {
+      const s = (await jget("/api/tunnel/auto_status")).auto || {};
+      const u = s.cred_user || s.user || s.logged_in || "";
+      if (u && !el.value) el.value = u;
+      el.placeholder = "填 GitHub 账号（如 classcaller-net）";
+    } catch (e) { /* 忽略 */ }
   }
-
-  if ($("btn-tunnel-login")) $("btn-tunnel-login").addEventListener("click", async () => {
-    note("正在申请设备码…");
-    try {
-      const d = await fetch("/api/tunnel/login/start", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        credentials: "same-origin", body: "{}",
-      }).then((r) => r.json());
-      const t = (d && d.tunnel) || d || {};
-      const code = t.user_code || t.userCode || "";
-      const box = $("tunnel-login-box");
-      if (box) box.style.display = "";
-      const el = $("tunnel-user-code");
-      if (el) el.textContent = code || "--------";
-      note(code ? ("设备码 " + code + "，请到 github.com/login/device 输入") : "已发起登录，请查看提示", code ? "ok" : "err");
-      pollManual();
-    } catch (e) {
-      note("申请设备码失败：" + e.message, "err");
-    }
-  });
-
-  /* ---------- 退出 GitHub 登录 ---------- */
-  if ($("btn-gh-logout")) $("btn-gh-logout").addEventListener("click", async () => {
-    const clear = confirm("退出 GitHub 登录？\n\n点「确定」= 退出并删除本机保存的账号密码\n点「取消」= 只退出登录，密码保留在本机");
-    note(clear ? "正在退出并清除本机密码…" : "正在退出登录…");
-    try {
-      const r = await jpost("/api/tunnel/logout", { clear_credentials: clear });
-      if (!r.ok) { note(r.error || "退出失败", "err"); return; }
-      note(r.logged_in ? "已退出，但仍检测到登录态" : ("已退出 GitHub 登录" + (clear ? "，本机密码已删除" : "")), r.logged_in ? "err" : "ok");
-      const gh = $("set-gh-user");
-      if (clear && gh) gh.value = "";
-      const pwd = $("set-gh-pwd");
-      if (pwd) pwd.value = "";
-      refreshTunnel();
-    } catch (e) {
-      note("退出失败：" + e.message, "err");
-    }
-  });
+  fillGhUser();
+})();

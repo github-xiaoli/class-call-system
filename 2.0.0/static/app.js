@@ -704,8 +704,8 @@ async function toggleFullscreen() {
       await (document.exitFullscreen ? document.exitFullscreen() : Promise.resolve());
     } else {
       const el = document.documentElement;
-      if (el.requestFullscreen) await el.requestFullscreen();
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      if (el.requestFullscreen) await document.documentElement.requestFullscreen();
+      else if (el.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
       else {
         // 浏览器不允许全屏时，退化成"隐藏顶栏的紧凑模式"
         document.body.classList.toggle("fs");
@@ -1619,4 +1619,21 @@ init();
     const href = a.getAttribute("href");
     if (href === "/" && a.classList.contains("home")) a.classList.add("active");
   });
+})();
+
+
+/* 全屏时把左边缘热区提到全屏元素里，保证还能划出应用列表 */
+(function () {
+  function fixEdge() {
+    const hot = document.getElementById("edge-hot");
+    const tab = document.getElementById("edge-tab");
+    const fs = document.fullscreenElement;
+    if (!hot) return;
+    if (fs && fs !== document.documentElement && !fs.contains(hot)) {
+      fs.appendChild(hot);
+      if (tab) fs.appendChild(tab);
+    }
+  }
+  document.addEventListener("fullscreenchange", fixEdge);
+  document.addEventListener("webkitfullscreenchange", fixEdge);
 })();
