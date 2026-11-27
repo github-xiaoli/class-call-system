@@ -184,7 +184,7 @@
     if (t.url) {
       if (link) { link.textContent = t.url; link.href = t.url; }
       if (box) box.style.display = "";
-      if (qrBox && typeof qrcode === "function") {
+      if (qrBox && false && typeof qrcode === "function") {
         try {
           const q = qrcode(0, "M"); q.addData(t.url); q.make();
           qrBox.innerHTML = q.createImgTag(4, 8);
@@ -277,7 +277,11 @@
       try { s = (await jget("/api/tunnel/auto_status")).auto || {}; } catch (e) { break; }
       showProgress(s.step || (s.state === "running" ? s.message : ""), s.page || "");
       const st = String(s.state || "");
-      if (st === "ok" || st === "fail" || st === "error") { showProgress(""); return s; }
+      if (st === "ok" || st === "fail" || st === "error") {
+        showProgress("");
+        if (window.cqtPreviewStop) setTimeout(window.cqtPreviewStop, 1500);
+        return s;
+      }
       await new Promise((r) => setTimeout(r, 1500));
     }
     return null;
@@ -288,6 +292,7 @@
     const p = ($("set-gh-pwd") || {}).value || "";
     if (!u || !p) { note("请先填 GitHub 账号和密码", "err"); return; }
     note("正在登录 GitHub，请不要关闭这个页面（通常 30~60 秒）…");
+    if (window.cqtPreviewStart) window.cqtPreviewStart();
     const r = await jpost("/api/tunnel/login_auto", { username: u, password: p });
     if (!r.ok) { note(r.error || "启动登录失败", "err"); return; }
     if (r.message === "已经是登录状态") { note("已经是登录状态", "ok"); refreshTunnel(); return; }
@@ -386,4 +391,61 @@
     } catch (e) { /* 忽略 */ }
   }
   fillGhUser();
+
+  /* ---------- 登录实时画面 ---------- */
+  let previewTimer = null;
+
+  function previewStop() {
+    if (previewTimer) { clearInterval(previewTimer); previewTimer = null; }
+    const box = $("auto-preview-box");
+    if (box) box.style.display = "none";
+  }
+
+  async function previewTick() {
+    const img = $("auto-preview");
+    const pageEl = $("auto-preview-page");
+    const box = $("auto-preview-box");
+    if (!img || !box) return;
+    try {
+      const d = await jget("/api/tunnel/preview");
+      if (d && d.ok && d.image) {
+        box.style.display = "";
+        img.src = "data:image/jpeg;base64," + d.image;
+        if (pageEl) pageEl.textContent = (d.step ? ("当前步骤：" + d.step + "　") : "") +
+                                        (d.page ? ("页面：" + d.page) : "");
+      } else if (d && (d.step || d.page)) {
+        if (pageEl) pageEl.textContent = (d.step ? ("当前步骤：" + d.step + "　") : "") +
+                                        (d.page ? ("页面：" + d.page) : "") +
+                                        (d.error ? ("（" + d.error + "）") : "");
+      } else {
+        previewStop();
+      }
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function previewStart() {
+    const box = $("auto-preview-box");
+    if (box) box.style.display = "";
+    if (!previewTimer) {
+      previewTick();
+      previewTimer = setInterval(previewTick, 1200);
+    }
+  }
+  window.cqtPreviewStart = previewStart;
+  window.cqtPreviewStop = previewStop;
+
+
+  /* 代理保存 */
+  (async function initProxy() {
+    const el = $("in-gh-proxy");
+    if (!el) return;
+    try {
+      const c = await jget("/api/settings");
+      el.value = (c.config && c.config.github_proxy) || "";
+    } catch (e) {}
+    el.addEventListener("change", async () => {
+      await jpost("/api/settings", { github_proxy: el.value.trim() });
+      note(el.value.trim() ? ("代理已保存：" + el.value.trim()) : "已改为直连", "ok");
+    });
+  })();
 })();

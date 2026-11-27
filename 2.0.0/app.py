@@ -76,6 +76,8 @@ DEFAULT_CONFIG = {
     "mdns_enabled": True,
     "mdns_hostname": "",            # 空则使用电脑主机名
     "mdns_interface": "auto",       # mDNS 绑定网卡：auto=全部，或指定网卡名称（本机可在设置中选择）
+    "teacher": "",
+    "github_proxy": "",
     "phrase": "请%number%号%name%到%teacher%办公室%note%",
     "play_count": 1,
     "prompt_enabled": True,
@@ -2217,6 +2219,28 @@ def api_abr_stats():
                     "abr_enabled": bool(get_config().get("abr_enabled", True))})
 
 
+@app.errorhandler(Exception)
+def _cc_on_error(exc):
+    """把未处理异常的完整堆栈写进日志，方便排查（页面上只给一句提示）。"""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        return exc
+    import traceback
+    tb = traceback.format_exc()
+    try:
+        print(tb)
+    except Exception:
+        pass
+    try:
+        path = os.path.join(LOG_DIR, "error.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n===== %s =====\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), tb))
+    except Exception:
+        pass
+    return ("<h3>服务器内部错误</h3><p>已记录到日志，请把 data/logs/error.log 发给开发者。</p>", 500,
+            {"Content-Type": "text/html; charset=utf-8"})
+
+
 @app.route("/api/health")
 def api_health():
     """启动自检 / 手机排障接口：告诉调用者"你到底连到了谁"。
@@ -2624,6 +2648,10 @@ def api_settings():
     if "autostart" in data:
         cfg["autostart"] = bool(data["autostart"])
         apply_autostart(cfg["autostart"])
+    if "github_proxy" in data:
+        cfg["github_proxy"] = str(data["github_proxy"] or "").strip()[:120]
+    if "teacher" in data:
+        cfg["teacher"] = str(data["teacher"] or "").strip()[:40]
     if "secure_enabled" in data:
         cfg["secure_enabled"] = bool(data["secure_enabled"])
     if "secure_port" in data:
@@ -3007,14 +3035,21 @@ def api_call():
                         "retry_after": round(wait, 1),
                         "error": "叫号太快了，请 %.1f 秒后再试" % wait}), 429
 
-    # 老师身份以登录会话为准，前端传值只作显示兜底（防伪造"某老师"）
+    # 老师名称：用户填的 > 配置里保存的 > 登录账号显示名 > "老师"
     try:
-        from login import current_user as _cur
-        _u = _cur()
-        if _u:
-            teacher = (_u.get("display_name") or _u.get("username") or teacher)
+        cfg_t = str(get_config().get("teacher", "") or "").strip()
     except Exception:
-        pass
+        cfg_t = ""
+    if teacher in ("", "老师"):
+        teacher = cfg_t or teacher
+    if teacher in ("", "老师"):
+        try:
+            from login import current_user as _cur
+            _u = _cur()
+            if _u:
+                teacher = (_u.get("display_name") or _u.get("username") or teacher)
+        except Exception:
+            pass
 
     # 以名条中的姓名为准
     roster = get_roster()
@@ -3411,8 +3446,9 @@ def _auto_run(log=None):
             if log:
                 log("[自动登录] %s %s" % (text, page))
 
+        _proxy = str(get_config().get("github_proxy", "") or "").strip()
         ok, msg = autologin.run(tunnel.EXE_PATH, tunnel._env, log=log or print,
-                                headless=not _headed, progress=_prog)
+                                headless=not _headed, progress=_prog, proxy=_proxy)
     except Exception as exc:
         ok, msg = False, repr(exc)
     with _AUTO_LOCK:
@@ -3489,6 +3525,33 @@ def api_tunnel_login_auto():
         return jsonify({"ok": True, "queued": True,
                         "message": "正在登录中，请稍候…", "auto": _auto_snapshot()})
     return jsonify({"ok": True, "auto": _auto_snapshot()})
+
+
+@app.route("/api/tunnel/preview")
+def api_tunnel_preview():
+    """自动登录过程中，返回当前无头浏览器画面的 JPEG（给网页内嵌预览用）。"""
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    br = getattr(autologin, "CURRENT_BROWSER", None)
+    with _AUTO_LOCK:
+        snap = dict(_AUTO)
+    if br is None:
+        return jsonify({"ok": False, "state": snap.get("state"),
+                        "step": snap.get("step") or "", "page": snap.get("page") or "",
+                        "error": "当前没有正在进行的登录"}), 200
+    try:
+        res = br.call("Page.captureScreenshot", {"format": "jpeg", "quality": 65}, timeout=10) or {}
+        data = res.get("data") or ""
+    except Exception as exc:
+        data = ""
+        snap["error"] = "截图失败：%r" % (exc,)
+    if not data:
+        return jsonify({"ok": False, "state": snap.get("state"),
+                        "step": snap.get("step") or "", "page": snap.get("page") or "",
+                        "error": snap.get("error") or "截图失败"}), 200
+    return jsonify({"ok": True, "image": data, "state": snap.get("state"),
+                    "step": snap.get("step") or "", "page": snap.get("page") or ""})
 
 
 @app.route("/api/tunnel/auto_status")
@@ -3955,6 +4018,101 @@ def api_tunnel_enable_async():
 
 
 
+def _port_owner_pid(port):
+    """找出监听某端口的进程 pid（Windows，走 netstat 免依赖）。"""
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=20,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
+    except Exception:
+        return 0
+    want = ":%d" % int(port)
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        if parts[0].upper() != "TCP":
+            continue
+        local = parts[1]
+        if not local.endswith(want):
+            continue
+        if parts[3].upper() != "LISTENING":
+            continue
+        try:
+            return int(parts[4])
+        except Exception:
+            continue
+    return 0
+
+
+def _is_our_app(port, timeout=3):
+    """端口上的服务是不是我们自己的叫号器。"""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/api/health" % int(port),
+                                     headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read(4096).decode("utf-8", "replace")
+        try:
+            data = json.loads(body)
+        except Exception:
+            return False
+        # 注意：jsonify 会把中文转成 \uXXXX，不能直接找"班级叫号器"字样
+        return bool(data.get("ok")) and (data.get("app") == "班级叫号器" or "version" in data)
+    except Exception:
+        return False
+
+
+def _take_over_port(port):
+    """如果端口被旧的叫号器实例占着，就把它结束掉，让新实例接管。"""
+    pid = _port_owner_pid(port)
+    if not pid:
+        return True, "端口空闲"
+    if pid == os.getpid():
+        return True, "自己占着"
+    if not _is_our_app(port):
+        return False, "端口 %d 被其它程序占用（pid=%d）" % (port, pid)
+    print("[启动] 端口 %d 被旧的叫号器实例占用（pid=%d），正在关闭它…" % (port, pid))
+    try:
+        status("正在关闭旧版本实例（pid=%d）" % pid)
+    except Exception:
+        pass
+    try:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as exc:
+        return False, "结束旧实例失败：%r" % (exc,)
+    for _ in range(20):
+        time.sleep(0.3)
+        if not _port_owner_pid(port):
+            print("[启动] 旧实例已关闭，端口 %d 已接管" % port)
+            return True, "已关闭旧实例并接管端口"
+    return False, "旧实例关不掉（pid=%d）" % pid
+
+
+def _notify_already_running(text=None, seconds=8):
+    """非阻塞地提示"已经在运行"，避免后台进程卡在模态框上。"""
+    msg = text or ("班级叫号器已经在运行了。\n\n"
+                   "如果界面还是旧版本，请在托盘图标上右键退出后重新打开。")
+    try:
+        print("[启动] %s" % msg.replace("\n", " "))
+    except Exception:
+        pass
+
+    def _pop():
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, msg, "班级叫号器", 0x40)
+        except Exception:
+            pass
+
+    try:
+        t = threading.Thread(target=_pop, daemon=True)
+        t.start()
+        t.join(seconds)
+    except Exception:
+        pass
+
+
 def _main():
     global _running_port, _running_secure_port, _desktop
 
@@ -3969,16 +4127,22 @@ def _main():
     update_mod.set_config_getter(get_config)
     update_mod.set_restart_callback(_restart_app)
 
-    # 单实例保护：已有实例运行时直接提示并退出
+    # 单实例保护：已经有实例在跑时，先尝试接管（旧版本占着就把它关掉），
+    # 只有接管失败才提示退出——注意提示框必须非阻塞，否则会卡在后台等用户点确定。
     if not acquire_single_instance():
+        _port_now = 8000
         try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(
-                0, "班级叫号器已经在运行了，请查看屏幕右下角的托盘图标。",
-                "班级叫号器", 0x40 | 0x0)
+            _port_now = int(get_config().get("port", 8000) or 8000)
         except Exception:
             pass
-        return
+        try:
+            _ok, _why = _take_over_port(_port_now)
+            print("[启动] 已有实例在运行，尝试接管：%s" % _why)
+        except Exception as exc:
+            print("[启动] 接管旧实例失败：%r" % (exc,))
+        if not acquire_single_instance():
+            _notify_already_running()
+            return
 
     # 桌面组件（启动动画 / 错误弹窗）
     SplashWindow = show_fatal_error = DesktopUI = None
@@ -4023,6 +4187,16 @@ def _main():
         excl = _excluded_tcp_ranges()
     except Exception:
         excl = []
+    # 先尝试接管：如果端口被旧版本自己占着，直接关掉它再启动（避免新旧代码混跑）
+    try:
+        ok_to, why = _take_over_port(port)
+        if ok_to:
+            print("[启动] %s" % why)
+        else:
+            print("[启动] %s，将改用其它端口" % why)
+    except Exception as exc:
+        print("[启动] 接管端口失败：%r" % (exc,))
+
     cands = [port]
     cands += [p for p in range(port + 1, port + 11)]
     for p in (8000, 8080, 8888, 9000, 10080):

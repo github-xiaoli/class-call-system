@@ -673,14 +673,21 @@ function bindEvents() {
   });
 
   // 老师名称（存 cookie，不受密码保护）
+  async function saveTeacherToServer(name) {
+    try {
+      await authedApi("/api/settings", { method: "POST", body: JSON.stringify({ teacher: name }) });
+    } catch (e) { /* 忽略：至少 cookie 已经存了 */ }
+  }
   on("btn-save-teacher", "click", () => {
     state.teacher = $("teacher-name").value.trim();
     setCookie("teacher_name", state.teacher, 365);
-    toast("老师名称已保存到本浏览器");
+    saveTeacherToServer(state.teacher);
+    toast("老师名称已保存：" + (state.teacher || "（空）"));
   });
   on("teacher-name", "change", () => {
     state.teacher = $("teacher-name").value.trim();
     setCookie("teacher_name", state.teacher, 365);
+    saveTeacherToServer(state.teacher);
   });
 
   // 顶部功能入口
@@ -753,7 +760,7 @@ on("btn-settings", "click", () => {
 
 /* ---------- 启动 ---------- */
 async function init() {
-  state.teacher = getCookie("teacher_name") || "";
+  state.teacher = getCookie("teacher_name") || (state.config && state.config.teacher) || "";
   $("teacher-name").value = state.teacher;
   bindEvents();
   await Promise.all([loadStatus(), loadRoster(), loadCalls(), loadAuthMe()]);

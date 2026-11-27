@@ -122,19 +122,22 @@ def _wait_for(br, expr, timeout=20, log=None, what=""):
 
 
 _RUN_LOCK = threading.Lock()
+CURRENT_BROWSER = None   # 正在跑的那个浏览器（预览用）
 
 
-def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
+def run(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None,
+        proxy=""):
     """跑一整轮自动登录（同一时刻只允许一次）。返回 (ok, 说明)。"""
     if not _RUN_LOCK.acquire(blocking=False):
         return False, "已经有一次登录在进行中，请等它结束"
     try:
-        return _run_inner(exe_path, env_fn, log, headless, timeout, progress)
+        return _run_inner(exe_path, env_fn, log, headless, timeout, progress, proxy)
     finally:
         _RUN_LOCK.release()
 
 
-def _run_inner(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None):
+def _run_inner(exe_path, env_fn, log=print, headless=True, timeout=180, progress=None,
+               proxy=""):
     """真正的流程实现。"""
     progress = progress or (lambda *_: None)
     import edge_cdp
@@ -157,7 +160,9 @@ def _run_inner(exe_path, env_fn, log=print, headless=True, timeout=180, progress
     br = None
     try:
         progress("启动浏览器")
-        br = edge_cdp.Browser(headless=headless, log=log)
+        global CURRENT_BROWSER
+        br = edge_cdp.Browser(headless=headless, log=log, proxy=proxy)
+        CURRENT_BROWSER = br
 
         # 直接打开设备码页：没登录时 GitHub 会自动跳到登录页，登录成功后自己回到设备码页
         progress("打开设备码页 github.com/login/device", br)

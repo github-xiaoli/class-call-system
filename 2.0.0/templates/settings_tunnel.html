@@ -147,6 +147,10 @@
           登录失效、或你改了上面的账号密码，程序会自己重登。
         </p>
         <div class="form-grid">
+          <label for="in-gh-proxy" style="font-size:13px">GitHub 代理（可选，国内常需要，例：http://127.0.0.1:7890）</label>
+          <input id="in-gh-proxy" placeholder="留空 = 直连" />
+        </div>
+        <div class="form-grid">
           <label style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="chk-gh-headed" /> 登录时显示浏览器窗口（看得见过程，兼容性更好）
           </label>
@@ -155,6 +159,14 @@
              background:#f6f9ff;border:1px solid #e3ecfb;border-radius:9px">
           <div class="hint" id="auto-step" style="margin:0;color:#1d2437"></div>
           <div class="hint" id="auto-page" style="margin:2px 0 0;color:#8b96ad;word-break:break-all"></div>
+        </div>
+        <div id="auto-preview-box" style="display:none;margin:6px 0 8px">
+          <div class="hint" id="auto-preview-page" style="margin:0 0 6px"></div>
+          <div style="border:1px solid #dbe4f3;border-radius:10px;overflow:hidden;background:#0b1220;
+               max-width:520px">
+            <img id="auto-preview" alt="登录画面"
+                 style="display:block;width:100%;height:auto" />
+          </div>
         </div>
         <p class="hint" id="auto-msg" style="min-height:18px"></p>
         <details style="margin:2px 0 0">
@@ -200,8 +212,6 @@
         </div>
         <div id="tunnel-url-box" class="hint" style="display:none">
           公网地址：<a id="tunnel-url" href="#" target="_blank" rel="noreferrer"></a>
-          <div style="margin-top:6px">手机扫这个二维码直接打开：</div>
-          <div id="tunnel-qr" style="background:#fff;padding:8px;display:inline-block;border-radius:8px"></div>
           <div style="margin-top:6px;color:#b45309">
             <svg class="ic-inline"><use href="#ic-warn"/></svg>这个网址等于管理员入口，只有拿到它的人才能看到登录页；请勿发到群里。
           </div>
@@ -214,11 +224,11 @@
       
   </div>
 </div>
-<script src="/static/settings.js?v=20261126a"></script>
+<script src="/static/settings.js?v=20261127a"></script>
 </body>
 </html>
   </div>
 </div>
-<script src="/static/settings.js?v=20261126a"></script>
+<script src="/static/settings.js?v=20261127a"></script>
 </body>
 </html>

@@ -39,7 +39,32 @@ EDGE_CANDIDATES = [
 ]
 
 
+def _bundled_browser():
+    """内置的 Chromium headless-shell（随安装包发布，不依赖系统 Edge）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = [
+        os.path.join(here, "MS-browser", "chrome-headless-shell.exe"),
+        os.path.join(here, "MS-browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe"),
+        os.path.join(here, "MS-browser", "chrome.exe"),
+    ]
+    base = os.path.dirname(here)
+    cands += [
+        os.path.join(base, "MS-browser", "chrome-headless-shell.exe"),
+        os.path.join(base, "MS-browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe"),
+    ]
+    for p in cands:
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
 def find_browser():
+    force = os.environ.get("CC_BROWSER_EXE")
+    if force and os.path.isfile(force):
+        return force
+    b = _bundled_browser()
+    if b:
+        return b
     for p in EDGE_CANDIDATES:
         if os.path.isfile(p):
             return p
@@ -183,6 +208,11 @@ def _kill_stray_login_browsers(keep_profile=None):
     return killed
 
 
+def _is_headless_shell(exe):
+    """内置的 chrome-headless-shell 本身就是无头的，不能再传 --headless*，否则直接退出。"""
+    return "headless-shell" in os.path.basename(str(exe)).lower()
+
+
 def _is_admin():
     """当前进程是否是管理员（提权后启动的 Chromium 不会开放调试端口）。"""
     try:
@@ -272,7 +302,7 @@ def _kill_by_profile(profile):
 
 
 class Browser(object):
-    def __init__(self, headless=True, log=None, timeout=30, via_explorer=None):
+    def __init__(self, headless=True, log=None, timeout=30, via_explorer=None, proxy=""):
         self.log = log or (lambda m: None)
         self.exe = find_browser()
         if not self.exe:
@@ -281,6 +311,8 @@ class Browser(object):
         self._id = 0
         self.timeout = timeout
         self.headless = headless
+        self.session_id = None
+        self.proxy = (proxy or os.environ.get("CQT_BROWSER_PROXY") or "").strip()
         self.via_explorer = _is_admin() if via_explorer is None else bool(via_explorer)
         self.profile = tempfile.mkdtemp(prefix="cqt_browser_")
         self.errlog = os.path.join(self.profile, "browser.err.log")
@@ -297,6 +329,16 @@ class Browser(object):
                 "--disable-extensions", "--disable-background-networking",
                 "--disable-gpu", "--remote-allow-origins=*",
                 "--window-size=1280,900"] + list(extra)
+        if getattr(self, "proxy", ""):
+            p = self.proxy
+            if "://" not in p:
+                p = "http://" + p
+            args.append("--proxy-server=%s" % p)
+            self.log("[浏览器] 使用代理 %s" % p)
+        if _is_headless_shell(self.exe) and not any(a.startswith("http") or a == "about:blank"
+                                                    for a in args[1:]):
+            # headless-shell 必须给个初始页面，否则不会有 page target（就没法截图/操作）
+            args.append("about:blank")
         try:
             killed = _kill_stray_login_browsers(keep_profile=self.profile)
             if killed:
@@ -340,6 +382,34 @@ class Browser(object):
         except Exception:
             pass
 
+    def _open_page_via_browser(self):
+        """没有 page target 时（内置 headless-shell 常见）：自建页面并以 sessionId 通信。"""
+        try:
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%d/json/version" % self.port, timeout=2) as r:
+                ver = json.loads(r.read().decode("utf-8", "replace"))
+            ws_url = ver.get("webSocketDebuggerUrl") or ""
+            if not ws_url:
+                return False
+            if getattr(self, "ws", None) is None:
+                self.ws = _WS(ws_url, timeout=self.timeout)
+            self.session_id = None
+            res = self.call("Target.createTarget", {"url": "about:blank"}, timeout=10) or {}
+            tid = res.get("targetId")
+            if not tid:
+                return False
+            res2 = self.call("Target.attachToTarget",
+                             {"targetId": tid, "flatten": True}, timeout=10) or {}
+            sid = res2.get("sessionId")
+            if not sid:
+                return False
+            self.session_id = sid
+            self.log("[浏览器] 已建页面会话 %s" % sid[:12])
+            return True
+        except Exception as exc:
+            self.log("[浏览器] 建页面会话失败：%r" % (exc,))
+            return False
+
     def _wait_cdp(self, seconds):
         deadline = time.time() + seconds
         last = ""
@@ -354,6 +424,11 @@ class Browser(object):
                 for t in targets:
                     if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
                         self.ws = _WS(t["webSocketDebuggerUrl"], timeout=self.timeout)
+                        self.session_id = None
+                        return True, ""
+                # 内置 headless-shell 启动时没有 page target：连浏览器级 WS 自建一个
+                if not getattr(self, "session_id", None):
+                    if self._open_page_via_browser():
                         return True, ""
             except Exception as exc:
                 last = repr(exc)
@@ -362,7 +437,10 @@ class Browser(object):
 
     def _connect(self):
         langs = []
-        if self.headless:
+        if _is_headless_shell(self.exe):
+            # 内置 chrome-headless-shell 本身就是无头的，再传 --headless* 会直接退出
+            langs.append([])
+        elif self.headless:
             langs.append(["--headless=new"])
             langs.append(["--headless"])
             langs.append([])          # 兜底：真弹一个有头窗口
@@ -389,8 +467,11 @@ class Browser(object):
     def call(self, method, params=None, timeout=None):
         self._id += 1
         mid = self._id
-        self.ws.send(json.dumps({"id": mid, "method": method,
-                                 "params": params or {}}))
+        msg = {"id": mid, "method": method, "params": params or {}}
+        sid = getattr(self, "session_id", None)
+        if sid:
+            msg["sessionId"] = sid
+        self.ws.send(json.dumps(msg))
         end = time.time() + (timeout or self.timeout)
         while time.time() < end:
             msg = self.ws.recv()

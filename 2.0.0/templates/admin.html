@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="/static/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理员后台 · 班级叫号器</title>
-<link rel="stylesheet" href="/static/style.css?v=20261126a">
+<link rel="stylesheet" href="/static/style.css?v=20261127a">
 </head>
 <body>
 {% include "_shell.html" %}
@@ -89,6 +89,26 @@
 <div id="toast" class="toast hidden"></div>
 <script nonce="{{ csp_nonce }}">
 (function () {
+
+  /* 出错时给出可见提示（避免"页面能开但点了没反应"无从排查） */
+  function cqtShowFail(msg) {
+    let bar = document.getElementById("cqt-fail-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "cqt-fail-bar";
+      bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#fdecec;"
+        + "color:#a4262c;border-bottom:1px solid #f3b7b7;padding:10px 14px;font-size:13px;"
+        + "font-family:inherit;line-height:1.5";
+      document.body.appendChild(bar);
+    }
+    bar.textContent = "页面出错：" + msg + "  —— 请先按 Ctrl + F5 强制刷新；若仍不行，"
+      + "请确认已用管理员账号登录，并把这句话截图反馈。";
+  }
+  window.addEventListener("error", (e) => cqtShowFail(e.message || "脚本错误"));
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason || {};
+    cqtShowFail((r && (r.message || r.code)) ? String(r.message || r.code) : String(r));
+  });
   const $ = (id) => document.getElementById(id);
   let toastTimer = null;
   function toast(text) {
