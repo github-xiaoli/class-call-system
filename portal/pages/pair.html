@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>配对这台设备 · 班级叫号器</title>
+<link rel="stylesheet" href="/static/style.css?v=20261127a">
+<style>
+  html, body { min-height: 100%; }
+  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+         padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+         background: linear-gradient(160deg, #e0f2fe 0%, #a7f3d0 60%, #bbf7d0 100%);
+         font-family: "Microsoft YaHei", system-ui, sans-serif; color: #0f172a; }
+  .card { background: #fff; border-radius: 22px; box-shadow: 0 22px 60px rgba(15,23,42,.2);
+          padding: 28px 24px 24px; width: min(420px, 92vw); margin: auto; text-align: center; }
+  .spin { width: 52px; height: 52px; margin: 4px auto 16px; border: 5px solid #e2e8f0;
+          border-top-color: #2563eb; border-radius: 50%; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .ok { font-size: 54px; margin-bottom: 6px; }
+  .err { font-size: 54px; margin-bottom: 6px; }
+  h1 { font-size: 20px; margin: 0 0 10px; }
+  p { color: #475569; font-size: 14.5px; line-height: 1.8; margin: 6px 0; }
+  input#code { width: 100%; box-sizing: border-box; margin-top: 12px; padding: 14px 16px;
+        border: 1.5px solid #cbd5e1; border-radius: 14px; font-size: 22px; text-align: center;
+        letter-spacing: 3px; text-transform: uppercase; font-family: ui-monospace, Consolas, monospace; }
+  input#code:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+  .btn { display: inline-block; margin-top: 16px; background: #2563eb; color: #fff; border: none;
+         text-decoration: none; padding: 12px 24px; border-radius: 12px; font-size: 16px; width: 100%;
+         box-sizing: border-box; cursor: pointer; }
+  .btn:disabled { opacity: .55; }
+  .tip { margin-top: 14px; font-size: 12.5px; color: #94a3b8; line-height: 1.7; }
+  .hidden { display: none; }
+  @media (max-height: 520px) {
+    .card { padding: 18px 16px 16px; border-radius: 16px; }
+    .spin { width: 38px; height: 38px; border-width: 4px; margin-bottom: 10px; }
+    h1 { font-size: 17px; } p { font-size: 13px; line-height: 1.6; }
+    input#code { padding: 11px 14px; font-size: 19px; }
+    .btn { margin-top: 12px; padding: 10px 18px; font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5.4"/><path d="M11 6.2 5.4 12l5.6 5.8"/></symbol>
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 15V4.8"/><path d="M8.2 8.6 12 4.8l3.8 3.8"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.6 9.6 17 19 7.2"/></symbol>
+  <symbol id="ic-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M10.6 5.2h2.8"/><circle cx="12" cy="18.2" r=".9"/></symbol>
+  <symbol id="ic-home" viewBox="0 0 24 24"><path d="M4.4 10.6 12 4.2l7.6 6.4V19a1.4 1.4 0 0 1-1.4 1.4H5.8A1.4 1.4 0 0 1 4.4 19Z"/><path d="M9.6 20.4v-5.6h4.8v5.6"/></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.4 2.2 3.6 5 3.6 8.2s-1.2 6-3.6 8.2c-2.4-2.2-3.6-5-3.6-8.2s1.2-6 3.6-8.2Z"/></symbol>
+  <symbol id="ic-expand" viewBox="0 0 24 24"><path d="M4.4 9.2V4.4h4.8"/><path d="M19.6 14.8v4.8h-4.8"/><path d="M4.4 4.4 10 10"/><path d="M19.6 19.6 14 14"/></symbol>
+  <symbol id="ic-key" viewBox="0 0 24 24"><circle cx="8.4" cy="15.6" r="3.4"/><path d="M10.9 13.1 20 4"/><path d="M16.4 7.6 18.6 9.8"/><path d="M14 10 16.2 12.2"/></symbol>
+  <symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 3.6c3.4 1.8 5.2 5 5.2 8.8l-2.4 2.4H9.2l-2.4-2.4c0-3.8 1.8-7 5.2-8.8Z"/><path d="M9.2 14.8 7 20l3.2-1.6h3.6L17 20l-2.2-5.2"/><circle cx="12" cy="9.6" r="1.6"/></symbol>
+  <symbol id="ic-spark" viewBox="0 0 24 24"><path d="M12 3.6 13.8 9l5.4 1.8-5.4 1.8L12 18l-1.8-5.4L4.8 10.8 10.2 9Z"/><path d="M18.4 16.4l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9Z"/></symbol>
+</svg>
+<style>
+  .ic-inline{width:15px;height:15px;vertical-align:-2.5px;margin-right:4px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ic-inline.warn{stroke:#b45309}
+  .ic-inline.ok{stroke:#12805c}
+  .ic-inline.big{width:22px;height:22px;vertical-align:-5px}
+</style>
+<div class="card">
+  <div id="box-loading">
+    <div class="spin"></div>
+    <h1>正在配对…</h1>
+    <p>请稍候</p>
+  </div>
+
+  <div id="box-form" class="hidden">
+    <h1>配对这台设备</h1>
+    <p>输入电脑上显示的<b>配对码</b>（8 位字母数字）</p>
+    <input id="code" inputmode="latin" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" maxlength="12" placeholder="ABC12XYZ">
+    <button id="btn-go" class="btn">配对并进入</button>
+    <div class="tip">配对码在电脑上「<svg class="ic-inline"><use href="#ic-phone"/></svg> 扫码配对」或设置向导第 6 步里显示；<br>
+      一张配对码只能给一台手机用，30 分钟内有效。</div>
+  </div>
+
+  <div id="box-ok" class="hidden">
+    <div class="ok"><svg class="ic-inline ok"><use href="#ic-check"/></svg></div>
+    <h1>配对成功</h1>
+    <p>这台设备已经和电脑绑定，正在进入…</p>
+    <a class="btn" href="/">立即进入</a>
+  </div>
+
+  <div id="box-err" class="hidden">
+    <div class="err"><svg class="ic-inline warn"><use href="#ic-warn"/></svg></div>
+    <h1>配对失败</h1>
+    <p id="err-text">—</p>
+    <button id="btn-retry" class="btn">重新输入</button>
+    <div class="tip">配对码错误、已使用或已过期时，请在电脑上重新生成一个。</div>
+  </div>
+</div>
+<script src="/static/auth.js?v=20261127a"></script>
+<script>
+(function () {
+  const qs = new URLSearchParams(location.search);
+  const token = qs.get("t") || "";
+  const show = (id) => {
+    ["box-loading", "box-form", "box-ok", "box-err"].forEach((k) => {
+      document.getElementById(k).classList.toggle("hidden", k !== id);
+    });
+  };
+  const fail = (msg) => { document.getElementById("err-text").textContent = msg; show("box-err"); };
+
+  async function byToken(t) {
+    try {
+      const r = await Auth.activateByToken(t);
+      show("box-ok");
+      setTimeout(() => { location.href = "/"; }, 1200);
+      return r;
+    } catch (e) {
+      fail(e.message || "配对码无效或已过期");
+    }
+  }
+
+  async function byCode() {
+    const v = (document.getElementById("code").value || "").trim().toUpperCase();
+    if (!v) { fail("请输入配对码"); return; }
+    const btn = document.getElementById("btn-go");
+    btn.disabled = true; btn.textContent = "配对中…";
+    try {
+      await Auth.activate(v);
+      show("box-ok");
+      setTimeout(() => { location.href = "/"; }, 1200);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "配对并进入";
+      fail(e.message || "配对失败，请检查配对码");
+    }
+  }
+
+  document.getElementById("btn-go").addEventListener("click", byCode);
+  document.getElementById("code").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") byCode();
+  });
+  document.getElementById("btn-retry").addEventListener("click", () => show("box-form"));
+
+  if (token) { show("box-loading"); byToken(token); }
+  else { show("box-form"); }
+})();
+</script>
+<script src="/p2p-shim.js?v=1403"></script>
+<script>try{sessionStorage.setItem('cc-p2p-sn',new URLSearchParams(location.search).get('sn')||'');}catch(e){}</script>
+</body>
+</html>

@@ -1,197 +1,152 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>班级叫号器 · 云端直连</title>
-<link rel="stylesheet" href="style.css?v=1401" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>班级叫号器 · 选择电脑</title>
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css?v=20261127a">
+<style>
+/* 入口页：只做「选机器 + 建立直连」，连上后立刻跳到原站首页 */
+.gate { max-width: 640px; margin: 0 auto; padding: 24px 16px 60px; }
+.gate-title { text-align:center; margin: 18px 0 22px; }
+.gate-title h1 { font-size: 20px; margin: 0 0 6px; }
+.gate-title p { color: #6b7a99; font-size: 13.5px; margin: 0; }
+.gate-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.gate-list li { display: flex; align-items: center; gap: 12px; padding: 15px 16px;
+  background: #fff; border: 1px solid #e2e8f4; border-radius: 14px; cursor: pointer;
+  transition: .15s; box-shadow: 0 4px 14px rgba(30,60,120,.05); }
+.gate-list li:hover { border-color: #2a5bd7; transform: translateY(-1px); }
+.gate-list .g-name { font-weight: 600; }
+.gate-list .g-sn { color: #6b7a99; font-size: 12.5px; font-family: Consolas, monospace; }
+.gate-list .g-badge { margin-left: auto; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+.g-badge.on { background: #e8f7ef; color: #1a9d63; }
+.g-badge.off { background: #f1f3f8; color: #6b7a99; }
+.gate-hint { text-align:center; color: #6b7a99; font-size: 13px; margin-top: 18px; line-height: 1.7; }
+.gate-err { color: #c0392b; font-size: 13.5px; min-height: 20px; text-align:center; margin-top: 10px; }
+.gate-steps { margin: 26px auto 0; max-width: 420px; color: #6b7a99; font-size: 13.5px; }
+.gate-steps li.now { color: #2a5bd7; font-weight: 600; }
+.gate-steps li.done { color: #1a9d63; }
+</style>
 </head>
 <body>
 
-<header class="top">
-  <div class="brand">
-    <svg viewBox="0 0 24 24" class="ic"><use href="#ic-app"/></svg>
-    <span>班级叫号器</span>
-  </div>
-  <div class="right">
-    <span id="link-state" class="pill">未连接</span>
-    <button id="btn-manage" class="btn ghost">管理机器</button>
-  </div>
-</header>
-
-<main>
-
-<!-- 1) 机器列表 -->
-<section id="view-list" class="card">
-  <div class="card-head">
-    <h2>选择教室电脑</h2>
-    <button id="btn-refresh" class="btn ghost">刷新</button>
-  </div>
-  <ul id="machines" class="machines"></ul>
-  <p id="list-hint" class="hint"></p>
-</section>
-
-<!-- 2) 直连中 -->
-<section id="view-connecting" class="card hidden">
-  <h2>正在直连…</h2>
-  <ol id="steps" class="steps"></ol>
-  <button id="btn-cancel" class="btn ghost">取消</button>
-</section>
-
-<!-- 3) 登录叫号器 -->
-<section id="view-login" class="card hidden">
-  <h2>登录叫号器</h2>
-  <label>账号<input id="in-user" autocomplete="username" /></label>
-  <label>密码<input id="in-pass" type="password" autocomplete="current-password" /></label>
-  <label class="checkbox"><input id="chk-remember" type="checkbox" /> 记住此设备</label>
-  <div id="login-err" class="err"></div>
-  <button id="btn-login" class="btn primary">登录</button>
-  <button id="btn-back-list-1" class="btn ghost">返回列表</button>
-</section>
-
-<!-- 4) 主界面（原生，全部走 WebRTC） -->
-<section id="view-app" class="card hidden">
-  <div class="card-head">
-    <h2 id="app-title">叫号器</h2>
-    <div class="right">
-      <button id="btn-exit" class="btn ghost">断开</button>
-    </div>
+<div class="gate">
+  <div class="gate-title">
+    <h1>班级叫号器</h1>
+    <p>选择要连的教室电脑</p>
   </div>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="tab-call">叫号</button>
-    <button class="tab" data-tab="tab-roster">名条</button>
-    <button class="tab" data-tab="tab-screen">屏幕/远控</button>
-    <button class="tab" data-tab="tab-files">文件</button>
-    <button class="tab" data-tab="tab-logs">日志</button>
-    <button class="tab" data-tab="tab-settings">设置</button>
-  </nav>
+  <ul class="gate-list" id="gate-list"></ul>
+  <p class="gate-hint" id="gate-hint">正在读取机器列表…</p>
+  <p class="gate-err" id="gate-err"></p>
 
-  <!-- 叫号 -->
-  <div id="tab-call" class="tabpane active">
-    <div class="call-top">
-      <div class="num-display" id="num-display">&nbsp;</div>
-      <div class="banner" id="call-banner">请选择学生，或在小键盘输入学号</div>
-    </div>
-    <div class="numpad" id="numpad"></div>
-    <div class="row">
-      <button id="btn-call" class="btn primary big">叫号</button>
-      <button id="btn-clear-num" class="btn ghost">清空</button>
-      <button id="btn-msg" class="btn ghost">语音留言</button>
-    </div>
-    <div class="row">
-      <label class="inline">老师名称<input id="in-teacher" maxlength="20" placeholder="默认取登录账号" /></label>
-    </div>
-    <div class="pane-head">最近叫号</div>
-    <ul id="call-list" class="records"></ul>
-  </div>
+  <ol class="gate-steps" id="gate-steps"></ol>
+</div>
 
-  <!-- 名条 -->
-  <div id="tab-roster" class="tabpane">
-    <div class="row">
-      <input id="in-roster-q" placeholder="搜索姓名或学号" />
-      <button id="btn-roster-refresh" class="btn ghost small">刷新</button>
-    </div>
-    <div class="row">
-      <input id="in-roster-number" placeholder="学号" />
-      <input id="in-roster-name" placeholder="姓名" />
-      <button id="btn-roster-add" class="btn primary small">添加</button>
-    </div>
-    <ul id="roster-list" class="records"></ul>
-    <button id="btn-roster-clear" class="btn ghost small">清空名条</button>
-  </div>
+<script src="/config.js?v=2611281920"></script>
+<script src="/p2p-shim.js?v=2611281920"></script>
+<script>
+(function () {
+  const CFG = window.PORTAL_CONFIG || {};
+  const $ = (id) => document.getElementById(id);
+  let machines = [];
 
-  <!-- 屏幕 / 远控 -->
-  <div id="tab-screen" class="tabpane">
-    <div class="row">
-      <button id="btn-screen" class="btn ghost">开始屏幕共享</button>
-      <button id="btn-remote" class="btn ghost">开启远控</button>
-      <span id="remote-state" class="pill">远控：关</span>
-    </div>
-    <div class="screen-wrap">
-      <video id="screen" autoplay playsinline muted></video>
-      <div id="screen-hint" class="screen-hint">点「开始屏幕共享」后这里显示电脑画面</div>
-    </div>
-    <p class="hint">开启远控后，直接在画面上点击/滑动即可操作电脑。</p>
-  </div>
+  function step(text, mode) {
+    const li = document.createElement("li");
+    li.textContent = text;
+    li.className = mode || "now";
+    const box = $("gate-steps");
+    for (const el of box.children) el.className = "done";
+    box.appendChild(li);
+  }
 
-  <!-- 文件 -->
-  <div id="tab-files" class="tabpane">
-    <div class="row">
-      <select id="fs-drive"></select>
-      <input id="fs-path" placeholder="当前路径" />
-      <button id="btn-fs-up" class="btn ghost small">上级</button>
-      <button id="btn-fs-refresh" class="btn ghost small">刷新</button>
-    </div>
-    <ul id="fs-list" class="records"></ul>
-  </div>
+  async function loadMachines() {
+    try {
+      const f = (window.p2p && window.p2p.rawFetch) ? window.p2p.rawFetch : fetch;
+      const r = await f.call(window, CFG.apiBase + "/api/machines", { cache: "no-store" });
+      const d = await r.json();
+      machines = d.machines || [];
+      render();
+    } catch (e) {
+      $("gate-hint").textContent = "读取机器列表失败：" + e.message;
+    }
+  }
 
-  <!-- 日志 -->
-  <div id="tab-logs" class="tabpane">
-    <div class="row">
-      <input id="in-log-q" placeholder="搜索关键字" />
-      <button id="btn-logs-refresh" class="btn ghost small">刷新</button>
-    </div>
-    <pre id="log-box" class="logbox"></pre>
-  </div>
+  // 已经连着电脑就直接进原站界面（刷新页面也不用重选）
+  function jumpIfConnected() {
+    window.p2p.hello();
+    setTimeout(() => {
+      const st = window.p2p.state();
+      if (st.state === "connected") location.href = "/call";
+    }, 600);
+  }
 
-  <!-- 设置 -->
-  <div id="tab-settings" class="tabpane">
-    <div id="settings-box" class="settings"></div>
-    <button id="btn-settings-save" class="btn primary">保存设置</button>
-    <p id="settings-msg" class="hint"></p>
-  </div>
+  function render() {
+    const ul = $("gate-list");
+    ul.innerHTML = "";
+    if (!machines.length) {
+      $("gate-hint").textContent = "还没有电脑注册。请在教室电脑上打开叫号器 → 设置 → 内网穿透 → 云端门户，填总密码完成注册。";
+      return;
+    }
+    $("gate-hint").textContent = "共 " + machines.length + " 台，点一下即可直连。";
+    for (const m of machines) {
+      const li = document.createElement("li");
+      li.innerHTML = '<div><div class="g-name"></div><div class="g-sn"></div></div>' +
+        '<span class="g-badge ' + (m.online ? "on" : "off") + '">' +
+        (m.online ? "在线" : "离线") + "</span>";
+      li.querySelector(".g-name").textContent = m.name || m.sn;
+      li.querySelector(".g-sn").textContent = m.sn + (m.version ? " · v" + m.version : "");
+      li.addEventListener("click", () => start(m));
+      ul.appendChild(li);
+    }
+  }
 
-</section>
+  function start(m) {
+    $("gate-err").textContent = "";
+    $("gate-list").style.opacity = ".5";
+    $("gate-list").style.pointerEvents = "none";
+    $("gate-steps").innerHTML = "";
+    step("正在建立 P2P 直连…");
+    window.p2p.connect(m.sn, m.name);
 
-<!-- 5) 机器管理 -->
-<section id="view-manage" class="card hidden">
-  <div class="card-head">
-    <h2>机器管理</h2>
-    <button id="btn-manage-close" class="btn ghost">关闭</button>
-  </div>
-  <div id="manage-lock">
-    <p class="tip">输入<b>叫号器总密码</b>才能管理机器。密码只保存在内存里，关掉这个窗口就要重新输入。</p>
-    <label>总密码<input id="in-master" type="password" autocomplete="off" /></label>
-    <div id="manage-err" class="err"></div>
-    <button id="btn-unlock" class="btn primary">解锁</button>
-  </div>
-  <div id="manage-body" class="hidden">
-    <div class="pane-head">已有机器</div>
-    <ul id="manage-list" class="machines"></ul>
-    <div class="pane-head">新建机器</div>
-    <label>机器名称<input id="in-new-name" placeholder="例如：高一(3)班讲台电脑" maxlength="40" /></label>
-    <label>机器 SN（教室电脑「内网穿透 → 云端门户」里能看到）<input id="in-new-sn" maxlength="40" placeholder="例如：J8GGL22902000254" /></label>
-    <button id="btn-create" class="btn primary">创建</button>
-    <p class="hint" id="manage-msg"></p>
-  </div>
-</section>
+    let waited = 0;
+    const timer = setInterval(() => {
+      waited += 500;
+      const st = window.p2p.state();
+      if (st.state === "connected") {
+        clearInterval(timer);
+        step("直连已建立，正在进入…", "done");
+        // 进入原站首页（界面与电脑上的原站完全一致）
+        try { sessionStorage.setItem("cc-p2p-sn", m.sn); } catch (e) {}
+        setTimeout(() => { location.href = "/call?sn=" + encodeURIComponent(m.sn) +
+                           "&name=" + encodeURIComponent(m.name || m.sn); }, 200);
+        return;
+      }
+      if (st.state === "failed") {
+        step("这次没连上，正在重试…");
+      }
+      if (waited > 120000) {
+        clearInterval(timer);
+        $("gate-err").textContent = "连接超时，请确认教室电脑已开机并已联网，或稍后再试。";
+        $("gate-list").style.opacity = "";
+        $("gate-list").style.pointerEvents = "";
+      }
+    }, 500);
 
-<!-- 6) 直连失败回落 -->
-<section id="view-fallback" class="card hidden">
-  <h2>直连失败，改用隧道打开</h2>
-  <p class="tip">
-    试了 5 次都没建立直连，通常是网络封了 UDP。请让教室电脑前的人打开
-    <b>叫号器 → 设置 → 内网穿透</b>，把「公网地址」复制给你，粘贴到下面。
-    打开后仍然是熟悉的界面，只是走隧道转发。
-  </p>
-  <label>隧道地址<input id="in-fallback-url" placeholder="https://…" /></label>
-  <div class="row">
-    <button id="btn-open-fallback" class="btn primary">打开隧道地址</button>
-    <button id="btn-retry-connect" class="btn ghost">再试一次直连</button>
-    <button id="btn-back-list-2" class="btn ghost">返回列表</button>
-  </div>
-  <p class="hint" id="fallback-msg"></p>
-</section>
+    window.addEventListener("p2pstate", function onState(ev) {
+      if (ev.detail && ev.detail.state === "failed") {
+        step("这次没连上，正在自动重试…");
+      }
+    });
+  }
 
-</main>
-
-<!-- 图标 -->
-<svg style="display:none" aria-hidden="true">
-  <symbol id="ic-app" viewBox="0 0 24 24"><path d="M4 5h16v14H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.6" fill="none"/></symbol>
-</svg>
-
-<script src="config.js?v=1401"></script>
-<script src="app.js?v=1401"></script>
+  jumpIfConnected();
+  loadMachines();
+  setInterval(() => {
+    if (!document.querySelector("#gate-list li")) loadMachines();
+  }, 20000);
+})();
+</script>
 </body>
 </html>

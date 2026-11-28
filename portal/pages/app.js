@@ -180,6 +180,12 @@
     setStep("读取 ICE 配置…");
     let ice = { iceServers: [] };
     try { ice = await getJSON(API + "/ice"); } catch (e) { /* 局域网直连也行 */ }
+    if (!ice.iceServers || !ice.iceServers.length) {
+      ice = { iceServers: [
+        { urls: ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:443"] },
+        { urls: ["stun:stun.l.google.com:19302"] },
+      ] };
+    }
 
     setStep("连接信令服务器…");
     ws = new WebSocket(WSB + "/ws?sn=" + encodeURIComponent(m.sn) + "&role=web");
@@ -300,7 +306,16 @@
       }
       return;
     }
-    if (msg.type === "peer-left") { setStep("电脑断开了"); return; }
+    if (msg.type === "peer-left") {
+      if (msg.role === "pc" && (!msg.sn || msg.sn === currentSn)) {
+        // 连的这台电脑的信令断了（重启或网络抖动）：自动重连，别把老师晾在这儿
+        setStep("电脑断开了，正在自动重连…");
+        try { if (ws) ws.close(); } catch (e) {}
+        teardown(false);
+        setTimeout(() => connect({ sn: currentSn, name: currentName }), 1200);
+      }
+      return;
+    }
     if (msg.peerId && myId && msg.peerId !== myId) return;
     if (msg.type === "answer" && pc) {
       await pc.setRemoteDescription(msg.sdp);

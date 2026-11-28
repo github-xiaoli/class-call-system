@@ -373,7 +373,14 @@ class PortalClient(object):
         self.loop.run_forever()
 
     def _submit(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+        fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        def _watch(f=fut):
+            try:
+                f.result()
+            except Exception as exc:
+                self.log("[门户] 协程异常：%r" % (exc,))
+        threading.Thread(target=_watch, daemon=True).start()
+        return fut
 
     # ---- HTTP ----
     UA = "ClassCallerPortal/2.0 (+classcaller)"
@@ -431,6 +438,7 @@ class PortalClient(object):
         threading.Thread(target=self._hb_loop, daemon=True, name="portal-hb").start()
         threading.Thread(target=self._ws_loop, daemon=True, name="portal-ws").start()
         threading.Thread(target=self._ping_loop, daemon=True, name="portal-ping").start()
+        threading.Thread(target=self._ice_warmup, daemon=True, name="portal-ice").start()
         return True
 
     def stop(self):
@@ -476,7 +484,11 @@ class PortalClient(object):
                 self.log("[门户] 信令已连接")
                 backoff = 3
                 while not self._ws_stop.is_set():
-                    self._on_signal(self.ws.recv_text())
+                    raw = self.ws.recv_text()
+                    if raw is None:
+                        # 只是暂时没有消息（读超时），不是断线，继续等
+                        continue
+                    self._on_signal(raw)
             except Exception as exc:
                 if not self._ws_stop.is_set():
                     self.log("[门户] 信令断开：%r" % (exc,))
@@ -500,6 +512,7 @@ class PortalClient(object):
         except Exception:
             return
         t = msg.get("type")
+        self.log("[门户] 信令收到 %s %s" % (t, (msg.get("peerId") or "")[:10]))
         if t == "offer":
             self._submit(self._handle_offer(msg.get("sdp") or {}, msg.get("fromId") or ""))
         elif t == "ice" and msg.get("candidate"):
@@ -522,33 +535,54 @@ class PortalClient(object):
         except Exception:
             pass
 
+    def _ice_warmup(self):
+        """后台先把 ICE 列表拉好缓存好，等第一位老师连上时直接用。"""
+        for _ in range(4):
+            if self._ice_cache:
+                return
+            try:
+                self._ice_list()
+            except Exception:
+                pass
+            time.sleep(5)
+
     def _ice_list(self):
-        """优先用 Worker 下发的 ICE（含 TURN 中继），拿不到就用内置 STUN。"""
+        """优先用 Worker 下发的 ICE（含 TURN 中继），拿不到就用内置 STUN。
+
+        Worker 的 /ice 带 TURN 凭据（TURN 走 TCP 443，最稳），所以拉取失败时
+        要重试几次；实在拿不到才退回内置 STUN。
+        """
         if self._ice_cache is not None:
             return self._ice_cache
         servers = []
-        try:
-            url = self.api.rstrip("/") + "/ice"
-            req = urllib.request.Request(url, headers={"User-Agent": self.UA})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read().decode())
-            for item in data.get("iceServers") or []:
-                urls = item.get("urls") or []
-                if isinstance(urls, str):
-                    urls = [urls]
-                if not urls:
-                    continue
-                kw = {"urls": urls}
-                if item.get("username"):
-                    kw["username"] = item["username"]
-                    kw["credential"] = item.get("credential") or ""
-                servers.append(kw)
-        except Exception as exc:
-            self.log("[门户] 取 ICE 失败，用内置 STUN：%r" % (exc,))
+        for attempt in range(3):
+            try:
+                url = self.api.rstrip("/") + "/ice"
+                req = urllib.request.Request(url, headers={"User-Agent": self.UA})
+                with urllib.request.urlopen(req, timeout=12) as r:
+                    data = json.loads(r.read().decode())
+                for item in data.get("iceServers") or []:
+                    urls = item.get("urls") or []
+                    if isinstance(urls, str):
+                        urls = [urls]
+                    if not urls:
+                        continue
+                    kw = {"urls": urls}
+                    if item.get("username"):
+                        kw["username"] = item["username"]
+                        kw["credential"] = item.get("credential") or ""
+                    servers.append(kw)
+                if servers:
+                    break
+            except Exception as exc:
+                self.log("[门户] 取 ICE 失败（第 %d 次）：%r" % (attempt + 1, exc))
+                time.sleep(1.5)
         if not servers:
+            # 兜底：Cloudflare 的 STUN 最稳（国内也通），其余作为补充
             servers = [
-                {"urls": ["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"]},
+                {"urls": ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:443"]},
                 {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"]},
             ]
         self._ice_cache = servers
         return servers
@@ -574,6 +608,16 @@ class PortalClient(object):
                     await old["pc"].close()
                 except Exception:
                     pass
+            # 防止同一台电脑反复重连把 peer 堆成一堆：超过上限就踢掉最早的
+            while len(self.peers) >= 8:
+                oldest = next(iter(self.peers))
+                stale = self.peers.pop(oldest, None)
+                if stale and stale.get("pc"):
+                    try:
+                        await stale["pc"].close()
+                    except Exception:
+                        pass
+                    self.log("[门户] 清理过旧的连接：%s" % oldest)
             ice_objs = []
             for it in self._ice_list():
                 if it.get("username"):
@@ -589,6 +633,7 @@ class PortalClient(object):
 
             @pc.on("datachannel")
             def on_dc(channel):
+                self.log("[门户] datachannel 到了：%s" % channel.label)
                 entry["dc"] = channel
                 self.dc = channel
 
@@ -687,21 +732,31 @@ class PortalClient(object):
         params = msg.get("params") or {}
         token = msg.get("token") or (entry or {}).get("token") or ""
         try:
-            if method == "auth.login" and entry is not None:
-                # 记住每位老师自己的会话令牌
-                pass
             if method == "ping":
                 result = {"pong": time.time()}
             elif method == "screen":
                 result = {"on": self.set_screen(bool(params.get("on")))}
+            elif method == "auth.login":
+                srv = self._rpc_server()
+                if srv is None:
+                    raise RuntimeError("WebRPC 未就绪")
+                result = srv.login(params.get("username"), params.get("password"))
+            elif method == "auth.logout":
+                srv = self._rpc_server()
+                result = srv.logout(token) if srv else {"ok": True}
             else:
-                # 优先走 WebRPC（叫号器的每个业务接口都实现在 DataChannel 上）
+                # 其余一律按「原站 URL + HTTP 方法」派发：
+                #   GET  /api/xxx → srv.dispatch("GET",  {path, query})
+                #   POST /api/xxx → srv.dispatch("POST", {path, query, body, files})
                 srv = self._rpc_server()
                 if srv is None:
                     raise RuntimeError("WebRPC 未就绪")
                 result = srv.dispatch(method, params, token)
             reply = {"id": rid, "ok": True, "result": result}
         except Exception as exc:
+            import traceback as _tb
+            self.log("[门户] WebRPC 分派异常 %s %s: %r" % (method, (params or {}).get("path"), exc))
+            self.log(_tb.format_exc()[:600])
             reply = {"id": rid, "ok": False, "error": str(exc)[:200]}
         try:
             dc = (entry or {}).get("dc") or self.dc

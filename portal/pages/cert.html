@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>安装证书 - 班级叫号器</title>
+<link rel="icon" href="/static/favicon.ico" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px 16px 40px; background: #f1f5f9; color: #0f172a;
+         font-family: "Microsoft YaHei", -apple-system, system-ui, sans-serif; line-height: 1.85; }
+  .card { background: #fff; border-radius: 16px; padding: 18px 16px; max-width: 560px;
+          margin: 0 auto 14px; box-shadow: 0 10px 30px rgba(15,23,42,.08); }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  h2 { font-size: 15.5px; margin: 18px 0 6px; }
+  p, li { font-size: 14.5px; color: #334155; }
+  .muted { color: #64748b; font-size: 13px; }
+  .btn { display: block; text-align: center; text-decoration: none; font-weight: 700;
+         font-size: 16px; padding: 14px 16px; border-radius: 12px; margin: 10px 0; color: #fff;
+         background: #2563eb; }
+  .btn.secondary { background: #0f172a; }
+  .btn.ghost { background: #e2e8f0; color: #0f172a; }
+  ol, ul { padding-left: 22px; margin: 8px 0; }
+  code { background: #f1f5f9; border-radius: 5px; padding: 1px 5px; font-size: 13px;
+         word-break: break-all; }
+  .warn { background: #fff7ed; border-left: 4px solid #f59e0b; padding: 10px 12px;
+          border-radius: 8px; color: #7c2d12; font-size: 13.5px; }
+  .ok { background: #ecfdf5; border-left: 4px solid #10b981; padding: 10px 12px;
+        border-radius: 8px; color: #065f46; font-size: 13.5px; }
+  .urls li { font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5.4"/><path d="M11 6.2 5.4 12l5.6 5.8"/></symbol>
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 15V4.8"/><path d="M8.2 8.6 12 4.8l3.8 3.8"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.6 9.6 17 19 7.2"/></symbol>
+  <symbol id="ic-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M10.6 5.2h2.8"/><circle cx="12" cy="18.2" r=".9"/></symbol>
+  <symbol id="ic-home" viewBox="0 0 24 24"><path d="M4.4 10.6 12 4.2l7.6 6.4V19a1.4 1.4 0 0 1-1.4 1.4H5.8A1.4 1.4 0 0 1 4.4 19Z"/><path d="M9.6 20.4v-5.6h4.8v5.6"/></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.4 2.2 3.6 5 3.6 8.2s-1.2 6-3.6 8.2c-2.4-2.2-3.6-5-3.6-8.2s1.2-6 3.6-8.2Z"/></symbol>
+  <symbol id="ic-expand" viewBox="0 0 24 24"><path d="M4.4 9.2V4.4h4.8"/><path d="M19.6 14.8v4.8h-4.8"/><path d="M4.4 4.4 10 10"/><path d="M19.6 19.6 14 14"/></symbol>
+  <symbol id="ic-key" viewBox="0 0 24 24"><circle cx="8.4" cy="15.6" r="3.4"/><path d="M10.9 13.1 20 4"/><path d="M16.4 7.6 18.6 9.8"/><path d="M14 10 16.2 12.2"/></symbol>
+  <symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 3.6c3.4 1.8 5.2 5 5.2 8.8l-2.4 2.4H9.2l-2.4-2.4c0-3.8 1.8-7 5.2-8.8Z"/><path d="M9.2 14.8 7 20l3.2-1.6h3.6L17 20l-2.2-5.2"/><circle cx="12" cy="9.6" r="1.6"/></symbol>
+  <symbol id="ic-spark" viewBox="0 0 24 24"><path d="M12 3.6 13.8 9l5.4 1.8-5.4 1.8L12 18l-1.8-5.4L4.8 10.8 10.2 9Z"/><path d="M18.4 16.4l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9Z"/></symbol>
+</svg>
+<style>
+  .ic-inline{width:15px;height:15px;vertical-align:-2.5px;margin-right:4px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ic-inline.warn{stroke:#b45309}
+  .ic-inline.ok{stroke:#12805c}
+  .ic-inline.big{width:22px;height:22px;vertical-align:-5px}
+</style>
+
+<div class="card">
+  <h1><svg class="ic-inline"><use href="#ic-phone"/></svg> 手机装证书（一次就够）</h1>
+  <p>iPhone / iPad 打开本软件时<b>白屏、没有报错</b>，几乎都是同一个原因：
+     软件用的是<b>自签名证书</b>，苹果设备默认不信任它；而 Chrome / Edge 这类第三方浏览器
+     连"继续访问"的按钮都没有，所以直接白屏。</p>
+  <p class="muted">装一次下面这份证书并开启「完全信任」，之后 Safari、Chrome、Edge、夸克
+     全都能正常打开，也不用每次点"继续"。</p>
+</div>
+
+<div class="card">
+  <h2>第 1 步：下载证书</h2>
+  <a class="btn" href="/cert.mobileconfig">① 下载描述文件（iPhone / iPad 推荐）</a>
+  <a class="btn secondary" href="/cert.crt">② 下载证书文件 .crt（安卓 / 电脑用）</a>
+  <p class="muted">本机根证书：
+    尚未生成（请先在电脑上启动一次软件）；
+    版本 v</p>
+
+  <h2>第 2 步：安装（iPhone / iPad）</h2>
+  <ol>
+    <li>用 <b>Safari</b> 打开本页，点上面的「下载描述文件」，弹窗点<b>允许</b>；</li>
+    <li>打开 <b>设置</b> → 顶部「已下载描述文件」→ 点<b>安装</b>（要输入锁屏密码）；</li>
+    <li>再进 <b>设置 → 通用 → 关于本机 → 证书信任设置</b>；</li>
+    <li>把 <b>「班级叫号器本机根证书」</b> 的开关<b>打开（完全信任）</b>。</li>
+  </ol>
+  <div class="warn">第 4 步不做的话，证书只是"装上了但没被信任"，仍然会白屏。
+    这一步 Apple 官方说明：手动安装的证书不会自动信任，必须在「证书信任设置」里手动开启。</div>
+
+  <h2>第 3 步：重新打开软件</h2>
+  <p>用下面任一地址打开（现在用 <b>https</b> 不会再有红色警告）：</p>
+  <ul class="urls">
+    
+    <li><code>https://.local:</code>
+        <span class="muted">（需要设备支持 mDNS：苹果设备/电脑可以，部分鸿蒙等机型不行）</span></li>
+    <li><code>http://.local:</code> / <code>http://本机IP:</code>
+        <span class="muted">（叫号用 http 也能开，激活/监控/远控必须 https）</span></li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2>装在安卓 / 鸿蒙上</h2>
+  <ol>
+    <li>点「下载证书文件 .crt」；</li>
+    <li>设置 → 安全（或「密码与安全」）→ <b>加密与凭据</b> → 安装证书 →
+        <b>CA 证书</b> → 选择刚下载的文件；</li>
+    <li>如提示"您的数据将被公开"之类，选<b>仍然安装</b>。</li>
+  </ol>
+  <p class="muted">安卓上如果不装证书，也能用 <code>http://本机IP:</code> 叫号，
+     只是 https 的激活/监控会提示不安全。</p>
+</div>
+
+<div class="card">
+  <h2>还是打不开？按顺序试</h2>
+  <ol>
+    <li>打开 <a href="/plain">/plain</a> —— 这一页不含脚本，能开说明网络没问题；</li>
+    <li>打开 <a href="/api/health">/api/health</a> —— 能出 JSON 说明连的是这台电脑；</li>
+    <li>设置 → 隐私与安全性 → <b>本地网络</b> → 找到你用的浏览器，打开权限；</li>
+    <li>设置 → 无线局域网 → 当前 Wi-Fi 右侧 ⓘ → 关闭「<b>限制 IP 地址跟踪</b>」、
+        关闭「<b>私有 Wi-Fi 地址</b>」；Apple ID → iCloud → 关闭「<b>私密中继</b>」；</li>
+    <li>清掉浏览器缓存，或换 <b>Safari</b> 再试；</li>
+    <li>电脑上打开 <a href="/logs">/logs</a> 看运行日志，把内容发给我们。</li>
+  </ol>
+  <div class="ok">小提示：<b>Safari 是唯一能点「显示详细信息 → 访问此网站」跳过证书警告的</b>；
+    第三方浏览器在 iPhone 上做不到这一点，所以它们显示的是白屏。</div>
+</div>
+
+<script src="/p2p-shim.js?v=1403"></script>
+<script>try{sessionStorage.setItem('cc-p2p-sn',new URLSearchParams(location.search).get('sn')||'');}catch(e){}</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+﻿/p2p-shim.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/config.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/static/*
+  Cache-Control: public, max-age=3600

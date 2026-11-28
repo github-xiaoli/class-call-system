@@ -320,7 +320,9 @@ export class SignalRoom {
   async webSocketClose(ws) {
     const me = this.metaFor(ws);
     this.meta.delete(ws);
-    this.broadcast(ws, { type: "peer-left", role: me ? me.role : "" });
+    // 带上 sn 与角色：老师端据此判断是不是"我连的这台电脑"掉线了
+    this.broadcast(ws, { type: "peer-left", role: me ? me.role : "",
+                          id: me ? me.id : "", sn: me ? me.sn : "" });
   }
 
   async webSocketError(ws) {

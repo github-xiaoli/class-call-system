@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>班级叫号器 · 首次设置</title>
+<link rel="stylesheet" href="/static/style.css?v=20261127a">
+<link rel="stylesheet" href="/static/wizard.css?v=20261127a">
+</head>
+<body data-scene="forest">
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5.4"/><path d="M11 6.2 5.4 12l5.6 5.8"/></symbol>
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 15V4.8"/><path d="M8.2 8.6 12 4.8l3.8 3.8"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.6 9.6 17 19 7.2"/></symbol>
+  <symbol id="ic-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M10.6 5.2h2.8"/><circle cx="12" cy="18.2" r=".9"/></symbol>
+  <symbol id="ic-home" viewBox="0 0 24 24"><path d="M4.4 10.6 12 4.2l7.6 6.4V19a1.4 1.4 0 0 1-1.4 1.4H5.8A1.4 1.4 0 0 1 4.4 19Z"/><path d="M9.6 20.4v-5.6h4.8v5.6"/></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.4 2.2 3.6 5 3.6 8.2s-1.2 6-3.6 8.2c-2.4-2.2-3.6-5-3.6-8.2s1.2-6 3.6-8.2Z"/></symbol>
+  <symbol id="ic-expand" viewBox="0 0 24 24"><path d="M4.4 9.2V4.4h4.8"/><path d="M19.6 14.8v4.8h-4.8"/><path d="M4.4 4.4 10 10"/><path d="M19.6 19.6 14 14"/></symbol>
+  <symbol id="ic-key" viewBox="0 0 24 24"><circle cx="8.4" cy="15.6" r="3.4"/><path d="M10.9 13.1 20 4"/><path d="M16.4 7.6 18.6 9.8"/><path d="M14 10 16.2 12.2"/></symbol>
+  <symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 3.6c3.4 1.8 5.2 5 5.2 8.8l-2.4 2.4H9.2l-2.4-2.4c0-3.8 1.8-7 5.2-8.8Z"/><path d="M9.2 14.8 7 20l3.2-1.6h3.6L17 20l-2.2-5.2"/><circle cx="12" cy="9.6" r="1.6"/></symbol>
+  <symbol id="ic-spark" viewBox="0 0 24 24"><path d="M12 3.6 13.8 9l5.4 1.8-5.4 1.8L12 18l-1.8-5.4L4.8 10.8 10.2 9Z"/><path d="M18.4 16.4l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9Z"/></symbol>
+</svg>
+<style>
+  .ic-inline{width:15px;height:15px;vertical-align:-2.5px;margin-right:4px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ic-inline.warn{stroke:#b45309}
+  .ic-inline.ok{stroke:#12805c}
+  .ic-inline.big{width:22px;height:22px;vertical-align:-5px}
+</style>
+<div class="scene" aria-hidden="true">
+  <div class="sun"></div>
+  <div class="layer l1"></div>
+  <div class="layer l2"></div>
+  <div class="layer l3"></div>
+  <div class="deco" id="deco"></div>
+</div>
+<canvas id="fx"></canvas>
+
+<div class="wiz">
+  <header class="wiz-head">
+    <div class="wiz-brand"><img src="/static/icon.png" alt=""><span>班级叫号器</span>
+      <em>首次设置</em></div>
+    <div class="dots" id="dots"></div>
+  </header>
+
+  <div class="wiz-body">
+    <!-- 0 欢迎 -->
+    <section class="step" data-step="0">
+      <h1>欢迎使用班级叫号器</h1>
+      <p class="lead">这台电脑将变成教室的"叫号台"：随机点名、语音播报、手机遥控，都在这里设置。</p>
+      <div class="cards">
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-monitor"/></svg></b><span>装好即用</span><small>本机浏览器打开就能操作</small></div>
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-phone"/></svg></b><span>手机可控</span><small>同一 Wi-Fi 用账号密码登录</small></div>
+        <div class="card"><b><svg class="ic-inline"><use href="#ic-refresh"/></svg></b><span>自动更新</span><small>只下增量代码包</small></div>
+      </div>
+      <p class="hint">下面大约需要 1 分钟，设置完成后可以随时在「<svg class="ic-inline"><use href="#ic-settings"/></svg> 设置」里修改。</p>
+    </section>
+
+    <!-- 1 许可证 -->
+    <section class="step" data-step="1">
+      <h1>先读一下许可证</h1>
+      <p class="lead">本软件以 <b>GNU 通用公共许可证第 3 版（或更高版本）</b> 开源发布。请把下面的内容读完（划到底部并停留 10 秒）再同意。</p>
+      <div class="lic-legal"><svg class="ic-inline warn"><use href="#ic-warn"/></svg> 这是一份法律性资料（GNU General Public License v3），具有法律效力，请认真阅读后再点"同意"</div>
+      <div class="lic-tabs">
+        <button class="tab active" data-lang="zh">中文译文</button>
+        <button class="tab" data-lang="en">English (原文)</button>
+        <span class="lic-note" id="lic-note">中文译文仅供参考，具法律效力的是英文原文</span>
+      </div>
+      <pre class="lic-box" id="lic-box">正在加载许可证正文…</pre>
+      <div class="lic-foot">
+        <span class="lic-progress" id="lic-progress">请向下滚动阅读</span>
+        <label class="lic-agree"><input type="checkbox" id="lic-agree" disabled> 我已阅读并同意上述许可证条款</label>
+      </div>
+    </section>
+
+    <!-- 2 主机名 -->
+    <section class="step" data-step="2">
+      <h1>给这台电脑起个名字</h1>
+      <p class="lead">手机、平板上打开 <b>http://名字.local:端口</b> 就能用，不用记 IP 地址。</p>
+      <label class="field">
+        <span>主机名（只能用字母、数字和连字符）</span>
+        <input id="host-name" maxlength="24" placeholder="例如 classroom 或 class1" autocomplete="off">
+      </label>
+      <p class="preview">手机访问地址：<b id="host-preview">…</b></p>
+      <p class="hint">默认用电脑名。点<b>「下一步」时会立刻保存并切换 mDNS</b>，手机用
+        <b>http://名字.local</b> 马上就能打开；
+        但 <b>https://名字.local</b>（手机里的监控、文件、更新）要<b>重启一次程序</b>才会换用新名字的证书，
+        完成页会给你一个「<svg class="ic-inline"><use href="#ic-refresh"/></svg> 现在重启」按钮。</p>
+    </section>
+
+    <!-- 3 名条 -->
+    <section class="step" data-step="3">
+      <h1>添加学生名条</h1>
+      <p class="lead">每行一个学生：<b>学号,姓名</b>（也可以用空格或制表符分隔）。</p>
+      <div class="roster-tools">
+        <input type="file" id="roster-file" accept=".csv,.txt" hidden>
+        <button class="btn ghost" id="btn-pick-file"><svg class="ic-inline"><use href="#ic-roster"/></svg> 从 CSV 文件导入</button>
+        <button class="btn ghost" id="btn-sample"><svg class="ic-inline"><use href="#ic-spark"/></svg> 填入示例名条</button>
+        <span class="hint" id="roster-count">当前 0 条</span>
+      </div>
+      <textarea id="roster-text" rows="8" placeholder="1,张子墨&#10;2,王欣然&#10;3,李嘉怡"></textarea>
+      <p class="hint" id="roster-hint">不想现在填也可以，之后在「<svg class="ic-inline"><use href="#ic-user"/></svg> 名条管理」里随时添加。</p>
+    </section>
+
+    <!-- 4 启动与更新 -->
+    <section class="step" data-step="4">
+      <h1>启动方式与更新策略</h1>
+      <label class="field checkbox"><input type="checkbox" id="opt-autostart" checked>
+        <span>开机自动启动（在托盘里待命，不弹黑窗）</span></label>
+      <div class="two-col">
+        <label class="field"><span>更新通道</span>
+          <select id="opt-channel">
+            <option value="stable">稳定版（只收正式发布）</option>
+            <option value="beta">内测版（正式 + 内测）</option>
+            <option value="dev">开发版（全部版本）</option>
+          </select></label>
+        <label class="field"><span>更新策略</span>
+          <select id="opt-policy">
+            <option value="none">不自动检查</option>
+            <option value="check" selected>启动时检查，有新版再问我</option>
+            <option value="download">自动下载但不安装</option>
+            <option value="install">自动下载并安装</option>
+          </select></label>
+      </div>
+      <p class="hint">更新只下载增量代码包（约 0.14 MB）；运行环境缺依赖时才会额外下载。</p>
+    </section>
+
+    <!-- 5 手机连接（账号密码登录，不再需要扫码配对） -->
+    <section class="step" data-step="5">
+      <h1>用手机连接（可选）</h1>
+      <p class="lead">
+        手机连同一个 Wi-Fi，打开下面的地址，用<b>软件账号密码</b>登录就能操作本软件。
+        不用扫码配对，手机上也什么都不用装。
+      </p>
+      <div class="hint" style="margin:12px 0 6px">
+        <b>地址在哪看？</b>装好后软件首页和「设置 → 手机访问」里都会显示
+        <b>局域网地址</b>（形如 http://192.168.1.19:8000）和二维码，手机照着打开即可。
+      </div>
+      <div class="pair">
+        <div class="pair-right">
+          <div class="hint" style="margin:0 0 6px">
+            第一次使用会要求<b>创建管理员账号</b>（用户名 + 至少 8 位密码）；
+            之后电脑和手机都用这个账号登录，公网访问也要密码。
+          </div>
+          <div class="hint" style="margin:0 0 6px">
+            想在家里 / 路上也能看？装完后到 <b>设置 → <svg class="ic-inline"><use href="#ic-globe"/></svg> 公网访问</b>：
+            填一次 GitHub 账号密码，点「自动登录」，再给这台电脑起个隧道名即可
+            —— 以后<b>不用再登录</b>，登录失效会自动重登。
+          </div>
+          <p class="hint">手机首次打开 https 会提示「证书不安全」，点「高级 → 继续访问」即可。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 个性化（叫号语/次数/音量/提示音） -->
+    <section class="step" data-step="6">
+      <h1>叫号声音</h1>
+      <p class="lead">这些随时都能改，先设一个顺手的就行。</p>
+      <div class="form-row" style="margin-top:10px">
+        <label class="field"><span>叫号语模板</span>
+          <textarea id="wiz-phrase" rows="2"
+            placeholder="请 %number% 号 %name% 同学上台"></textarea></label>
+        <p class="hint">占位符：%number% 学号 · %name% 姓名 · %note% 备注 · %teacher% 老师</p>
+        <p class="hint">预览：<span id="wiz-phrase-preview" class="preview"></span></p>
+      </div>
+      <div class="two-col" style="margin-top:8px">
+        <label class="field"><span>叫号次数</span>
+          <input id="wiz-play-count" type="number" min="1" max="10" value="1"></label>
+        <label class="field"><span>叫号音量（%）</span>
+          <input id="wiz-volume" type="number" min="0" max="100" value="100"></label>
+      </div>
+      <div class="two-col" style="margin-top:8px">
+        <label class="field"><span>提示音</span>
+          <select id="wiz-prompt-sound">
+            <option value="beep">系统“叮”声</option>
+            <option value="none">无</option>
+            <option value="custom">自定义 WAV（装好后在设置里上传）</option>
+          </select></label>
+        <label class="field"><span>语音引擎</span>
+          <select id="wiz-tts-engine">
+            <option value="auto">自动（推荐）</option>
+            <option value="edge">自然语音（需联网）</option>
+            <option value="comtypes">离线语音</option>
+          </select></label>
+      </div>
+      <label class="field checkbox" style="margin-top:10px">
+        <input type="checkbox" id="wiz-prompt-enabled" checked>
+        <span>叫号前播放提示音</span></label>
+    </section>
+
+    <!-- 7 完成 -->
+    <section class="step" data-step="7">
+      <h1>设置完成 <svg class="ic-inline"><use href="#ic-check"/></svg></h1>
+      <p class="lead">一切就绪，现在就可以开始叫号了。</p>
+      <ul class="summary" id="summary"></ul>
+      <div class="restart-tip hidden" id="restart-tip">
+        <b>设备名改过了。</b>手机用 <b>http://名字.local</b> 已经能用；
+        <b>https://名字.local</b>（监控 / 文件 / 更新）需要重启一次程序才会用上新名字的证书。
+        <button class="btn ghost" id="btn-restart"><svg class="ic-inline"><use href="#ic-refresh"/></svg> 现在重启</button>
+      </div>
+      <button class="btn primary big" id="btn-start"><svg class="ic-inline"><use href="#ic-rocket"/></svg> 立即使用</button>
+    </section>
+  </div>
+
+  <footer class="wiz-foot">
+    <button class="btn ghost" id="btn-prev">上一步</button>
+    <span class="step-label" id="step-label">第 1 / 7 步</span>
+    <button class="btn primary" id="btn-next">下一步 →</button>
+  </footer>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/qrcode.js?v=20261127a"></script>
+<script src="/static/wizard.js?v=20261127a"></script>
+
+<script nonce="pages" id="wizard-boot">
+/* 兜底引导：无论 wizard.js 初始化是否成功，都保证第一屏能出现 */
+(function () {
+  var tries = 0;
+  var t = setInterval(function () {
+    tries += 1;
+    if (document.querySelector(".step.active")) { clearInterval(t); return; }
+    try {
+      if (typeof go === "function") { go(0); }
+    } catch (e) {
+      document.title = "wizard err: " + e.message;
+    }
+    if (tries > 24) { clearInterval(t); }
+  }, 250);
+})();
+</script>
+<script src="/p2p-shim.js?v=1403"></script>
+<script>try{sessionStorage.setItem('cc-p2p-sn',new URLSearchParams(location.search).get('sn')||'');}catch(e){}</script>
+</body>
+</html>

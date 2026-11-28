@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理员后台 · 班级叫号器</title>
+<link rel="stylesheet" href="/static/style.css?v=20261127a">
+</head>
+<body>
+
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5.4"/><path d="M11 6.2 5.4 12l5.6 5.8"/></symbol>
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 15V4.8"/><path d="M8.2 8.6 12 4.8l3.8 3.8"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.6 9.6 17 19 7.2"/></symbol>
+  <symbol id="ic-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M10.6 5.2h2.8"/><circle cx="12" cy="18.2" r=".9"/></symbol>
+  <symbol id="ic-home" viewBox="0 0 24 24"><path d="M4.4 10.6 12 4.2l7.6 6.4V19a1.4 1.4 0 0 1-1.4 1.4H5.8A1.4 1.4 0 0 1 4.4 19Z"/><path d="M9.6 20.4v-5.6h4.8v5.6"/></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.4 2.2 3.6 5 3.6 8.2s-1.2 6-3.6 8.2c-2.4-2.2-3.6-5-3.6-8.2s1.2-6 3.6-8.2Z"/></symbol>
+  <symbol id="ic-expand" viewBox="0 0 24 24"><path d="M4.4 9.2V4.4h4.8"/><path d="M19.6 14.8v4.8h-4.8"/><path d="M4.4 4.4 10 10"/><path d="M19.6 19.6 14 14"/></symbol>
+  <symbol id="ic-key" viewBox="0 0 24 24"><circle cx="8.4" cy="15.6" r="3.4"/><path d="M10.9 13.1 20 4"/><path d="M16.4 7.6 18.6 9.8"/><path d="M14 10 16.2 12.2"/></symbol>
+  <symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 3.6c3.4 1.8 5.2 5 5.2 8.8l-2.4 2.4H9.2l-2.4-2.4c0-3.8 1.8-7 5.2-8.8Z"/><path d="M9.2 14.8 7 20l3.2-1.6h3.6L17 20l-2.2-5.2"/><circle cx="12" cy="9.6" r="1.6"/></symbol>
+  <symbol id="ic-spark" viewBox="0 0 24 24"><path d="M12 3.6 13.8 9l5.4 1.8-5.4 1.8L12 18l-1.8-5.4L4.8 10.8 10.2 9Z"/><path d="M18.4 16.4l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9Z"/></symbol>
+</svg>
+<style>
+  .ic-inline{width:15px;height:15px;vertical-align:-2.5px;margin-right:4px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ic-inline.warn{stroke:#b45309}
+  .ic-inline.ok{stroke:#12805c}
+  .ic-inline.big{width:22px;height:22px;vertical-align:-5px}
+</style>
+<div id="drawer-mask" class="drawer-mask"></div>
+<aside id="app-drawer" class="app-drawer" aria-hidden="true">
+  <div class="drawer-head"><span>应用</span><button class="drawer-close" id="drawer-close">关闭</button></div>
+  <div class="drawer-list">
+    <a class="app-item" href="/"><svg class="ic"><use href="#ic-call"/></svg><span>叫号主界面</span></a>
+    <a class="app-item" href="/monitor"><svg class="ic"><use href="#ic-monitor"/></svg><span>屏幕监控</span></a>
+    <a class="app-item" href="/roster"><svg class="ic"><use href="#ic-roster"/></svg><span>名条管理</span></a>
+    <a class="app-item" href="/files"><svg class="ic"><use href="#ic-files"/></svg><span>文件传输</span></a>
+    <a class="app-item" href="/remote"><svg class="ic"><use href="#ic-remote"/></svg><span>手机远控</span></a>
+    <a class="app-item" href="/admin"><svg class="ic"><use href="#ic-admin"/></svg><span>管理员后台</span></a>
+    <div class="drawer-sep"></div>
+    <a class="app-item" href="/settings/personal"><svg class="ic"><use href="#ic-personal"/></svg><span>个性化</span></a>
+    <a class="app-item" href="/settings/network"><svg class="ic"><use href="#ic-network"/></svg><span>内网服务</span></a>
+    <a class="app-item" href="/settings/control"><svg class="ic"><use href="#ic-control"/></svg><span>监控和远控</span></a>
+    <a class="app-item" href="/settings/tunnel"><svg class="ic"><use href="#ic-tunnel"/></svg><span>内网穿透</span></a>
+  </div>
+  <div class="drawer-foot">版本 2.0.36 · 构建 2026-11-26 19:21</div>
+</aside>
+<div class="edge-hot" id="edge-hot" title="鼠标移到最左侧可打开应用列表"></div>
+<div class="edge-tab" id="edge-tab" title="应用列表">‹</div>
+<style>
+  .drawer-mask{position:fixed;inset:0;background:rgba(12,20,40,.38);opacity:0;pointer-events:none;
+    transition:opacity .22s ease;z-index:60}
+  body.edge-open .drawer-mask,body.drawer-open .drawer-mask{opacity:1;pointer-events:auto}
+  .app-drawer{position:fixed;top:0;left:0;height:100%;width:270px;max-width:86vw;z-index:61;
+    background:#fff;box-shadow:6px 0 24px rgba(16,28,60,.16);display:flex;flex-direction:column;
+    transform:translateX(-104%);transition:transform .26s cubic-bezier(.22,.8,.3,1);font:14px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  body.edge-open .app-drawer,body.drawer-open .app-drawer{transform:translateX(0)}
+  .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+    border-bottom:1px solid #e6ebf5;font-weight:600;font-size:14px;color:#1d2437}
+  .drawer-close{background:#f1f4fb;border:0;border-radius:8px;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .drawer-list{padding:10px;display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1}
+  .app-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:11px;
+    color:#1d2437;text-decoration:none;font-size:14px}
+  .app-item:hover{background:#f2f6ff}
+  .app-item.active{background:#e8f0ff;color:#2a5bd7;font-weight:600}
+  .app-item.active .ic{stroke:#1b47b8}
+  .app-item.home{border-bottom:1px solid #eef2f9;margin-bottom:4px;border-radius:0 0 11px 11px}
+  .app-item .ic{width:22px;height:22px;flex:none;fill:none;stroke:#2a5bd7;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .drawer-sep{height:1px;background:#eef2f9;margin:8px 12px}
+  .drawer-foot{padding:12px 16px;border-top:1px solid #eef2f9;color:#8b96ad;font-size:12px}
+  .edge-hot{position:fixed;left:0;top:0;width:16px;height:100%;z-index:59}
+  .edge-tab{position:fixed;left:0;top:46%;width:14px;height:56px;border-radius:0 10px 10px 0;
+    background:#dbe6ff;color:#2a5bd7;display:flex;align-items:center;justify-content:center;
+    font-size:11px;cursor:pointer;z-index:58;box-shadow:2px 0 6px rgba(20,40,90,.12)}
+  .edge-tab:hover{background:#c7d8ff}
+</style>
+<script src="/static/shell.js?v=20261127a"></script>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5.4"/><path d="M11 6.2 5.4 12l5.6 5.8"/></symbol>
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M4.2 9.6h2.4l4.6-3.4a.9.9 0 0 1 1.4.7v9.9a.9.9 0 0 1-1.4.7L6.6 14.1H4.2a1 1 0 0 1-1-1v-2.5a1 1 0 0 1 1-1Z"/><path d="M15.4 9.3a4.2 4.2 0 0 1 0 5.4"/><path d="M18.1 6.9a7.8 7.8 0 0 1 0 10.2"/></symbol>
+  <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="12.2" rx="2"/><path d="M9.2 20.4h5.6"/><path d="M12 16.8v3.6"/><path d="M7.9 10.7c1.1-1.7 2.6-2.6 4.1-2.6s3 .9 4.1 2.6c-1.1 1.7-2.6 2.6-4.1 2.6s-3-.9-4.1-2.6Z"/><circle cx="12" cy="10.7" r="1.25"/></symbol>
+  <symbol id="ic-roster" viewBox="0 0 24 24"><rect x="4" y="3.4" width="16" height="17.2" rx="2.4"/><path d="M7.6 8.4h8.8"/><path d="M7.6 12h8.8"/><path d="M7.6 15.6h5.6"/></symbol>
+  <symbol id="ic-files" viewBox="0 0 24 24"><path d="M3.2 8.2a2 2 0 0 1 2-2h4l1.8 2.2h7.8a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z"/><path d="M12 12.6v4"/><path d="M10 14.4 12 12.4l2 2"/></symbol>
+  <symbol id="ic-remote" viewBox="0 0 24 24"><rect x="2.8" y="4.6" width="12.4" height="9.4" rx="1.8"/><path d="M6.4 18.4h5.2"/><path d="M9 14v4.4"/><path d="M17 11.6v4.6l1.9 1.7"/><path d="M17 16.2l-1.7 1.6"/><circle cx="18.6" cy="19.4" r="1.5"/></symbol>
+  <symbol id="ic-admin" viewBox="0 0 24 24"><path d="M12 3.4 5.2 6v5.6c0 4.2 2.9 7.2 6.8 8.6 3.9-1.4 6.8-4.4 6.8-8.6V6Z"/><path d="M9.6 11.8l1.9 1.9 3.2-3.4"/></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M12 3.4v2.2M12 18.4v2.2M4.9 7.9l1.9 1.1M17.2 15l1.9 1.1M4.9 16.1l1.9-1.1M17.2 9l1.9-1.1"/></symbol>
+  <symbol id="ic-tunnel" viewBox="0 0 24 24"><rect x="2.6" y="7.4" width="6.2" height="9.2" rx="1.6"/><rect x="15.2" y="7.4" width="6.2" height="9.2" rx="1.6"/><path d="M8.8 12c1.3-3.1 3.1-3.1 4.4 0s3.1 3.1 4.4 0" stroke-dasharray="2.2 2.2"/><path d="M17.6 9.6 18.9 12l-1.3 2.4"/></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.4 20.2c0-3.4 2.9-5.6 6.6-5.6s6.6 2.2 6.6 5.6"/></symbol>
+  <symbol id="ic-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.8"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.8"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.8"/></symbol>
+  <symbol id="ic-personal" viewBox="0 0 24 24"><path d="M5 7.4h14"/><path d="M5 12h14"/><path d="M5 16.6h14"/><circle cx="9.2" cy="7.4" r="1.9"/><circle cx="15" cy="12" r="1.9"/><circle cx="8.2" cy="16.6" r="1.9"/></symbol>
+  <symbol id="ic-network" viewBox="0 0 24 24"><circle cx="12" cy="5.4" r="2.3"/><circle cx="5.2" cy="18" r="2.3"/><circle cx="18.8" cy="18" r="2.3"/><path d="M10.6 7.4 6.4 15.9"/><path d="M13.4 7.4l4.2 8.5"/><path d="M7.5 18h9"/></symbol>
+  <symbol id="ic-control" viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="11" rx="1.8"/><path d="M12 16v4"/><path d="M8.6 20h6.8"/><path d="M7.4 10.5h3.2"/><path d="M9 9l-1.6 1.5L9 12"/><path d="M16.6 10.5h-3.2"/><path d="M15 9l1.6 1.5L15 12"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.6 4.2 3.8 10.6a.6.6 0 0 0 0 1.1l6.1 2.4 2.4 6.1a.6.6 0 0 0 1.1 0Z"/><path d="M20.6 4.2 9.9 14.1"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20.4 20.4"/></symbol>
+  <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.4V10h-5.6"/></symbol>
+  <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4.6 7.2h14.8"/><path d="M9.4 7.2V5.4a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.8"/><path d="M6.4 7.2 7.3 19a1.4 1.4 0 0 0 1.4 1.2h6.6A1.4 1.4 0 0 0 16.7 19l.9-11.8"/><path d="M10.4 11v5.6"/><path d="M13.6 11v5.6"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24"><path d="M6.2 6.2 17.8 17.8"/><path d="M17.8 6.2 6.2 17.8"/></symbol>
+  <symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 4.4 3.2 19.6h17.6Z"/><path d="M12 9.8v4.4"/><circle cx="12" cy="17.2" r=".9"/></symbol>
+  <symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 4.4v10.2"/><path d="M8.2 11 12 14.8 15.8 11"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 15V4.8"/><path d="M8.2 8.6 12 4.8l3.8 3.8"/><path d="M4.8 17.6v1.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-1.4"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.6 9.6 17 19 7.2"/></symbol>
+  <symbol id="ic-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M10.6 5.2h2.8"/><circle cx="12" cy="18.2" r=".9"/></symbol>
+  <symbol id="ic-home" viewBox="0 0 24 24"><path d="M4.4 10.6 12 4.2l7.6 6.4V19a1.4 1.4 0 0 1-1.4 1.4H5.8A1.4 1.4 0 0 1 4.4 19Z"/><path d="M9.6 20.4v-5.6h4.8v5.6"/></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.4 2.2 3.6 5 3.6 8.2s-1.2 6-3.6 8.2c-2.4-2.2-3.6-5-3.6-8.2s1.2-6 3.6-8.2Z"/></symbol>
+  <symbol id="ic-expand" viewBox="0 0 24 24"><path d="M4.4 9.2V4.4h4.8"/><path d="M19.6 14.8v4.8h-4.8"/><path d="M4.4 4.4 10 10"/><path d="M19.6 19.6 14 14"/></symbol>
+  <symbol id="ic-key" viewBox="0 0 24 24"><circle cx="8.4" cy="15.6" r="3.4"/><path d="M10.9 13.1 20 4"/><path d="M16.4 7.6 18.6 9.8"/><path d="M14 10 16.2 12.2"/></symbol>
+  <symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 3.6c3.4 1.8 5.2 5 5.2 8.8l-2.4 2.4H9.2l-2.4-2.4c0-3.8 1.8-7 5.2-8.8Z"/><path d="M9.2 14.8 7 20l3.2-1.6h3.6L17 20l-2.2-5.2"/><circle cx="12" cy="9.6" r="1.6"/></symbol>
+  <symbol id="ic-spark" viewBox="0 0 24 24"><path d="M12 3.6 13.8 9l5.4 1.8-5.4 1.8L12 18l-1.8-5.4L4.8 10.8 10.2 9Z"/><path d="M18.4 16.4l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9Z"/></symbol>
+</svg>
+<style>
+  .ic-inline{width:15px;height:15px;vertical-align:-2.5px;margin-right:4px;fill:none;
+    stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ic-inline.warn{stroke:#b45309}
+  .ic-inline.ok{stroke:#12805c}
+  .ic-inline.big{width:22px;height:22px;vertical-align:-5px}
+</style>
+<header class="topbar">
+  <div class="brand"><img class="brand-icon" src="/static/icon.png" alt="">管理员后台</div>
+  <div class="topbar-right">
+    <a href="/" class="btn ghost">← 返回主页</a>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <!-- 账号管理 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>账号管理 <span class="badge" id="user-count">0</span></h2>
+      <button id="btn-new-user" class="btn primary small">＋ 新建账号</button>
+    </div>
+    <div id="new-user-form" class="admin-form hidden">
+      <div class="form-grid">
+        <label>用户名 <input id="nu-name" maxlength="20" placeholder="2–20 位" /></label>
+        <label>显示名 <input id="nu-display" maxlength="20" placeholder="如：张老师" /></label>
+        <label>角色
+          <select id="nu-role">
+            <option value="teacher">老师</option>
+            <option value="admin">管理员</option>
+          </select>
+        </label>
+        <label>初始密码 <input id="nu-pwd" type="text" maxlength="64" placeholder="至少 4 位" /></label>
+      </div>
+      <p class="hint">账号首次登录后会被要求立即修改密码。</p>
+      <div class="admin-actions">
+        <button id="btn-create-user" class="btn primary">创建</button>
+        <button id="btn-cancel-user" class="btn ghost">取消</button>
+      </div>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr>
+          <th>用户名</th><th>显示名</th><th>角色</th><th>状态</th><th>在线</th><th>操作</th>
+        </tr></thead>
+        <tbody id="user-tbody"></tbody>
+      </table>
+      <div id="user-empty" class="empty">加载中…</div>
+    </div>
+  </section>
+
+  <!-- 在线会话 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>在线设备 <span class="badge" id="sess-count">0</span></h2>
+      <button id="btn-refresh-sess" class="btn ghost small"><svg class="ic-inline"><use href="#ic-refresh"/></svg> 刷新</button>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>用户</th><th>IP</th><th>浏览器</th><th>最后活跃</th><th>操作</th></tr></thead>
+        <tbody id="sess-tbody"></tbody>
+      </table>
+      <div id="sess-empty" class="empty">暂无在线会话</div>
+    </div>
+  </section>
+
+  <!-- 审计日志 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>审计日志 <span class="badge" id="audit-total">0</span></h2>
+      <button id="btn-refresh-audit" class="btn ghost small"><svg class="ic-inline"><use href="#ic-refresh"/></svg> 刷新</button>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>时间</th><th>用户</th><th>动作</th><th>对象</th><th>IP</th><th>说明</th></tr></thead>
+        <tbody id="audit-tbody"></tbody>
+      </table>
+      <div id="audit-empty" class="empty">暂无日志</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script nonce="pages">
+(function () {
+
+  /* 出错时给出可见提示（避免"页面能开但点了没反应"无从排查） */
+  function cqtShowFail(msg) {
+    let bar = document.getElementById("cqt-fail-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "cqt-fail-bar";
+      bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;background:#fdecec;"
+        + "color:#a4262c;border-bottom:1px solid #f3b7b7;padding:10px 14px;font-size:13px;"
+        + "font-family:inherit;line-height:1.5";
+      document.body.appendChild(bar);
+    }
+    bar.textContent = "页面出错：" + msg + "  —— 请先按 Ctrl + F5 强制刷新；若仍不行，"
+      + "请确认已用管理员账号登录，并把这句话截图反馈。";
+  }
+  window.addEventListener("error", (e) => cqtShowFail(e.message || "脚本错误"));
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason || {};
+    cqtShowFail((r && (r.message || r.code)) ? String(r.message || r.code) : String(r));
+  });
+  const $ = (id) => document.getElementById(id);
+  let toastTimer = null;
+  function toast(text) {
+    const t = $("toast");
+    t.textContent = text;
+    t.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 2600);
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  async function api(url, opts) {
+    const res = await fetch(url, Object.assign({
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+    }, opts || {}));
+    if (res.status === 401) { location.href = "/login"; throw new Error("未登录"); }
+    const data = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || ("请求失败 " + res.status));
+    }
+    return data;
+  }
+
+  function postJSON(url, body) {
+    return api(url, { method: "POST", body: JSON.stringify(body || {}) });
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    const p = (n) => String(n).padStart(2, "0");
+    return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " "
+      + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  const AUTH_LABEL = {
+    login_ok: "登录成功", login_fail: "登录失败", logout: "退出登录",
+    change_pwd: "修改密码", change_pwd_fail: "改密失败",
+    reset_ok: "重置密码", reset_fail: "重置失败",
+    user_create: "创建账号", user_ban: "封禁账号", user_unban: "解封账号",
+    user_kick: "踢下线", user_reset: "重置密码", user_delete: "删除账号",
+    session_revoke: "撤销会话", device_revoke: "解绑设备",
+    admin_seed: "初始化管理员",
+  };
+
+  /* ---------- 账号 ---------- */
+  async function loadUsers() {
+    const tb = $("user-tbody");
+    tb.innerHTML = "";
+    try {
+      const d = await api("/api/admin/users");
+      const users = d.users || [];
+      $("user-count").textContent = users.length;
+      $("user-empty").classList.toggle("hidden", users.length > 0);
+      for (const u of users) {
+        const tr = document.createElement("tr");
+        const banned = u.status === "banned";
+        tr.innerHTML =
+          '<td class="admin-mono">' + esc(u.username) + "</td>" +
+          "<td>" + esc(u.display_name) + "</td>" +
+          '<td><span class="badge ' + (u.is_admin ? "" : "gray") + '">'
+            + (u.is_admin ? "管理员" : "老师") + "</span></td>" +
+          '<td><span class="badge ' + (banned ? "warn" : "ok") + '">'
+            + (banned ? "已封禁" : "正常") + "</span></td>" +
+          "<td>" + (u.online ? '<svg class="ic-inline"><use href="#ic-check"/></svg>' : "—") + "</td>" +
+          '<td class="admin-ops"></td>';
+        const ops = tr.querySelector(".admin-ops");
+        const mk = (label, cls, fn) => {
+          const b = document.createElement("button");
+          b.className = "mini " + (cls || "");
+          b.textContent = label;
+          b.addEventListener("click", fn);
+          ops.appendChild(b);
+        };
+        if (banned) {
+          mk("解封", "", () => act(u.username, "unban"));
+        } else {
+          mk("封禁", "danger", () => act(u.username, "ban"));
+        }
+        mk("重置密码", "", () => {
+          const pwd = prompt("为「" + u.username + "」设置新密码（至少 4 位）：", "");
+          if (pwd === null) return;
+          if (pwd.length < 4) { toast("密码至少 4 位"); return; }
+          act(u.username, "reset", pwd);
+        });
+        mk("踢下线", "", () => act(u.username, "kick"));
+        if (!u.is_admin) mk("删除", "danger", () => act(u.username, "delete"));
+        tb.appendChild(tr);
+      }
+    } catch (e) {
+      $("user-empty").textContent = "加载失败：" + e.message;
+      $("user-empty").classList.remove("hidden");
+    }
+  }
+
+  async function act(username, action, password) {
+    const names = { ban: "封禁", unban: "解封", kick: "踢下线", reset: "重置密码", delete: "删除" };
+    if (["ban", "delete"].includes(action)
+        && !confirm("确定要" + names[action] + "「" + username + "」吗？")) return;
+    try {
+      const d = await postJSON("/api/admin/users/action",
+        { username: username, action: action, password: password || "" });
+      toast(d.message || "操作成功");
+      await loadUsers();
+      await loadSessions();
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  $("btn-new-user").addEventListener("click", () => {
+    $("new-user-form").classList.toggle("hidden");
+    $("nu-name").focus();
+  });
+  $("btn-cancel-user").addEventListener("click", () => {
+    $("new-user-form").classList.add("hidden");
+  });
+  $("btn-create-user").addEventListener("click", async () => {
+    const name = $("nu-name").value.trim();
+    const pwd = $("nu-pwd").value;
+    if (!name) { toast("请输入用户名"); return; }
+    if (pwd.length < 4) { toast("初始密码至少 4 位"); return; }
+    try {
+      await postJSON("/api/admin/users", {
+        username: name, password: pwd,
+        role: $("nu-role").value, display_name: $("nu-display").value.trim(),
+      });
+      toast("账号已创建");
+      $("nu-name").value = ""; $("nu-display").value = ""; $("nu-pwd").value = "";
+      $("new-user-form").classList.add("hidden");
+      await loadUsers();
+    } catch (e) {
+      toast(e.message);
+    }
+  });
+
+  /* ---------- 会话 ---------- */
+  async function loadSessions() {
+    const tb = $("sess-tbody");
+    tb.innerHTML = "";
+    try {
+      const d = await api("/api/admin/sessions");
+      const list = d.sessions || [];
+      $("sess-count").textContent = list.length;
+      $("sess-empty").classList.toggle("hidden", list.length > 0);
+      for (const s of list) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td><b>" + esc(s.username) + "</b></td>" +
+          '<td class="admin-mono">' + esc(s.ip || "—") + "</td>" +
+          '<td class="admin-ua">' + esc((s.ua || "").slice(0, 42)) + "</td>" +
+          "<td>" + fmtTime(s.last_seen) + "</td>" +
+          '<td><button class="mini danger">失效</button></td>';
+        tr.querySelector("button").addEventListener("click", async () => {
+          if (!confirm("让该会话立即失效？")) return;
+          try {
+            await postJSON("/api/admin/sessions/revoke", { sid: s.sid });
+            toast("会话已失效");
+            await loadSessions();
+          } catch (e) { toast(e.message); }
+        });
+        tb.appendChild(tr);
+      }
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+  $("btn-refresh-sess").addEventListener("click", loadSessions);
+
+  /* ---------- 审计 ---------- */
+  async function loadAudit() {
+    const tb = $("audit-tbody");
+    tb.innerHTML = "";
+    try {
+      const d = await api("/api/admin/audit?limit=100");
+      const logs = d.logs || [];
+      $("audit-total").textContent = d.total || 0;
+      $("audit-empty").classList.toggle("hidden", logs.length > 0);
+      for (const l of logs) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td>" + fmtTime(l.ts) + "</td>" +
+          '<td class="admin-mono">' + esc(l.username || "—") + "</td>" +
+          "<td>" + esc(AUTH_LABEL[l.action] || l.action) + "</td>" +
+          '<td class="admin-mono">' + esc(l.target || "—") + "</td>" +
+          '<td class="admin-mono">' + esc(l.ip || "—") + "</td>" +
+          '<td class="admin-ua">' + esc(l.detail || "") + "</td>";
+        tb.appendChild(tr);
+      }
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+  $("btn-refresh-audit").addEventListener("click", loadAudit);
+
+  loadUsers();
+  loadSessions();
+  loadAudit();
+})();
+</script>
+<script src="/p2p-shim.js?v=1403"></script>
+<script>try{sessionStorage.setItem('cc-p2p-sn',new URLSearchParams(location.search).get('sn')||'');}catch(e){}</script>
+</body>
+</html>
