@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>班级叫号器 · 云端门户</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot"></span>班级叫号器 · 云端门户</div>
+  <div class="right" id="top-right">
+    <button id="btn-manage" class="btn ghost">管理机器</button>
+  </div>
+</header>
+
+<main>
+  <!-- 1) 机器列表 -->
+  <section id="view-list" class="card">
+    <div class="card-head">
+      <h2>选择教室电脑</h2>
+      <button id="btn-refresh" class="btn ghost">刷新</button>
+    </div>
+    <div id="list-tip" class="tip">正在读取机器列表…</div>
+    <ul id="machines" class="machines"></ul>
+  </section>
+
+  <!-- 2) 连接中 -->
+  <section id="view-connecting" class="card hidden">
+    <h2>正在直连…</h2>
+    <ol class="steps" id="steps"></ol>
+    <button id="btn-cancel" class="btn ghost">取消</button>
+  </section>
+
+  <!-- 3) 登录（P2P 已建立后） -->
+  <section id="view-login" class="card hidden">
+    <h2>登录叫号器</h2>
+    <p class="tip" id="login-device"></p>
+    <label>账号<input id="in-user" autocomplete="username" /></label>
+    <label>密码<input id="in-pass" type="password" autocomplete="current-password" /></label>
+    <label class="row"><input id="chk-remember" type="checkbox" checked /> 记住这台设备</label>
+    <div class="err" id="login-err"></div>
+    <button id="btn-login" class="btn primary">登录</button>
+  </section>
+
+  <!-- 4) 已进入 -->
+  <section id="view-app" class="card hidden">
+    <div class="card-head">
+      <h2 id="app-title">叫号</h2>
+      <button id="btn-exit" class="btn ghost">断开</button>
+    </div>
+    <div class="grid">
+      <div class="pane">
+        <label>学号<input id="in-number" inputmode="numeric" /></label>
+        <label>备注（可选）<input id="in-note" /></label>
+        <button id="btn-call" class="btn primary big">叫号</button>
+        <div id="call-result" class="result"></div>
+      </div>
+      <div class="pane">
+        <div class="pane-head">电脑屏幕 <span><button id="btn-screen" class="btn ghost small">开始</button> <button id="btn-remote" class="btn ghost small">远控</button></span></div>
+        <video id="screen" autoplay playsinline muted></video>
+      </div>
+    </div>
+    <div class="stat" id="stat"></div>
+  </section>
+
+  <!-- 5) 原站界面（P2P 直连内嵌） -->
+  <section id="view-iframe" class="hidden" style="padding:0">
+    <div class="iframe-bar">
+      <span id="iframe-title">班级叫号器</span>
+      <span>
+        <button id="btn-reload-app" class="btn ghost small">刷新</button>
+        <button id="btn-back-list" class="btn ghost small">返回列表</button>
+      </span>
+    </div>
+    <iframe id="app-frame" title="班级叫号器"></iframe>
+  </section>
+
+  <!-- 6) 机器管理（需要总密码，密码不保存） -->
+  <section id="view-manage" class="card hidden">
+    <div class="card-head">
+      <h2>机器管理</h2>
+      <button id="btn-manage-close" class="btn ghost">关闭</button>
+    </div>
+    <div id="manage-lock">
+      <p class="tip">输入<b>叫号器总密码</b>才能管理机器。密码只保存在内存里，关掉这个窗口就要重新输入。</p>
+      <label>总密码<input id="in-master" type="password" autocomplete="off" /></label>
+      <div class="err" id="manage-err"></div>
+      <button id="btn-unlock" class="btn primary">解锁</button>
+    </div>
+    <div id="manage-body" class="hidden">
+      <div class="grid">
+        <div class="pane">
+          <div class="pane-head">已有机器</div>
+          <ul id="manage-list" class="machines"></ul>
+        </div>
+        <div class="pane">
+          <div class="pane-head">新建机器</div>
+          <label>机器名称<input id="in-new-name" placeholder="例如：高一(3)班讲台电脑" maxlength="40" /></label>
+          <label>机器 SN（在教室电脑的「内网穿透 → 云端门户」里能看到）<input id="in-new-sn" maxlength="40" placeholder="例如：J8GGL22902000254" /></label>
+          <button id="btn-create" class="btn primary">创建</button>
+          <p class="hint" id="manage-msg" style="min-height:18px"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>信令与机器清单由 Cloudflare 提供；屏幕、远控与业务数据走 WebRTC 直连，不经过服务器。</footer>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

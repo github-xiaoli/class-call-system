@@ -362,7 +362,6 @@
   refreshTunnel();
   refreshNames();
   setInterval(refreshTunnel, 8000);
-})();
 
   /* 左边缘 16px 内自动滑出；移到中间（>300px）自动收起 */
   document.addEventListener("mousemove", (e) => {
@@ -448,4 +447,48 @@
       note(el.value.trim() ? ("代理已保存：" + el.value.trim()) : "已改为直连", "ok");
     });
   })();
+
+  /* ---------- 云端门户（P2P） ---------- */
+  (async function initPortal() {
+    const snEl = $("portal-sn");
+    if (!snEl) return;
+    async function refresh() {
+      try {
+        const d = await jget("/api/portal/status");
+        const p = d.portal || {};
+        snEl.value = p.sn || "";
+        if ($("portal-name") && !$("portal-name").value) $("portal-name").value = p.name || "";
+        if ($("chk-portal-on")) $("chk-portal-on").checked = !!p.enabled;
+        const st = $("portal-state");
+        if (st) {
+          st.textContent = p.registered
+            ? (p.connected ? "已注册 · 云端在线" : "已注册 · 等待连接")
+            : "未注册";
+          st.style.color = p.registered ? (p.connected ? "#1a9d63" : "#b26a00") : "#7386a8";
+        }
+      } catch (e) { /* 忽略 */ }
+    }
+    refresh();
+    setInterval(refresh, 10000);
+
+    if ($("btn-portal-register")) $("btn-portal-register").addEventListener("click", async () => {
+      const master = ($("portal-master") || {}).value || "";
+      const name = ($("portal-name") || {}).value || "";
+      if (!master) { note("请填叫号器总密码", "err"); return; }
+      note("正在注册到云端…");
+      try {
+        const r = await jpost("/api/portal/register", { master, name });
+        if (!r.ok) { note(r.error || "注册失败", "err"); return; }
+        note("注册成功，老师打开 call.xhzx.qzz.io 就能看到这台电脑了", "ok");
+        refresh();
+      } catch (e) { note("注册失败：" + e.message, "err"); }
+    });
+
+    if ($("chk-portal-on")) $("chk-portal-on").addEventListener("change", async (ev) => {
+      await jpost("/api/portal/toggle", { on: !!ev.target.checked });
+      note(ev.target.checked ? "已启用云端门户" : "已关闭云端门户", "ok");
+      refresh();
+    });
+  })();
+})();
 })();

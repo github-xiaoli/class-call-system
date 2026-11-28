@@ -31,6 +31,8 @@ from accounts import ROLE_ADMIN
 login_bp = Blueprint("login", __name__)
 
 SESSION_COOKIE = "cqt_sid"
+# 用户主动点"退出登录"后置位：用来关掉本机免登录，否则本机会立刻自动登回管理员
+LOGOUT_COOKIE = "cqt_noauto"
 
 # ---------------------------------------------------------------------------
 # 密码强度（唯一的公网凭据，必须比"4 位"硬）
@@ -110,6 +112,14 @@ _ANON_PREFIXES = ("/api/auth/login", "/api/auth/reset", "/static/", "/login")
 # ---------------------------------------------------------------------------
 # 当前用户
 # ---------------------------------------------------------------------------
+def logout_suppressed():
+    """用户是不是刚刚主动退出过（本机免登录要因此停用）。"""
+    try:
+        return request.cookies.get(LOGOUT_COOKIE) == "1"
+    except Exception:
+        return False
+
+
 def current_user():
     """取当前登录用户。无效/过期/被封禁都返回 None。
 
@@ -141,7 +151,7 @@ def current_user():
     except Exception:
         pass
 
-    if user is None and local_auto_login_enabled() and _is_local_direct():
+    if user is None and not logout_suppressed() and local_auto_login_enabled() and _is_local_direct():
         admin = accounts.first_admin()
         if admin and admin["status"] == accounts.STATUS_ACTIVE:
             g.user = admin
@@ -208,6 +218,7 @@ def _ua():
 
 
 def _set_cookie(resp, sid):
+    _clear_logout_flag(resp)
     resp.set_cookie(
         SESSION_COOKIE, sid,
         max_age=accounts.SESSION_TTL,
@@ -216,6 +227,15 @@ def _set_cookie(resp, sid):
         secure=security.is_secure_request(),   # HTTP 本机访问时不加 Secure
         path="/",
     )
+
+
+def _clear_logout_flag(resp):
+    """用户主动登录成功 → 解除"已退出"标记。"""
+    try:
+        resp.delete_cookie(LOGOUT_COOKIE, path="/")
+    except Exception:
+        pass
+    return resp
 
 
 def _clear_cookie(resp):
@@ -303,6 +323,7 @@ def api_bootstrap():
     resp = jsonify({"ok": True, "user": public_user(user),
                     "needs_change": bool(user.get("must_change_pwd"))})
     _set_cookie(resp, sid)
+    _clear_logout_flag(resp)
     return resp
 
 
@@ -337,6 +358,7 @@ def api_login():
         "needs_change": bool(user.get("must_change_pwd")),
     })
     _set_cookie(resp, sid)
+    _clear_logout_flag(resp)
     return resp
 
 

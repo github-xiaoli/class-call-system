@@ -1,0 +1,27 @@
+﻿name = "classcaller-signal"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# 信令 Worker：只转发 SDP/ICE，不经手任何业务数据
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "classcaller"
+database_id = "c593cedf-8b32-402a-a0d7-0d3ba4133cb1"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "SignalRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalRoom"]
+
+# 总密码请在部署时用 secret 设置（不要写进仓库）：
+#   npx wrangler secret put MASTER_PWD
+# 绑定自有域名（workers.dev 在国内被 DNS 污染）
+[[routes]]
+pattern = "signal2.xhzx.qzz.io"
+custom_domain = true

@@ -224,7 +224,35 @@
       
   </div>
 </div>
-<script src="/static/settings.js?v=20261127a"></script>
+
+      <!-- 云端门户（WebRTC P2P） -->
+      <section class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 4px">云端门户（P2P 直连）</h3>
+        <p class="hint" style="margin:0 0 10px">
+          注册后，老师打开 <b>call.xhzx.qzz.io</b> 就能看到这台电脑，
+          点一下即可直连（屏幕、远控、叫号全部走 P2P，不经过服务器）。
+        </p>
+        <div class="form-grid">
+          <label>本机 SN（唯一定位这台电脑）</label>
+          <input id="portal-sn" readonly />
+        </div>
+        <div class="form-grid">
+          <label>显示名称（老师看到的名字）</label>
+          <input id="portal-name" placeholder="例如：高一(3)班 讲台电脑" maxlength="40" />
+        </div>
+        <div class="form-grid">
+          <label>叫号器总密码（注册用，只用于开通，不上传密码本身）</label>
+          <input id="portal-master" type="password" placeholder="向管理员索取" />
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin:10px 0">
+          <button id="btn-portal-register" class="btn primary">注册到云端</button>
+          <label style="display:flex;align-items:center;gap:6px;margin:0">
+            <input type="checkbox" id="chk-portal-on" /> 开机自动启用
+          </label>
+          <span class="hint" id="portal-state" style="margin:0"></span>
+        </div>
+        <p class="hint" id="portal-msg" style="min-height:18px"></p>
+      </section>
 </body>
 </html>
   </div>

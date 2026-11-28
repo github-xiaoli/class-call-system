@@ -77,6 +77,11 @@ DEFAULT_CONFIG = {
     "mdns_hostname": "",            # 空则使用电脑主机名
     "mdns_interface": "auto",       # mDNS 绑定网卡：auto=全部，或指定网卡名称（本机可在设置中选择）
     "teacher": "",
+    "portal_enabled": False,
+    "portal_api": "https://signal2.xhzx.qzz.io",
+    "portal_ws": "wss://signal2.xhzx.qzz.io",
+    "portal_sn_manual": "",
+    "portal_name": "",
     "github_proxy": "",
     "phrase": "请%number%号%name%到%teacher%办公室%note%",
     "play_count": 1,
@@ -2241,6 +2246,224 @@ def _cc_on_error(exc):
             {"Content-Type": "text/html; charset=utf-8"})
 
 
+@app.route("/logout")
+def page_logout():
+    """最朴素的退出登录：不需要任何 JS，直接把会话清掉再回登录页。"""
+    resp = redirect("/login")
+    try:
+        resp.delete_cookie("cqt_sid", path="/")
+        resp.delete_cookie("cqt_sid")
+            # 同时置"主动退出"标记，否则本机会立刻又被"本机免登录"登回管理员
+        resp.set_cookie("cqt_noauto", "1", max_age=3600, httponly=True,
+                        samesite="Lax", path="/")
+    except Exception:
+        pass
+    try:
+        import login as _lg
+        fn = getattr(_lg, "clear_session", None)
+        if callable(fn):
+            fn()
+    except Exception:
+        pass
+    return resp
+
+
+# ==========================================================================
+# 云端门户（WebRTC P2P）：电脑这一端
+# ==========================================================================
+_portal = None
+_portal_lock = threading.Lock()
+
+
+def _portal_status():
+    cfg = get_config()
+    sn, src = "", ""
+    try:
+        import portal_client as _pc
+        sn, src = _pc.device_sn(cfg)
+    except Exception as exc:
+        sn, src = "", "err:%r" % (exc,)
+    p = _portal
+    return {
+        "enabled": bool(cfg.get("portal_enabled")),
+        "api": cfg.get("portal_api", ""),
+        "ws": cfg.get("portal_ws", ""),
+        "sn": sn,
+        "sn_source": src,
+        "name": cfg.get("portal_name") or sn,
+        "registered": bool(p and p.secret),
+        "connected": bool(p and p.connected),
+    }
+
+
+def _portal_rpc(method, params, token):
+    """DataChannel 上的业务调用 → 转成本机 Flask 请求，复用现有全部逻辑。"""
+    from flask import testing as _testing
+    routes = {
+        "auth.login": ("/api/auth/login",
+                       lambda p: {"username": p.get("username"), "password": p.get("password")}),
+        "auth.session": ("/api/auth/session", None),
+        "call": ("/api/call", lambda p: {"number": p.get("number"),
+                                         "name": p.get("name") or "",
+                                         "note": p.get("note") or "",
+                                         "teacher": p.get("teacher") or "",
+                                         "force": bool(p.get("force"))}),
+        "roster.list": ("/api/roster", None),
+        "settings.get": ("/api/settings", None),
+        "status": ("/api/status", None),
+        "calls.recent": ("/api/calls", None),
+        "logs.tail": ("/api/logs/tail", None),
+        "files.list": ("/api/fs/list", None),
+        "remote.start": ("/api/remote/start", lambda p: {}),
+        "remote.stop": ("/api/remote/stop", lambda p: {}),
+        "remote.size": ("/api/remote/screen_size", None),
+        "remote.status": ("/api/remote/status", None),
+        "remote.input": ("/api/remote/input", lambda p: p),
+    }
+    if method in ("http.get", "http.post"):
+        # 通用 HTTP 代理：让门户直接复用原有的整站界面（HTML/接口都由电脑提供）
+        path = str((params or {}).get("path") or "")
+        if not path.startswith("/"):
+            raise RuntimeError("路径不合法")
+        client = app.test_client()
+        if token:
+            client.set_cookie("cqt_sid", token, domain="127.0.0.1")
+        if method == "http.get":
+            resp = client.get(path)
+        else:
+            resp = client.post(path, json=(params or {}).get("body") or {})
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        out = {"status": resp.status_code, "type": ctype}
+        raw = resp.data or b""
+        if ("image/" in ctype or "font/" in ctype or "octet-stream" in ctype
+                or path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".ico",
+                                          ".woff", ".woff2", ".ttf", ".pdf"))):
+            out["b64"] = base64.b64encode(raw).decode()
+        else:
+            out["text"] = raw.decode("utf-8", "replace")
+        return out
+
+    if method == "auth.login":
+        # 登录：自己校验并签发会话，不经过 Flask（避免本机免登录干扰）
+        u = str((params or {}).get("username") or "").strip()
+        p = str((params or {}).get("password") or "")
+        result, err = accounts.verify_login(u, p)
+        if not result:
+            raise RuntimeError(err or "账号或密码不正确")
+        sid = accounts.create_session(result["id"], ua="portal", ip="webrtc")
+        return {"token": sid, "user": {"username": result["username"],
+                                       "display_name": result.get("display_name") or "",
+                                       "is_admin": bool(result.get("is_admin"))}}
+    if method not in routes:
+        raise RuntimeError("不支持的调用：%s" % method)
+    path, build = routes[method]
+    body = build(params or {}) if build else None
+    client = app.test_client()
+    if token:
+        client.set_cookie("cqt_sid", token, domain="127.0.0.1")
+    if body is None:
+        resp = client.get(path)
+    else:
+        resp = client.post(path, json=body)
+    try:
+        data = resp.get_json() or {}
+    except Exception:
+        data = {}
+    if resp.status_code >= 400 and not data.get("ok"):
+        raise RuntimeError(data.get("error") or ("HTTP %d" % resp.status_code))
+    if data.get("ok") is False:
+        raise RuntimeError(data.get("error") or "操作失败")
+    return data
+
+
+def _portal_start(log=None):
+    """按配置启动云端门户客户端（注册过才真的连）。"""
+    global _portal
+    cfg = get_config()
+    if not cfg.get("portal_enabled"):
+        return None
+    try:
+        import portal_client as _pc
+        sn, src = _pc.device_sn(cfg)
+        with _portal_lock:
+            if _portal is None:
+                _portal = _pc.PortalClient(
+                    api_base=cfg.get("portal_api"), ws_base=cfg.get("portal_ws"),
+                    sn=sn, sn_source=src,
+                    name=cfg.get("portal_name") or sn,
+                    log=(log or print), on_rpc=_portal_rpc)
+            _portal.start()
+        return _portal
+    except Exception as exc:
+        print("[门户] 启动失败：%r" % (exc,))
+        return None
+
+
+def _portal_stop():
+    global _portal
+    with _portal_lock:
+        if _portal:
+            try:
+                _portal.stop()
+            except Exception:
+                pass
+
+
+@app.route("/api/portal/status")
+def api_portal_status():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    return jsonify({"ok": True, "portal": _portal_status()})
+
+
+@app.route("/api/portal/register", methods=["POST"])
+def api_portal_register():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    master = str(data.get("master") or "").strip()
+    name = str(data.get("name") or "").strip()
+    if not master:
+        return jsonify({"ok": False, "error": "请填叫号器总密码"}), 400
+    cfg = get_config()
+    try:
+        import portal_client as _pc
+        sn, src = _pc.device_sn(cfg)
+        cli = _pc.PortalClient(api_base=cfg.get("portal_api"), ws_base=cfg.get("portal_ws"),
+                               sn=sn, sn_source=src, name=name or cfg.get("portal_name") or sn,
+                               log=lambda m: print(m), on_rpc=_portal_rpc)
+        cli.register(master)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 400
+    cfg["portal_enabled"] = True
+    cfg["portal_name"] = cli.name
+    save_config(cfg)
+    global _portal
+    with _portal_lock:
+        _portal = cli
+    _portal.start()
+    return jsonify({"ok": True, "portal": _portal_status()})
+
+
+@app.route("/api/portal/toggle", methods=["POST"])
+def api_portal_toggle():
+    denied = _tunnel_local_only()
+    if denied:
+        return denied
+    data = request.get_json(silent=True) or {}
+    on = bool(data.get("on"))
+    cfg = get_config()
+    cfg["portal_enabled"] = on
+    save_config(cfg)
+    if on:
+        _portal_start()
+    else:
+        _portal_stop()
+    return jsonify({"ok": True, "portal": _portal_status()})
+
+
 @app.route("/api/health")
 def api_health():
     """启动自检 / 手机排障接口：告诉调用者"你到底连到了谁"。
@@ -3541,7 +3764,17 @@ def api_tunnel_preview():
                         "step": snap.get("step") or "", "page": snap.get("page") or "",
                         "error": "当前没有正在进行的登录"}), 200
     try:
-        res = br.call("Page.captureScreenshot", {"format": "jpeg", "quality": 65}, timeout=10) or {}
+        lock = getattr(br, "_rpc_lock", None)
+        if lock is not None and not lock.acquire(timeout=0.8):
+            return jsonify({"ok": False, "state": snap.get("state"),
+                            "step": snap.get("step") or "", "page": snap.get("page") or "",
+                            "error": "浏览器正在忙（正在截图/导航），稍后再试"}), 200
+        try:
+            res = br.call("Page.captureScreenshot", {"format": "jpeg", "quality": 65},
+                          timeout=5) or {}
+        finally:
+            if lock is not None:
+                lock.release()
         data = res.get("data") or ""
     except Exception as exc:
         data = ""
@@ -4439,6 +4672,13 @@ def _main():
         remote_shutdown()
         monitor_shutdown()
         return
+
+    # 云端门户（P2P）：注册过的机器开机自动连上信令
+    try:
+        if _portal_start():
+            print("[门户] 已按配置启动（%s）" % (get_config().get("portal_name") or ""))
+    except Exception as _pe:
+        print("[门户] 自启失败：%r" % (_pe,))
 
     status("启动完成，正在打开面板…")
     if splash is not None:

@@ -180,36 +180,69 @@ class _WS(object):
 # ---------------------------------------------------------------------------
 # 浏览器会话
 # ---------------------------------------------------------------------------
-def _kill_stray_login_browsers(keep_profile=None):
-    """清掉上一次没退干净的登录用浏览器（命令行里带 cqt_browser_ 的）。"""
+def _pids_by_image(image):
+    """用 tasklist 取某个镜像名的所有 pid（Win11 已无 wmic，不需要它）。"""
     try:
-        out = subprocess.run(
-            ["wmic", "process", "where", "name='msedge.exe'", "get", "processid,commandline"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=25, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq %s" % image, "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=20,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
     except Exception:
-        return 0
-    killed = 0
+        return []
+    pids = []
     for line in out.splitlines():
-        if "cqt_browser_" not in line.lower():
-            continue
-        if keep_profile and keep_profile.lower() in line.lower():
-            continue
-        m = re.search(r"(\d+)\s*$", line.strip())
-        if not m:
-            continue
+        parts = [p.strip('"') for p in line.split('","')]
+        if len(parts) >= 2 and parts[1].isdigit():
+            pids.append(int(parts[1]))
+    return pids
+
+
+def _kill_pids(pids, log=None):
+    killed = 0
+    for pid in pids:
         try:
-            subprocess.run(["taskkill", "/F", "/PID", m.group(1)],
-                           capture_output=True, timeout=15,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                           timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             killed += 1
         except Exception:
             pass
     return killed
 
 
+def _kill_stray_login_browsers(keep_profile=None, log=None):
+    if os.environ.get("CQT_KEEP_STRAY") == "1":   # 调试/自动化测试时别互相残杀
+        return 0
+    """只清理"我们的"残留浏览器：命令行里带 cqt_browser_ 的进程，且不是当前这个 profile。
+
+    Win11 已移除 wmic，这里统一用 PowerShell 的 CIM 查询（可拿到命令行）。
+    """
+    try:
+        ps = ("Get-CimInstance Win32_Process | "
+              "Where-Object { ($_.Name -eq 'chrome-headless-shell.exe' -or $_.Name -eq 'msedge.exe') "
+              "-and $_.CommandLine -like '*cqt_browser_*' } | "
+              "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }")
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=25,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or ""
+    except Exception:
+        return 0
+    keep = (keep_profile or "").lower()
+    pids = []
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        pid_s, cmd = line.split("|", 1)
+        if not pid_s.strip().isdigit():
+            continue
+        if keep and keep in cmd.lower():
+            continue
+        pids.append(int(pid_s.strip()))
+    return _kill_pids(pids, log)
+
+
 def _is_headless_shell(exe):
-    """内置的 chrome-headless-shell 本身就是无头的，不能再传 --headless*，否则直接退出。"""
+    """内置 chrome-headless-shell 本身就是无头的，不能再传 --headless*，否则直接退出。"""
     return "headless-shell" in os.path.basename(str(exe)).lower()
 
 
@@ -222,13 +255,8 @@ def _is_admin():
         return False
 
 
-
 def _launch_unelevated(exe, args, cwd=None):
-    """用资源管理器的令牌启动进程 —— 从管理员进程里"降权"拉起浏览器。
-
-    原理：explorer.exe 一定跑在普通用户权限下，复制它的令牌创建进程，
-    子进程就不再是管理员，Chromium 也就会正常开放 DevTools 端口。
-    """
+    """用资源管理器（普通权限）的令牌启动浏览器。"""
     import ctypes
     from ctypes import wintypes
 
@@ -250,14 +278,12 @@ def _launch_unelevated(exe, args, cwd=None):
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     u32 = ctypes.WinDLL("user32", use_last_error=True)
     adv = ctypes.WinDLL("advapi32", use_last_error=True)
-
-    # 1) 找 shell 窗口 → 取它的进程（就是 explorer）
     hwnd = u32.GetShellWindow()
     if not hwnd:
         raise RuntimeError("找不到 shell 窗口")
     pid = wintypes.DWORD()
     u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    hproc = k32.OpenProcess(0x0400, False, pid.value)          # PROCESS_QUERY_INFORMATION
+    hproc = k32.OpenProcess(0x0400, False, pid.value)
     if not hproc:
         raise RuntimeError("打开 explorer 进程失败")
     htok = wintypes.HANDLE()
@@ -266,15 +292,13 @@ def _launch_unelevated(exe, args, cwd=None):
     hdup = wintypes.HANDLE()
     if not adv.DuplicateTokenEx(htok, 0x02000000, None, 2, 1, ctypes.byref(hdup)):
         raise RuntimeError("复制令牌失败")
-
     si = STARTUPINFOW()
     si.cb = ctypes.sizeof(si)
     pi = PROCESS_INFORMATION()
     cmdline = " ".join(['"%s"' % exe] + [('"%s"' % a) if " " in a else a for a in args])
     buf = ctypes.create_unicode_buffer(cmdline)
-    ok = adv.CreateProcessWithTokenW(hdup, 0, None, buf, 0, None,
-                                     cwd, ctypes.byref(si), ctypes.byref(pi))
-    if not ok:
+    if not adv.CreateProcessWithTokenW(hdup, 0, None, buf, 0, None, cwd,
+                                       ctypes.byref(si), ctypes.byref(pi)):
         raise RuntimeError("CreateProcessWithTokenW 失败：%d" % ctypes.get_last_error())
     k32.CloseHandle(pi.hThread)
     return pi.hProcess, pi.dwProcessId
@@ -312,6 +336,7 @@ class Browser(object):
         self.timeout = timeout
         self.headless = headless
         self.session_id = None
+        self._rpc_lock = __import__('threading').RLock()
         self.proxy = (proxy or os.environ.get("CQT_BROWSER_PROXY") or "").strip()
         self.via_explorer = _is_admin() if via_explorer is None else bool(via_explorer)
         self.profile = tempfile.mkdtemp(prefix="cqt_browser_")
@@ -335,12 +360,15 @@ class Browser(object):
                 p = "http://" + p
             args.append("--proxy-server=%s" % p)
             self.log("[浏览器] 使用代理 %s" % p)
+        extra_args = os.environ.get("CQT_BROWSER_ARGS", "").strip()
+        if extra_args:
+            args.extend([a for a in extra_args.split() if a])
         if _is_headless_shell(self.exe) and not any(a.startswith("http") or a == "about:blank"
                                                     for a in args[1:]):
             # headless-shell 必须给个初始页面，否则不会有 page target（就没法截图/操作）
             args.append("about:blank")
         try:
-            killed = _kill_stray_login_browsers(keep_profile=self.profile)
+            killed = _kill_stray_login_browsers(keep_profile=self.profile, log=self.log)
             if killed:
                 self.log("[浏览器] 清掉 %d 个残留的登录用浏览器" % killed)
         except Exception:
@@ -378,7 +406,12 @@ class Browser(object):
                 _kill_by_profile(self.profile)
                 return
             if getattr(self, "proc", None) and self.proc.poll() is None:
-                self.proc.kill()
+                try:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                                   capture_output=True, timeout=15,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except Exception:
+                    self.proc.kill()
         except Exception:
             pass
 
@@ -465,6 +498,20 @@ class Browser(object):
         raise RuntimeError("连不上浏览器调试接口：%s" % " ； ".join(problems)[:600])
 
     def call(self, method, params=None, timeout=None):
+        # 同一个 WebSocket 只能串行用：并发时两个线程会互相当成"无关事件"丢掉对方的响应
+        lock = getattr(self, "_rpc_lock", None)
+        if lock is not None:
+            if not lock.acquire(timeout=5):
+                raise TimeoutError("%s 等锁超时（上一个调用还没结束）" % method)
+        else:
+            lock = None
+        try:
+            return self._call_locked(method, params, timeout)
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def _call_locked(self, method, params=None, timeout=None):
         self._id += 1
         mid = self._id
         msg = {"id": mid, "method": method, "params": params or {}}

@@ -179,7 +179,7 @@
             + (u.is_admin ? "管理员" : "老师") + "</span></td>" +
           '<td><span class="badge ' + (banned ? "warn" : "ok") + '">'
             + (banned ? "已封禁" : "正常") + "</span></td>" +
-          "<td>" + (u.online ? "<svg class="ic-inline"><use href="#ic-check"/></svg>" : "—") + "</td>" +
+          "<td>" + (u.online ? '<svg class="ic-inline"><use href="#ic-check"/></svg>' : "—") + "</td>" +
           '<td class="admin-ops"></td>';
         const ops = tr.querySelector(".admin-ops");
         const mk = (label, cls, fn) => {
