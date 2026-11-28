@@ -2,7 +2,7 @@
 // 职责：机器注册（总密码校验）/ 心跳 / 机器列表 / Durable Object 信令房间 / ICE 配置
 // 数据面（屏幕、远控、业务 RPC）全部走 WebRTC，Worker 只负责信令与机器清单。
 
-const MAX_PEERS = 2;
+const MAX_PEERS = 32;   // 一台电脑可同时被多位老师连接
 
 const ICE_SERVERS = [
   { urls: ["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"] },
@@ -235,7 +235,8 @@ export class SignalRoom {
     server.serializeAttachment(ident);
     this.meta.set(server, ident);
 
-    this.send(server, { type: "welcome", role, sn, peers: this.peerList(server) });
+    this.send(server, { type: "welcome", role, sn, you: ident.id,
+                       peers: this.peerList(server) });
     this.broadcast(server, { type: "peer-joined", role, sn, id: ident.id,
                              peers: this.peerList() });
     return new Response(null, { status: 101, webSocket: client });
@@ -265,16 +266,29 @@ export class SignalRoom {
       this.send(ws, { type: "pong", t: Date.now() });
       return;
     }
-    // offer / answer / ice / bye / rpc-signal 之类一律原样转发给对端
+    // 转发规则（支持一台电脑 + 多位老师并发）：
+    //   * 老师发的 offer/ice → 只发给这台电脑（peerId 是老师自己的 id，电脑据此回包）
+    //   * 电脑发的 offer/answer/ice → 只发给 peerId 指定的那位老师
+    //   * 其它（bye / peer-left 等）→ 广播
     const out = { ...msg, from: me.role, fromId: me.id };
-    if (msg.to) {
+    const peerId = msg.peerId || "";
+
+    if (me.role === "web") {
       for (const s of this.state.getWebSockets()) {
         const m = this.metaFor(s);
-        if (m && m.role === msg.to) this.send(s, out);
+        if (m && m.role === "pc") this.send(s, out);
       }
-    } else {
-      this.broadcast(ws, out);
+      return;
     }
+    if (peerId) {
+      for (const s of this.state.getWebSockets()) {
+        if (s === ws) continue;
+        const m = this.metaFor(s);
+        if (m && m.id === peerId) this.send(s, out);
+      }
+      return;
+    }
+    this.broadcast(ws, out);
   }
 
   async webSocketClose(ws) {

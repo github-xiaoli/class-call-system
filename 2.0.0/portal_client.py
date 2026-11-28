@@ -351,7 +351,8 @@ class PortalClient(object):
         self.vault = Vault(vault_path or os.path.join(
             os.environ.get("ProgramData", r"C:\ProgramData"), "ClassCaller", "portal.json"))
         self.ws = None
-        self.pc = None
+        self.peers = {}          # peerId -> {"pc","dc","track","token"}
+        self.pc = None           # 兼容旧字段（最近一个）
         self.dc = None
         self.track = None
         self.connected = False
@@ -428,6 +429,7 @@ class PortalClient(object):
         self._ws_stop.clear()
         threading.Thread(target=self._hb_loop, daemon=True, name="portal-hb").start()
         threading.Thread(target=self._ws_loop, daemon=True, name="portal-ws").start()
+        threading.Thread(target=self._ping_loop, daemon=True, name="portal-ping").start()
         return True
 
     def stop(self):
@@ -440,6 +442,20 @@ class PortalClient(object):
             pass
         self.ws = None
         self.connected = False
+
+    def _ping_loop(self):
+        """每 20 秒给信令发一个 ping：Cloudflare 会关闭长时间空闲的 WebSocket。"""
+        while not self._ws_stop.is_set():
+            for _ in range(20):
+                if self._ws_stop.is_set():
+                    return
+                time.sleep(1)
+            ws = self.ws
+            if ws:
+                try:
+                    ws.send_text(json.dumps({"type": "ping"}))
+                except Exception:
+                    pass
 
     def _hb_loop(self):
         while not self._hb_stop.is_set():
@@ -484,51 +500,63 @@ class PortalClient(object):
             return
         t = msg.get("type")
         if t == "offer":
-            self._submit(self._handle_offer(msg.get("sdp") or {}))
+            self._submit(self._handle_offer(msg.get("sdp") or {}, msg.get("fromId") or ""))
         elif t == "ice" and msg.get("candidate"):
-            cand = msg["candidate"]
-            self._submit(self._add_ice(cand))
+            self._submit(self._add_ice(msg["candidate"], msg.get("fromId") or ""))
         elif t == "bye":
             self._submit(self._close_peer())
         elif t == "peer-left":
             self.connected = False
 
-    async def _add_ice(self, cand):
+    async def _add_ice(self, cand, peer_id=""):
         try:
             from aiortc import RTCIceCandidate
-            if self.pc:
-                await self.pc.addIceCandidate(RTCIceCandidate(
+            peer = self.peers.get(peer_id) or self.peers.get("")
+            pc = (peer or {}).get("pc") or self.pc
+            if pc:
+                await pc.addIceCandidate(RTCIceCandidate(
                     sdpMid=cand.get("sdpMid") or "0",
                     sdpMLineIndex=int(cand.get("sdpMLineIndex") or 0),
                     candidate=cand.get("candidate") or ""))
         except Exception:
             pass
 
-    async def _handle_offer(self, sdp):
+    async def _handle_offer(self, sdp, peer_id=""):
         from aiortc import (RTCPeerConnection, RTCSessionDescription, RTCConfiguration,
                             RTCIceServer)
         try:
-            if self.pc:
-                await self.pc.close()
+            peer_id = peer_id or ("peer%d" % (len(self.peers) + 1))
+            old = self.peers.pop(peer_id, None)
+            if old and old.get("pc"):
+                try:
+                    await old["pc"].close()
+                except Exception:
+                    pass
             cfg = RTCConfiguration(iceServers=[
                 RTCIceServer(urls=["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"]),
                 RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
                 RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
             ])
             pc = RTCPeerConnection(cfg)
+            entry = {"pc": pc, "dc": None, "track": None, "token": ""}
+            self.peers[peer_id] = entry
             self.pc = pc
 
             @pc.on("datachannel")
             def on_dc(channel):
+                entry["dc"] = channel
                 self.dc = channel
-                channel.on("message")(self._on_rpc)
+
+                def _msg(raw, _e=entry):
+                    self._on_rpc(raw, _e)
+                channel.on("message")(_msg)
 
             @pc.on("icecandidate")
             def on_ice(candidate):
                 if candidate and self.ws:
                     try:
                         self.ws.send_text(json.dumps({
-                            "type": "ice",
+                            "type": "ice", "peerId": peer_id,
                             "candidate": {"candidate": candidate.candidate,
                                           "sdpMid": candidate.sdpMid,
                                           "sdpMLineIndex": candidate.sdpMLineIndex}}))
@@ -537,21 +565,20 @@ class PortalClient(object):
 
             @pc.on("connectionstatechange")
             async def on_state():
-                self.connected = pc.connectionState == "connected"
-                self.log("[门户] 连接状态：%s" % pc.connectionState)
+                self.connected = any((p.get("pc") and p["pc"].connectionState == "connected")
+                                     for p in self.peers.values())
+                self.log("[门户] 连接状态（%s）：%s" % (peer_id, pc.connectionState))
+                if pc.connectionState in ("failed", "closed"):
+                    self.peers.pop(peer_id, None)
 
             # 视频轨一次性挂上：不抓屏时只发黑帧，不需要二次协商
-            if self.track is None:
+            has_video = "m=video" in str(sdp.get("sdp", ""))
+            if has_video:
                 try:
-                    self.track = make_screen_track(self.log)
+                    entry["track"] = make_screen_track(self.log)   # 每个老师一条独立轨道
+                    pc.addTrack(entry["track"])
                 except Exception as exc:
                     self.log("[门户] 创建视频轨失败：%r" % (exc,))
-                    self.track = None
-            has_video = "m=video" in str(sdp.get("sdp", ""))
-            if self.track is not None and has_video:
-                pc.addTrack(self.track)   # 复用网页声明的 recvonly 视频行
-            elif self.track is None and has_video:
-                self.log("[门户] 网页要视频但本机没建好视频轨")
 
             await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp.get("sdp", ""),
                                                                 type="offer"))
@@ -559,29 +586,41 @@ class PortalClient(object):
             await pc.setLocalDescription(answer)
             if self.ws:
                 self.ws.send_text(json.dumps({
-                    "type": "answer",
+                    "type": "answer", "peerId": peer_id,
                     "sdp": {"type": "answer", "sdp": pc.localDescription.sdp}}))
-            self.log("[门户] 已回 answer（含屏幕轨）")
+            self.log("[门户] 已回 answer（%s，共 %d 位老师）" % (peer_id, len(self.peers)))
         except Exception as exc:
             self.log("[门户] 处理 offer 失败：%r" % (exc,))
 
-    async def _close_peer(self):
-        try:
-            if self.pc:
-                await self.pc.close()
-        except Exception:
-            pass
+    async def _close_peer(self, peer_id=""):
+        if peer_id:
+            entry = self.peers.pop(peer_id, None)
+            if entry and entry.get("pc"):
+                try:
+                    await entry["pc"].close()
+                except Exception:
+                    pass
+        else:
+            for entry in list(self.peers.values()):
+                try:
+                    await entry["pc"].close()
+                except Exception:
+                    pass
+            self.peers.clear()
         self.pc = None
         self.dc = None
-        self.connected = False
+        self.connected = bool(self.peers)
 
     def set_screen(self, on):
-        if self.track is not None:
-            self.track.active = bool(on)
+        n = 0
+        for entry in self.peers.values():
+            if entry.get("track") is not None:
+                entry["track"].active = bool(on)
+                n += 1
         return bool(on)
 
     # ---- 业务 RPC ----
-    def _on_rpc(self, raw):
+    def _on_rpc(self, raw, entry=None):
         try:
             msg = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8", "replace"))
         except Exception:
@@ -589,8 +628,11 @@ class PortalClient(object):
         rid = msg.get("id")
         method = msg.get("method") or ""
         params = msg.get("params") or {}
-        token = msg.get("token") or ""
+        token = msg.get("token") or (entry or {}).get("token") or ""
         try:
+            if method == "auth.login" and entry is not None:
+                # 记住每位老师自己的会话令牌
+                pass
             if method == "ping":
                 result = {"pong": time.time()}
             elif method == "screen":
@@ -603,7 +645,8 @@ class PortalClient(object):
         except Exception as exc:
             reply = {"id": rid, "ok": False, "error": str(exc)[:200]}
         try:
-            if self.dc:
-                self.dc.send(json.dumps(reply, ensure_ascii=False))
+            dc = (entry or {}).get("dc") or self.dc
+            if dc:
+                dc.send(json.dumps(reply, ensure_ascii=False))
         except Exception:
             pass

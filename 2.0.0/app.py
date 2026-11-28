@@ -2312,7 +2312,7 @@ def _portal_rpc(method, params, token):
         "settings.get": ("/api/settings", None),
         "status": ("/api/status", None),
         "calls.recent": ("/api/calls", None),
-        "logs.tail": ("/api/logs/tail", None),
+        "logs.tail": ("/api/logs?lines=200", None),
         "files.list": ("/api/fs/list", None),
         "remote.start": ("/api/remote/start", lambda p: {}),
         "remote.stop": ("/api/remote/stop", lambda p: {}),

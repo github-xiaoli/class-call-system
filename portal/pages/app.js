@@ -10,6 +10,12 @@
   let machines = [];
   let pc = null, ws = null, dc = null;
   let currentSn = "", currentName = "";
+  let myId = "";
+  window.__cqt = { get dc() { return dc; }, get pc() { return pc; },
+                  get state() { return pc ? pc.connectionState : 'none'; } };
+  let connectRetry = 0;
+  let connectTimer = null;
+  const MAX_RETRY = 5;   // 我在信令房间里的 id，用于多老师并发时精确收发
   let rpcSeq = 0;
   const pending = new Map();
   let token = "";
@@ -90,7 +96,7 @@
 
   /* ---------------- 工具 ---------------- */
   function show(view) {
-    for (const v of ["view-list", "view-connecting", "view-login", "view-app", "view-iframe", "view-manage"]) {
+    for (const v of ["view-list", "view-connecting", "view-login", "view-app", "view-iframe", "view-manage", "view-fallback"]) {
       $(v).classList.toggle("hidden", v !== view);
     }
   }
@@ -150,6 +156,7 @@
     currentName = m.name || m.sn;
     show("view-connecting");
     resetSteps();
+    if (currentSn !== m.sn) connectRetry = 0;
     setStep("读取 ICE 配置…");
     let ice = { iceServers: [] };
     try { ice = await getJSON(API + "/ice"); } catch (e) { /* 无 STUN 也能局域网直连 */ }
@@ -162,7 +169,7 @@
     window.__pc = pc;   // 便于诊断（无副作用）
     pc.onicecandidate = (ev) => {
       if (ev.candidate && ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "ice", candidate: ev.candidate }));
+        ws.send(JSON.stringify({ type: "ice", peerId: myId, candidate: ev.candidate }));
       }
     };
     pc.ontrack = (ev) => {
@@ -195,6 +202,8 @@
       for (const li of Array.from($("steps").children)) {
         if (li.textContent.indexOf("还没连上") >= 0) li.remove();
       }
+      connectRetry = 0;
+      if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
       setStep("直连已建立", "done");
       const saved = localStorage.getItem(rememberKey(currentSn));
       if (saved) {
@@ -206,34 +215,77 @@
     };
     dc.onmessage = (ev) => onRpc(ev.data);
 
+    let wsWatchdog = setTimeout(() => {
+      if (ws && ws.readyState !== 1) {
+        setStep("信令连不上，正在重试…");
+        try { ws.close(); } catch (e) {}
+        if (connectRetry < MAX_RETRY) {
+          connectRetry += 1;
+          teardown(false);
+          setTimeout(() => connect({ sn: currentSn, name: currentName }), 700);
+        }
+      }
+    }, 8000);
+    ws.onerror = () => { setStep("信令连接失败"); };
+    ws.onclose = () => { if (connectTimer) { /* 保持原逻辑 */ } };
+
     ws.onopen = async () => {
+      if (wsWatchdog) { clearTimeout(wsWatchdog); wsWatchdog = null; }
       setStep("交换连接信息…");
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ type: "offer", sdp: pc.localDescription }));
+      ws.send(JSON.stringify({ type: "offer", peerId: myId, sdp: pc.localDescription }));
     };
 
     // 15 秒没连上 → 给出兜底提示
-    setTimeout(() => {
+    // 10 秒没连上就自动重试，最多 5 次；全失败才提示回落
+    connectTimer = setTimeout(() => {
       const opened = dc && dc.readyState === "open";
-      if (!opened && pc && pc.connectionState !== "connected") {
-        const box = $("steps");
-        const li = document.createElement("li");
-        li.className = "now";
-        li.textContent = "还没连上：可能网络封了 UDP，请改用隧道地址（兼容模式）";
-        box.appendChild(li);
+      const pcOk = pc && (pc.connectionState === "connected" || pc.iceConnectionState === "connected"
+                          || pc.iceConnectionState === "completed");
+      if (opened || pcOk) return;               // 已连上就别重试，否则会把好连接拆掉
+      const failed = pc && (pc.connectionState === "failed" || pc.iceConnectionState === "failed");
+      if (!failed && connectRetry === 0) {
+        // 第一次没到 20 秒就失败判定的，再多等一轮
       }
-    }, 15000);
+      if (connectRetry < MAX_RETRY) {
+        connectRetry += 1;
+        setStep("没连上，第 " + connectRetry + "/" + MAX_RETRY + " 次自动重试…");
+        teardown(false);
+        setTimeout(() => connect({ sn: currentSn, name: currentName }), 800);
+      } else {
+        setStep("试了 " + MAX_RETRY + " 次仍连不上：网络可能封了 UDP，请改用教室电脑上显示的隧道地址（兼容模式）");
+        $("btn-cancel").textContent = "返回列表";
+        show("view-fallback");
+        $("fallback-msg").textContent = "当前机器：" + currentName + "（" + currentSn + "）";
+      }
+    }, 20000);
   }
 
   async function onSignal(ev) {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === "welcome" || msg.type === "peer-joined") {
-      if (!msg.peers || msg.peers.indexOf("pc") < 0) setStep("等待电脑上线…");
+    if (msg.type === "welcome") {
+      myId = msg.you || msg.fromId || "";
+      if (!msg.peers || !msg.peers.some((x) => x.role === "pc")) setStep("等待电脑上线…");
+      return;
+    }
+    if (msg.type === "peer-joined") {
+      if (msg.role === "web") return;   // 别的老师进来了，与我无关
+      setStep("电脑已在线");
+      // 之前 offer 发早了（电脑还没进房间）→ 现在重新协商
+      if (pc && dc && dc.readyState !== "open") {
+        try {
+          const pcJoined = await pc.createOffer();
+          await pc.setLocalDescription(pcJoined);
+          ws.send(JSON.stringify({ type: "offer", peerId: myId, sdp: pc.localDescription }));
+          setStep("已重新发起连接…");
+        } catch (e) { /* 忽略 */ }
+      }
       return;
     }
     if (msg.type === "peer-left") { setStep("电脑断开了"); return; }
+    if (msg.peerId && myId && msg.peerId !== myId) return;   // 不是发给我的
     if (msg.type === "answer" && pc) {
       await pc.setRemoteDescription(msg.sdp);
       setStep("直连建立中…");
@@ -296,6 +348,31 @@
   }, { passive: false });
 
 
+
+  /* ---------------- Service Worker 代理：所有 HTTP 都走 WebRTC ---------------- */
+  let swSid = "";
+  let swPort = null;
+
+  async function ensureSW() {
+    if (!("serviceWorker" in navigator)) return false;
+    try {
+      const reg = await navigator.serviceWorker.register("/p2p-sw.js", { scope: "/" });
+      await navigator.serviceWorker.ready;
+      swSid = Math.random().toString(36).slice(2, 10);
+      const ch = new MessageChannel();
+      swPort = ch.port1;
+      swPort.onmessage = async (ev) => {
+        const d = ev.data || {};
+        const r = await window.cqtHttp(d.method || "GET", d.path || "/", d.body || null);
+        swPort.postMessage({ replyTo: d.id, body: r });
+      };
+      swPort.start && swPort.start();
+      (navigator.serviceWorker.controller || reg.active).postMessage(
+        { type: "register-port", sid: swSid }, [ch.port2]);
+      return true;
+    } catch (e) { return false; }
+  }
+
   /* ---------------- 复用原站界面 ---------------- */
   const APP_BASE = "https://call.xhzx.qzz.io/";   // 静态资源从这里取
 
@@ -317,13 +394,25 @@
     return new Response(data, { status: body.status || 200,
       headers: { "Content-Type": body.type || "text/plain; charset=utf-8" } });
   }
+  window.__shimHits = [];
   window.fetch = function (url, opts) {
     opts = opts || {};
     if (typeof url === "string" && url.charAt(0) === "/") {
       let payload = null;
       if (opts.body) { try { payload = JSON.parse(opts.body); } catch (e) { payload = null; } }
       const m = (opts.method || "GET").toUpperCase();
-      return parent.cqtHttp(m, url, payload).then(build);
+      if (!parent || typeof parent.cqtHttp !== "function") {
+        window.__shimHits.push("no-bridge:" + url);
+        return rawFetch ? rawFetch(url, opts) : Promise.reject(new Error("no bridge"));
+      }
+      window.__shimHits.push(m + " " + url);
+      return parent.cqtHttp(m, url, payload).then((b) => {
+        window.__shimHits.push("<- " + url + " " + (b && b.status));
+        return build(b);
+      }).catch((e) => {
+        window.__shimHits.push("!! " + url + " " + e.message);
+        throw e;
+      });
     }
     return rawFetch ? rawFetch(url, opts) : Promise.reject(new Error("no fetch"));
   };
@@ -357,13 +446,32 @@
   async function loadOriginalApp(path) {
     path = path || "/";
     $("stat").textContent = "正在载入界面…";
-    const r = await window.cqtHttp("GET", path);
+    let r = null;
+    for (let i = 0; i < 8; i++) {
+      r = await window.cqtHttp("GET", path);
+      if (r && (r.status === 200 || r.status === 304) && (r.text || "").length > 200) break;
+      await new Promise((res) => setTimeout(res, 700));
+    }
     if (!r || (r.status !== 200 && r.status !== 304)) {
       $("stat").textContent = "载入界面失败：HTTP " + (r && r.status);
       return;
     }
     let html = r.text || "";
-    html = html.replace(/(["'(])\/static\//g, "$1app-static/");
+    let swOk = false, swErr = "";
+    // 默认走"静态资源 CDN + 接口全走 DataChannel"的稳定路径；
+    // 想要"连静态资源也走 WebRTC"可加 ?p2p=sw（实验特性）
+    const wantSW = new URLSearchParams(location.search).get("p2p") === "sw";
+    if (wantSW) {
+      try { swOk = await ensureSW(); } catch (e) { swErr = String((e && e.message) || e); }
+    }
+    if (swOk && swSid) {
+      // 所有绝对路径改走 /p2p/<sid>/*，由 Service Worker 转成 DataChannel 请求
+      html = html.replace(/(\s(?:src|href|action)=)(["'])\/(?!p2p\/)/g,
+                          "$1$2/p2p/" + swSid + "/");
+    } else {
+      // 退回：静态资源走 CDN，接口由 fetch/XHR 垫片桥接
+      html = html.replace(/(["'(])\/static\//g, "$1app-static/");
+    }
     const head = '<base href="' + APP_BASE + '"><script>' + SHIM + "<\/script>";
     html = html.replace(/<head([^>]*)>/i, "<head$1>" + head);
     html = html.replace("</body>", "<script>document.addEventListener('DOMContentLoaded',"
@@ -471,6 +579,16 @@
   $("btn-create").addEventListener("click", manageCreate);
   $("btn-login").addEventListener("click", () => doLogin(null));
   $("btn-cancel").addEventListener("click", () => { teardown(); show("view-list"); });
+  $("btn-open-fallback").addEventListener("click", () => {
+    const u = ($("in-fallback-url") || {}).value.trim();
+    if (!/^https?:\/\//i.test(u)) { $("fallback-msg").textContent = "请填完整的 https 地址"; return; }
+    window.open(u, "_blank");
+  });
+  $("btn-retry-connect").addEventListener("click", () => {
+    connectRetry = 0;
+    connect({ sn: currentSn, name: currentName });
+  });
+  $("btn-back-list2").addEventListener("click", () => { teardown(); show("view-list"); loadMachines(); });
   $("btn-exit").addEventListener("click", () => {
     localStorage.removeItem(rememberKey(currentSn));
     teardown();
@@ -497,7 +615,8 @@
   $("btn-reload-app").addEventListener("click", () => loadOriginalApp("/"));
   $("btn-back-list").addEventListener("click", () => { teardown(); show("view-list"); loadMachines(); });
 
-  function teardown() {
+  function teardown(resetView = true) {
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
     try { if (dc) dc.close(); } catch {}
     try { if (pc) pc.close(); } catch {}
     try { if (ws) ws.close(); } catch {}
@@ -505,6 +624,7 @@
     screenWanted = false;
     $("screen").srcObject = null;
     $("btn-screen").textContent = "开始";
+    if (!resetView) return;
   }
 
   loadMachines();
