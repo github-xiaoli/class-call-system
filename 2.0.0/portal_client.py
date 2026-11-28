@@ -665,6 +665,18 @@ class PortalClient(object):
         return bool(on)
 
     # ---- 业务 RPC ----
+    def _rpc_server(self):
+        """按需创建 WebRPC 服务端（需要 app 对象）。"""
+        if getattr(self, "_rpc_srv", None) is None:
+            import webrpc
+            try:
+                import app as _app_mod
+                self._rpc_srv = webrpc.WebRpcServer(_app_mod.app, log=self.log)
+            except Exception as exc:
+                self.log("[门户] WebRPC 初始化失败：%r" % (exc,))
+                self._rpc_srv = None
+        return self._rpc_srv
+
     def _on_rpc(self, raw, entry=None):
         try:
             msg = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8", "replace"))
@@ -682,10 +694,12 @@ class PortalClient(object):
                 result = {"pong": time.time()}
             elif method == "screen":
                 result = {"on": self.set_screen(bool(params.get("on")))}
-            elif self.on_rpc:
-                result = self.on_rpc(method, params, token)
             else:
-                raise RuntimeError("没有业务处理器")
+                # 优先走 WebRPC（叫号器的每个业务接口都实现在 DataChannel 上）
+                srv = self._rpc_server()
+                if srv is None:
+                    raise RuntimeError("WebRPC 未就绪")
+                result = srv.dispatch(method, params, token)
             reply = {"id": rid, "ok": True, "result": result}
         except Exception as exc:
             reply = {"id": rid, "ok": False, "error": str(exc)[:200]}

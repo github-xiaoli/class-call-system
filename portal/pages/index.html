@@ -2,131 +2,196 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>班级叫号器 · 云端门户</title>
-<link rel="stylesheet" href="style.css" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>班级叫号器 · 云端直连</title>
+<link rel="stylesheet" href="style.css?v=1401" />
 </head>
 <body>
+
 <header class="top">
-  <div class="brand"><span class="dot"></span>班级叫号器 · 云端门户</div>
-  <div class="right" id="top-right">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" class="ic"><use href="#ic-app"/></svg>
+    <span>班级叫号器</span>
+  </div>
+  <div class="right">
+    <span id="link-state" class="pill">未连接</span>
     <button id="btn-manage" class="btn ghost">管理机器</button>
   </div>
 </header>
 
 <main>
-  <!-- 1) 机器列表 -->
-  <section id="view-list" class="card">
-    <div class="card-head">
-      <h2>选择教室电脑</h2>
-      <button id="btn-refresh" class="btn ghost">刷新</button>
-    </div>
-    <div id="list-tip" class="tip">正在读取机器列表…</div>
-    <ul id="machines" class="machines"></ul>
-  </section>
 
-  <!-- 2) 连接中 -->
-  <section id="view-connecting" class="card hidden">
-    <h2>正在直连…</h2>
-    <ol class="steps" id="steps"></ol>
-    <button id="btn-cancel" class="btn ghost">取消</button>
-  </section>
+<!-- 1) 机器列表 -->
+<section id="view-list" class="card">
+  <div class="card-head">
+    <h2>选择教室电脑</h2>
+    <button id="btn-refresh" class="btn ghost">刷新</button>
+  </div>
+  <ul id="machines" class="machines"></ul>
+  <p id="list-hint" class="hint"></p>
+</section>
 
-  <!-- 3) 登录（P2P 已建立后） -->
-  <section id="view-login" class="card hidden">
-    <h2>登录叫号器</h2>
-    <p class="tip" id="login-device"></p>
-    <label>账号<input id="in-user" autocomplete="username" /></label>
-    <label>密码<input id="in-pass" type="password" autocomplete="current-password" /></label>
-    <label class="row"><input id="chk-remember" type="checkbox" checked /> 记住这台设备</label>
-    <div class="err" id="login-err"></div>
-    <button id="btn-login" class="btn primary">登录</button>
-  </section>
+<!-- 2) 直连中 -->
+<section id="view-connecting" class="card hidden">
+  <h2>正在直连…</h2>
+  <ol id="steps" class="steps"></ol>
+  <button id="btn-cancel" class="btn ghost">取消</button>
+</section>
 
-  <!-- 4) 已进入 -->
-  <section id="view-app" class="card hidden">
-    <div class="card-head">
-      <h2 id="app-title">叫号</h2>
-      <button id="btn-back-iframe" class="btn ghost">返回界面</button>
-        <button id="btn-exit" class="btn ghost">断开</button>
-    </div>
-    <div class="grid">
-      <div class="pane">
-        <label>学号<input id="in-number" inputmode="numeric" /></label>
-        <label>备注（可选）<input id="in-note" /></label>
-        <button id="btn-call" class="btn primary big">叫号</button>
-        <div id="call-result" class="result"></div>
-      </div>
-      <div class="pane">
-        <div class="pane-head">电脑屏幕 <span><button id="btn-screen" class="btn ghost small">开始</button> <button id="btn-remote" class="btn ghost small">远控</button></span></div>
-        <video id="screen" autoplay playsinline muted></video>
-      </div>
-    </div>
-    <div class="stat" id="stat"></div>
-  </section>
+<!-- 3) 登录叫号器 -->
+<section id="view-login" class="card hidden">
+  <h2>登录叫号器</h2>
+  <label>账号<input id="in-user" autocomplete="username" /></label>
+  <label>密码<input id="in-pass" type="password" autocomplete="current-password" /></label>
+  <label class="checkbox"><input id="chk-remember" type="checkbox" /> 记住此设备</label>
+  <div id="login-err" class="err"></div>
+  <button id="btn-login" class="btn primary">登录</button>
+  <button id="btn-back-list-1" class="btn ghost">返回列表</button>
+</section>
 
-  <!-- 5) 原站界面（P2P 直连内嵌） -->
-  <section id="view-iframe" class="hidden" style="padding:0">
-    <div class="iframe-bar">
-      <span id="iframe-title">班级叫号器</span>
-      <span>
-        <button id="btn-goto-remote" class="btn ghost small">屏幕/远控</button>
-        <button id="btn-reload-app" class="btn ghost small">刷新</button>
-        <button id="btn-back-list" class="btn ghost small">返回列表</button>
-      </span>
+<!-- 4) 主界面（原生，全部走 WebRTC） -->
+<section id="view-app" class="card hidden">
+  <div class="card-head">
+    <h2 id="app-title">叫号器</h2>
+    <div class="right">
+      <button id="btn-exit" class="btn ghost">断开</button>
     </div>
-    <iframe id="app-frame" title="班级叫号器"></iframe>
-  </section>
+  </div>
 
-  <!-- 6) 机器管理（需要总密码，密码不保存） -->
-  <section id="view-manage" class="card hidden">
-    <div class="card-head">
-      <h2>机器管理</h2>
-      <button id="btn-manage-close" class="btn ghost">关闭</button>
-    </div>
-    <div id="manage-lock">
-      <p class="tip">输入<b>叫号器总密码</b>才能管理机器。密码只保存在内存里，关掉这个窗口就要重新输入。</p>
-      <label>总密码<input id="in-master" type="password" autocomplete="off" /></label>
-      <div class="err" id="manage-err"></div>
-      <button id="btn-unlock" class="btn primary">解锁</button>
-    </div>
-    <div id="manage-body" class="hidden">
-      <div class="grid">
-        <div class="pane">
-          <div class="pane-head">已有机器</div>
-          <ul id="manage-list" class="machines"></ul>
-        </div>
-        <div class="pane">
-          <div class="pane-head">新建机器</div>
-          <label>机器名称<input id="in-new-name" placeholder="例如：高一(3)班讲台电脑" maxlength="40" /></label>
-          <label>机器 SN（在教室电脑的「内网穿透 → 云端门户」里能看到）<input id="in-new-sn" maxlength="40" placeholder="例如：J8GGL22902000254" /></label>
-          <button id="btn-create" class="btn primary">创建</button>
-          <p class="hint" id="manage-msg" style="min-height:18px"></p>
-        </div>
-      </div>
-    </div>
-  </section>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="tab-call">叫号</button>
+    <button class="tab" data-tab="tab-roster">名条</button>
+    <button class="tab" data-tab="tab-screen">屏幕/远控</button>
+    <button class="tab" data-tab="tab-files">文件</button>
+    <button class="tab" data-tab="tab-logs">日志</button>
+    <button class="tab" data-tab="tab-settings">设置</button>
+  </nav>
 
-  <!-- 3.5) P2P 连不上：改用隧道地址 -->
-  <section id="view-fallback" class="card hidden">
-    <h2>直连失败，改用隧道打开</h2>
-    <p class="tip">
-      试了 5 次都没建立直连，通常是网络封了 UDP。请让教室电脑前的人打开
-      <b>叫号器 → 设置 → 内网穿透</b>，把「公网地址」复制给你，粘贴到下面。
-      打开后仍然是熟悉的界面，只是走隧道转发。
-    </p>
-    <label>隧道地址（形如 https://xxxx-8000.devtunnels.ms）<input id="in-fallback-url" placeholder="https://…" /></label>
-    <div style="display:flex;gap:10px;margin-top:8px">
-      <button id="btn-open-fallback" class="btn primary">打开隧道地址</button>
-      <button id="btn-retry-connect" class="btn ghost">再试一次直连</button>
-      <button id="btn-back-list2" class="btn ghost">返回列表</button>
+  <!-- 叫号 -->
+  <div id="tab-call" class="tabpane active">
+    <div class="call-top">
+      <div class="num-display" id="num-display">&nbsp;</div>
+      <div class="banner" id="call-banner">请选择学生，或在小键盘输入学号</div>
     </div>
-    <p class="hint" id="fallback-msg" style="min-height:18px"></p>
-  </section>
+    <div class="numpad" id="numpad"></div>
+    <div class="row">
+      <button id="btn-call" class="btn primary big">叫号</button>
+      <button id="btn-clear-num" class="btn ghost">清空</button>
+      <button id="btn-msg" class="btn ghost">语音留言</button>
+    </div>
+    <div class="row">
+      <label class="inline">老师名称<input id="in-teacher" maxlength="20" placeholder="默认取登录账号" /></label>
+    </div>
+    <div class="pane-head">最近叫号</div>
+    <ul id="call-list" class="records"></ul>
+  </div>
+
+  <!-- 名条 -->
+  <div id="tab-roster" class="tabpane">
+    <div class="row">
+      <input id="in-roster-q" placeholder="搜索姓名或学号" />
+      <button id="btn-roster-refresh" class="btn ghost small">刷新</button>
+    </div>
+    <div class="row">
+      <input id="in-roster-number" placeholder="学号" />
+      <input id="in-roster-name" placeholder="姓名" />
+      <button id="btn-roster-add" class="btn primary small">添加</button>
+    </div>
+    <ul id="roster-list" class="records"></ul>
+    <button id="btn-roster-clear" class="btn ghost small">清空名条</button>
+  </div>
+
+  <!-- 屏幕 / 远控 -->
+  <div id="tab-screen" class="tabpane">
+    <div class="row">
+      <button id="btn-screen" class="btn ghost">开始屏幕共享</button>
+      <button id="btn-remote" class="btn ghost">开启远控</button>
+      <span id="remote-state" class="pill">远控：关</span>
+    </div>
+    <div class="screen-wrap">
+      <video id="screen" autoplay playsinline muted></video>
+      <div id="screen-hint" class="screen-hint">点「开始屏幕共享」后这里显示电脑画面</div>
+    </div>
+    <p class="hint">开启远控后，直接在画面上点击/滑动即可操作电脑。</p>
+  </div>
+
+  <!-- 文件 -->
+  <div id="tab-files" class="tabpane">
+    <div class="row">
+      <select id="fs-drive"></select>
+      <input id="fs-path" placeholder="当前路径" />
+      <button id="btn-fs-up" class="btn ghost small">上级</button>
+      <button id="btn-fs-refresh" class="btn ghost small">刷新</button>
+    </div>
+    <ul id="fs-list" class="records"></ul>
+  </div>
+
+  <!-- 日志 -->
+  <div id="tab-logs" class="tabpane">
+    <div class="row">
+      <input id="in-log-q" placeholder="搜索关键字" />
+      <button id="btn-logs-refresh" class="btn ghost small">刷新</button>
+    </div>
+    <pre id="log-box" class="logbox"></pre>
+  </div>
+
+  <!-- 设置 -->
+  <div id="tab-settings" class="tabpane">
+    <div id="settings-box" class="settings"></div>
+    <button id="btn-settings-save" class="btn primary">保存设置</button>
+    <p id="settings-msg" class="hint"></p>
+  </div>
+
+</section>
+
+<!-- 5) 机器管理 -->
+<section id="view-manage" class="card hidden">
+  <div class="card-head">
+    <h2>机器管理</h2>
+    <button id="btn-manage-close" class="btn ghost">关闭</button>
+  </div>
+  <div id="manage-lock">
+    <p class="tip">输入<b>叫号器总密码</b>才能管理机器。密码只保存在内存里，关掉这个窗口就要重新输入。</p>
+    <label>总密码<input id="in-master" type="password" autocomplete="off" /></label>
+    <div id="manage-err" class="err"></div>
+    <button id="btn-unlock" class="btn primary">解锁</button>
+  </div>
+  <div id="manage-body" class="hidden">
+    <div class="pane-head">已有机器</div>
+    <ul id="manage-list" class="machines"></ul>
+    <div class="pane-head">新建机器</div>
+    <label>机器名称<input id="in-new-name" placeholder="例如：高一(3)班讲台电脑" maxlength="40" /></label>
+    <label>机器 SN（教室电脑「内网穿透 → 云端门户」里能看到）<input id="in-new-sn" maxlength="40" placeholder="例如：J8GGL22902000254" /></label>
+    <button id="btn-create" class="btn primary">创建</button>
+    <p class="hint" id="manage-msg"></p>
+  </div>
+</section>
+
+<!-- 6) 直连失败回落 -->
+<section id="view-fallback" class="card hidden">
+  <h2>直连失败，改用隧道打开</h2>
+  <p class="tip">
+    试了 5 次都没建立直连，通常是网络封了 UDP。请让教室电脑前的人打开
+    <b>叫号器 → 设置 → 内网穿透</b>，把「公网地址」复制给你，粘贴到下面。
+    打开后仍然是熟悉的界面，只是走隧道转发。
+  </p>
+  <label>隧道地址<input id="in-fallback-url" placeholder="https://…" /></label>
+  <div class="row">
+    <button id="btn-open-fallback" class="btn primary">打开隧道地址</button>
+    <button id="btn-retry-connect" class="btn ghost">再试一次直连</button>
+    <button id="btn-back-list-2" class="btn ghost">返回列表</button>
+  </div>
+  <p class="hint" id="fallback-msg"></p>
+</section>
+
 </main>
 
-<footer>信令与机器清单由 Cloudflare 提供；屏幕、远控与业务数据走 WebRTC 直连，不经过服务器。</footer>
-<script src="config.js?v=11281001"></script>
-<script src="app.js?v=11281001"></script>
+<!-- 图标 -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-app" viewBox="0 0 24 24"><path d="M4 5h16v14H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.6" fill="none"/></symbol>
+</svg>
+
+<script src="config.js?v=1401"></script>
+<script src="app.js?v=1401"></script>
 </body>
 </html>
