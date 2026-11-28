@@ -629,6 +629,9 @@
   });
   $("in-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(null); });
   $("btn-reload-app").addEventListener("click", () => loadOriginalApp("/"));
+  const on = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
+  on("btn-goto-remote", () => show("view-app"));
+  on("btn-back-iframe", () => show("view-iframe"));
   $("btn-back-list").addEventListener("click", () => { teardown(); show("view-list"); loadMachines(); });
 
   function teardown(resetView = true) {
