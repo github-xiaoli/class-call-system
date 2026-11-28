@@ -352,6 +352,7 @@ class PortalClient(object):
             os.environ.get("ProgramData", r"C:\ProgramData"), "ClassCaller", "portal.json"))
         self.ws = None
         self.peers = {}          # peerId -> {"pc","dc","track","token"}
+        self._ice_cache = None
         self.pc = None           # 兼容旧字段（最近一个）
         self.dc = None
         self.track = None
@@ -521,6 +522,37 @@ class PortalClient(object):
         except Exception:
             pass
 
+    def _ice_list(self):
+        """优先用 Worker 下发的 ICE（含 TURN 中继），拿不到就用内置 STUN。"""
+        if self._ice_cache is not None:
+            return self._ice_cache
+        servers = []
+        try:
+            url = self.api_base.rstrip("/") + "/ice"
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read().decode())
+            for item in data.get("iceServers") or []:
+                urls = item.get("urls") or []
+                if isinstance(urls, str):
+                    urls = [urls]
+                if not urls:
+                    continue
+                kw = {"urls": urls}
+                if item.get("username"):
+                    kw["username"] = item["username"]
+                    kw["credential"] = item.get("credential") or ""
+                servers.append(kw)
+        except Exception as exc:
+            self.log("[门户] 取 ICE 失败，用内置 STUN：%r" % (exc,))
+        if not servers:
+            servers = [
+                {"urls": ["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"]},
+                {"urls": ["stun:stun.l.google.com:19302"]},
+            ]
+        self._ice_cache = servers
+        return servers
+
     async def _handle_offer(self, sdp, peer_id=""):
         from aiortc import (RTCPeerConnection, RTCSessionDescription, RTCConfiguration,
                             RTCIceServer)
@@ -532,11 +564,14 @@ class PortalClient(object):
                     await old["pc"].close()
                 except Exception:
                     pass
-            cfg = RTCConfiguration(iceServers=[
-                RTCIceServer(urls=["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"]),
-                RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-                RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
-            ])
+            ice_objs = []
+            for it in self._ice_list():
+                if it.get("username"):
+                    ice_objs.append(RTCIceServer(urls=it["urls"], username=it["username"],
+                                                 credential=it.get("credential") or ""))
+                else:
+                    ice_objs.append(RTCIceServer(urls=it["urls"]))
+            cfg = RTCConfiguration(iceServers=ice_objs)
             pc = RTCPeerConnection(cfg)
             entry = {"pc": pc, "dc": None, "track": None, "token": ""}
             self.peers[peer_id] = entry
