@@ -175,7 +175,10 @@
     ws = new WebSocket(WSB + "/ws?sn=" + encodeURIComponent(m.sn) + "&role=web");
     ws.onmessage = onSignal;
 
-    pc = new RTCPeerConnection({ iceServers: ice.iceServers || [] });
+    const forceRelay = new URLSearchParams(location.search).get("relay") === "1";
+    pc = new RTCPeerConnection({ iceServers: ice.iceServers || [],
+                                 iceTransportPolicy: forceRelay ? "relay" : "all" });
+    if (forceRelay) setStep("已开启「仅中继」模式（测试用）");
     window.__pc = pc;   // 便于诊断（无副作用）
     pc.onicecandidate = (ev) => {
       if (ev.candidate && ws && ws.readyState === 1) {

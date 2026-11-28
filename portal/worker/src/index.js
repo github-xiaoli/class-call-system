@@ -8,10 +8,6 @@ const ICE_SERVERS = [
   { urls: ["stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"] },
   { urls: ["stun:stun.l.google.com:19302"] },
   { urls: ["stun:stun.cloudflare.com:3478"] },
-  // 公共 TURN 中继：家里/手机流量在 CGNAT 后面、打洞失败时兜底（带宽有限，够用）
-  { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443",
-           "turn:openrelay.metered.ca:443?transport=tcp"],
-    username: "openrelayproject", credential: "openrelayproject" },
 ];
 
 function cors(resp) {
@@ -183,6 +179,32 @@ async function renameMachine(req, env) {
 
 // ---------------- 信令：Durable Object 房间 ----------------
 
+
+// Cloudflare 官方 TURN：调用 rtc.live.cloudflare.com 换取短期凭据
+async function cfTurn(env) {
+  const keyId = env.TURN_KEY_ID, token = env.TURN_KEY_SECRET;
+  if (!keyId || !token) return null;
+  try {
+    const r = await fetch(
+      "https://rtc.live.cloudflare.com/v1/turn/keys/" + keyId + "/credentials/generate-ice-servers",
+      { method: "POST",
+        headers: { "Authorization": "Bearer " + token,
+                   "Content-Type": "application/json",
+                   "User-Agent": "ClassCallerPortal/2.0" },
+        body: JSON.stringify({ ttl: 3600 }) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    // 浏览器里 53 端口会被拦，过滤掉免得干等
+    const list = (d.iceServers || []).map((s) => {
+      const urls = (s.urls || []).filter((u) => u.indexOf(":53") < 0);
+      return urls.length ? { urls, username: s.username, credential: s.credential } : null;
+    }).filter(Boolean);
+    return list.length ? list : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export class SignalRoom {
   constructor(state, env) {
     this.state = state;
@@ -315,12 +337,14 @@ export default {
 
     try {
       if (url.pathname === "/ice") {
-        // 可选 TURN：在 Worker 里设 TURN_URL / TURN_USER / TURN_PASS 三个变量即启用
         const list = ICE_SERVERS.slice();
+        // 官方 TURN（Cloudflare Realtime）：取到短期凭据就一并下发
+        const turns = await cfTurn(env);
+        if (turns) list.push.apply(list, turns);
         if (env.TURN_URL) {
-          const turn = { urls: [env.TURN_URL] };
-          if (env.TURN_USER) { turn.username = env.TURN_USER; turn.credential = env.TURN_PASS || ""; }
-          list.push(turn);
+          const t = { urls: [env.TURN_URL] };
+          if (env.TURN_USER) { t.username = env.TURN_USER; t.credential = env.TURN_PASS || ""; }
+          list.push(t);
         }
         return json({ iceServers: list });
       }

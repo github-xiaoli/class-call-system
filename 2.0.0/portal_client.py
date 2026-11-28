@@ -528,8 +528,8 @@ class PortalClient(object):
             return self._ice_cache
         servers = []
         try:
-            url = self.api_base.rstrip("/") + "/ice"
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            url = self.api.rstrip("/") + "/ice"
+            req = urllib.request.Request(url, headers={"User-Agent": self.UA})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
             for item in data.get("iceServers") or []:
