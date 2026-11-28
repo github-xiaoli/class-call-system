@@ -310,7 +310,16 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (url.pathname === "/ice") return json({ iceServers: ICE_SERVERS });
+      if (url.pathname === "/ice") {
+        // 可选 TURN：在 Worker 里设 TURN_URL / TURN_USER / TURN_PASS 三个变量即启用
+        const list = ICE_SERVERS.slice();
+        if (env.TURN_URL) {
+          const turn = { urls: [env.TURN_URL] };
+          if (env.TURN_USER) { turn.username = env.TURN_USER; turn.credential = env.TURN_PASS || ""; }
+          list.push(turn);
+        }
+        return json({ iceServers: list });
+      }
       if (url.pathname === "/api/register" && request.method === "POST") {
         return register(request, env);
       }

@@ -378,8 +378,24 @@
 
   window.cqtHttp = async function (method, path, body) {
     try {
-      if (method === "GET") return await rpc("http.get", { path });
-      return await rpc("http.post", { path, body: body || {} });
+      if (method !== "GET") return await rpc("http.post", { path, body: body || {} });
+      // 大响应分块拉取（DataChannel 单条消息有上限）
+      let first = await rpc("http.get", { path, offset: 0, maxBytes: 30000 });
+      if (!first || !first.more) return first;
+      let chunks = [first.b64 || first.text || ""];
+      let offset = first.offset + first.got;
+      let guard = 0;
+      while (first.more && guard++ < 200) {
+        const next = await rpc("http.get", { path, offset, maxBytes: 30000 });
+        chunks.push(next.b64 || next.text || "");
+        first = Object.assign({}, first, { more: next.more });
+        offset = next.offset + next.got;
+        if (!next.got) break;
+      }
+      const joined = chunks.join("");
+      return Object.assign({}, first, { more: false,
+        b64: first.b64 != null ? joined : undefined,
+        text: first.text != null ? joined : undefined });
     } catch (e) {
       return { status: 500, type: "text/plain", text: String(e.message || e) };
     }

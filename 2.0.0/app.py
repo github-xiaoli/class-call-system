@@ -2333,14 +2333,28 @@ def _portal_rpc(method, params, token):
         else:
             resp = client.post(path, json=(params or {}).get("body") or {})
         ctype = (resp.headers.get("Content-Type") or "").lower()
-        out = {"status": resp.status_code, "type": ctype}
         raw = resp.data or b""
-        if ("image/" in ctype or "font/" in ctype or "octet-stream" in ctype
-                or path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".ico",
-                                          ".woff", ".woff2", ".ttf", ".pdf"))):
-            out["b64"] = base64.b64encode(raw).decode()
+        # DataChannel 单条消息有大小上限（约 256KB），大响应要分块回传
+        try:
+            limit = int((params or {}).get("maxBytes") or 30000)
+        except Exception:
+            limit = 120000
+        offset = 0
+        try:
+            offset = int((params or {}).get("offset") or 0)
+        except Exception:
+            offset = 0
+        window = raw[offset:offset + limit]
+        out = {"status": resp.status_code, "type": ctype,
+               "total": len(raw), "offset": offset, "got": len(window),
+               "more": offset + len(window) < len(raw)}
+        # 只有明确的文本类响应才按文本回传，其余一律 base64（避免把二进制当文本搞坏）
+        texty = any(k in ctype for k in ("text/", "json", "javascript", "css", "xml", "html"))
+        binary = not texty
+        if binary:
+            out["b64"] = base64.b64encode(window).decode()
         else:
-            out["text"] = raw.decode("utf-8", "replace")
+            out["text"] = window.decode("utf-8", "replace")
         return out
 
     if method == "auth.login":
