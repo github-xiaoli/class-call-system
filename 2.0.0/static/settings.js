@@ -461,10 +461,15 @@
         if ($("chk-portal-on")) $("chk-portal-on").checked = !!p.enabled;
         const st = $("portal-state");
         if (st) {
-          st.textContent = p.registered
-            ? (p.connected ? "已注册 · 云端在线" : "已注册 · 等待连接")
-            : "未注册";
-          st.style.color = p.registered ? (p.connected ? "#1a9d63" : "#b26a00") : "#7386a8";
+          if (p.webrtc_ready === false) {
+            st.textContent = "缺少 WebRTC 组件（请安装完整版安装包）";
+            st.style.color = "#c0392b";
+          } else {
+            st.textContent = p.registered
+              ? (p.connected ? "已注册 · 云端在线" : "已注册 · 等待连接")
+              : "未注册";
+            st.style.color = p.registered ? (p.connected ? "#1a9d63" : "#b26a00") : "#7386a8";
+          }
         }
       } catch (e) { /* 忽略 */ }
     }

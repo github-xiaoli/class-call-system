@@ -2275,6 +2275,16 @@ _portal = None
 _portal_lock = threading.Lock()
 
 
+def _webrtc_ready():
+    """本机是否有 WebRTC 运行库（aiortc/av）。缺了就只有界面没法直连。"""
+    try:
+        import aiortc  # noqa: F401
+        import av  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _portal_status():
     cfg = get_config()
     sn, src = "", ""
@@ -2293,6 +2303,7 @@ def _portal_status():
         "name": cfg.get("portal_name") or sn,
         "registered": bool(p and p.secret),
         "connected": bool(p and p.connected),
+        "webrtc_ready": _webrtc_ready(),
     }
 
 

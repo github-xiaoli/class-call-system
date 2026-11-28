@@ -554,8 +554,18 @@ class PortalClient(object):
         return servers
 
     async def _handle_offer(self, sdp, peer_id=""):
-        from aiortc import (RTCPeerConnection, RTCSessionDescription, RTCConfiguration,
-                            RTCIceServer)
+        try:
+            from aiortc import (RTCPeerConnection, RTCSessionDescription, RTCConfiguration,
+                                RTCIceServer)
+        except Exception as exc:
+            self.log("[门户] 缺少 WebRTC 运行库，无法直连：%r（请安装完整版）" % (exc,))
+            try:
+                if self.ws:
+                    self.ws.send_text(json.dumps({"type": "bye", "peerId": peer_id,
+                                                  "reason": "no-webrtc"}))
+            except Exception:
+                pass
+            return
         try:
             peer_id = peer_id or ("peer%d" % (len(self.peers) + 1))
             old = self.peers.pop(peer_id, None)

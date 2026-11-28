@@ -169,11 +169,11 @@
   },
   "beta": {
     "version": "2.0.37",
-    "env_asset": "env-2.0.11.zip",
-    "env_tag": "v2.0.11",
-    "env_files": 3366,
-    "env_bytes": 243073830,
-    "env_sha256": "7ecd85b861870cd577e58436e61334539e568a52005ad4357cf57cdae10bcdaf",
+    "env_asset": "env-2.0.37.zip",
+    "env_tag": "v2.0.37-beta",
+    "env_files": 4652,
+    "env_bytes": 328368552,
+    "env_sha256": "625014cb304965d37729cc7b51fa2a50a910de2744d7cf7c6c30b2837395c720",
     "requires": [
       [
         "Flask",
@@ -326,6 +326,38 @@
       [
         "tabulate",
         "0.10.0"
+      ],
+      [
+        "aiortc",
+        "1.17.0"
+      ],
+      [
+        "av",
+        "19.0.2"
+      ],
+      [
+        "aioice",
+        "0.15.1"
+      ],
+      [
+        "pylibsrtp",
+        "1.1.0"
+      ],
+      [
+        "pyee",
+        "16.1.0"
+      ],
+      [
+        "dnspython",
+        "2.9.2"
+      ],
+      [
+        "pyopenssl",
+        "26.4.0"
+      ],
+      [
+        "google-crc32c",
+        "1.9.0"
       ]
     ],
     "channel": "beta",
@@ -337,11 +369,11 @@
   },
   "dev": {
     "version": "2.0.37",
-    "env_asset": "env-2.0.11.zip",
-    "env_tag": "v2.0.11",
-    "env_files": 3366,
-    "env_bytes": 243073830,
-    "env_sha256": "7ecd85b861870cd577e58436e61334539e568a52005ad4357cf57cdae10bcdaf",
+    "env_asset": "env-2.0.37.zip",
+    "env_tag": "v2.0.37-beta",
+    "env_files": 4652,
+    "env_bytes": 328368552,
+    "env_sha256": "625014cb304965d37729cc7b51fa2a50a910de2744d7cf7c6c30b2837395c720",
     "requires": [
       [
         "Flask",
@@ -494,6 +526,38 @@
       [
         "tabulate",
         "0.10.0"
+      ],
+      [
+        "aiortc",
+        "1.17.0"
+      ],
+      [
+        "av",
+        "19.0.2"
+      ],
+      [
+        "aioice",
+        "0.15.1"
+      ],
+      [
+        "pylibsrtp",
+        "1.1.0"
+      ],
+      [
+        "pyee",
+        "16.1.0"
+      ],
+      [
+        "dnspython",
+        "2.9.2"
+      ],
+      [
+        "pyopenssl",
+        "26.4.0"
+      ],
+      [
+        "google-crc32c",
+        "1.9.0"
       ]
     ],
     "channel": "dev",
