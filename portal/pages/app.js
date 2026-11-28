@@ -11,6 +11,7 @@
   let pc = null, ws = null, dc = null;
   let currentSn = "", currentName = "";
   let myId = "";
+  let currentOnline = true;   // 记住机器在线状态，重试时也别丢
   window.__cqt = { get dc() { return dc; }, get pc() { return pc; },
                   get state() { return pc ? pc.connectionState : 'none'; } };
   let connectRetry = 0;
@@ -154,6 +155,15 @@
   async function connect(m) {
     currentSn = m.sn;
     currentName = m.name || m.sn;
+    if (m && m.online !== undefined && m.online !== null) {
+      currentOnline = !(m.online === false || m.online === 0 ||
+                        m.online === "0" || m.online === "false");
+    }
+    const offlineFast = !currentOnline;
+    if (offlineFast) {
+      resetSteps();
+      setStep("这台电脑现在显示离线，可能没开机或没联网…");
+    }
     show("view-connecting");
     resetSteps();
     if (currentSn !== m.sn) connectRetry = 0;
@@ -217,12 +227,17 @@
 
     let wsWatchdog = setTimeout(() => {
       if (ws && ws.readyState !== 1) {
-        setStep("信令连不上，正在重试…");
-        try { ws.close(); } catch (e) {}
-        if (connectRetry < MAX_RETRY) {
+        const maxTry = offlineFast ? 2 : MAX_RETRY;
+        if (connectRetry < maxTry) {
           connectRetry += 1;
+          setStep("信令连不上，第 " + connectRetry + "/" + maxTry + " 次重试…");
+          try { ws.close(); } catch (e) {}
           teardown(false);
-          setTimeout(() => connect({ sn: currentSn, name: currentName }), 700);
+          setTimeout(() => connect({ sn: currentSn, name: currentName }), 800);
+        } else {
+          setStep("试了 " + maxTry + " 次仍连不上信令服务器");
+          $("fallback-msg").textContent = "当前机器：" + currentName + "（" + currentSn + "）";
+          show("view-fallback");
         }
       }
     }, 8000);
@@ -248,18 +263,21 @@
       if (!failed && connectRetry === 0) {
         // 第一次没到 20 秒就失败判定的，再多等一轮
       }
-      if (connectRetry < MAX_RETRY) {
+      const maxTry = offlineFast ? 2 : MAX_RETRY;
+      if (connectRetry < maxTry) {
         connectRetry += 1;
         setStep("没连上，第 " + connectRetry + "/" + MAX_RETRY + " 次自动重试…");
         teardown(false);
         setTimeout(() => connect({ sn: currentSn, name: currentName }), 800);
       } else {
-        setStep("试了 " + MAX_RETRY + " 次仍连不上：网络可能封了 UDP，请改用教室电脑上显示的隧道地址（兼容模式）");
+        setStep(offlineFast
+          ? "这台电脑现在显示离线（没开机或没联网）——请确认后重试，或改用电脑上显示的隧道地址"
+          : "试了 " + maxTry + " 次仍连不上：网络可能封了 UDP，请改用教室电脑上显示的隧道地址（兼容模式）");
         $("btn-cancel").textContent = "返回列表";
         show("view-fallback");
         $("fallback-msg").textContent = "当前机器：" + currentName + "（" + currentSn + "）";
       }
-    }, 20000);
+    }, offlineFast ? 8000 : 20000);
   }
 
   async function onSignal(ev) {
@@ -507,7 +525,7 @@
       dc.send(JSON.stringify({ id, method, params: params || {}, token }));
       setTimeout(() => {
         if (pending.has(id)) { pending.delete(id); reject(new Error("超时")); }
-      }, 20000);
+      }, offlineFast ? 8000 : 20000);
     });
   }
 
